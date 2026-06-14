@@ -5,7 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import twilio    from "twilio";
 import dotenv    from "dotenv";
 import { hotelConfig }                                    from "./config.js";
-import { getSession, pushHistory, patchSession, logAlert, stats } from "./state.js";
+import { getSession, pushHistory, patchSession, logAlert, stats, sessions } from "./state.js";
 import { detectLang }                                     from "./i18n.js";
 
 dotenv.config();
