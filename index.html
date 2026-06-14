@@ -1,0 +1,1054 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Concierge OS · Hotel Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+  --ink:#0f1117;
+  --ink2:#1c2030;
+  --ink3:#263046;
+  --surface:#1a2238;
+  --surface2:#1f2942;
+  --border:rgba(255,255,255,0.07);
+  --border2:rgba(255,255,255,0.13);
+  --gold:#c9a84c;
+  --gold-l:#e4c76b;
+  --gold-d:#8a6820;
+  --gold-bg:rgba(201,168,76,0.08);
+  --gold-bg2:rgba(201,168,76,0.14);
+  --text:#eef0f6;
+  --text2:#8fa3be;
+  --text3:#5a7090;
+  --green:#22c55e;
+  --green-bg:rgba(34,197,94,0.1);
+  --red:#ef4444;
+  --red-bg:rgba(239,68,68,0.1);
+  --amber:#f59e0b;
+  --amber-bg:rgba(245,158,11,0.1);
+  --blue:#3b82f6;
+  --blue-bg:rgba(59,130,246,0.1);
+  --r:10px;
+  --r2:16px;
+  --sidebar:240px;
+}
+
+html,body{height:100%;font-family:'Heebo',sans-serif;background:var(--ink);color:var(--text);font-size:14px;line-height:1.5;overflow:hidden}
+
+/* ── LAYOUT ─────────────────────────────────────────── */
+#app{display:flex;height:100vh;overflow:hidden}
+
+/* ── SIDEBAR ─────────────────────────────────────────── */
+#sidebar{
+  width:var(--sidebar);flex-shrink:0;
+  background:var(--ink2);
+  border-left:1px solid var(--border);
+  display:flex;flex-direction:column;
+  overflow:hidden;
+}
+.sb-brand{
+  padding:24px 20px 20px;
+  border-bottom:1px solid var(--border);
+}
+.sb-logo{
+  font-family:'Playfair Display',serif;
+  font-size:18px;color:var(--gold-l);
+  letter-spacing:.5px;
+  margin-bottom:2px;
+}
+.sb-sub{font-size:11px;color:var(--text3);letter-spacing:.5px}
+
+.sb-status{
+  display:flex;align-items:center;gap:7px;
+  margin-top:12px;
+  font-size:11px;color:var(--green);
+  background:var(--green-bg);
+  border:1px solid rgba(34,197,94,.2);
+  border-radius:20px;padding:5px 10px;
+  width:fit-content;
+}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:blink 2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+.sb-nav{flex:1;overflow-y:auto;padding:12px 0}
+.sb-section{margin-bottom:4px}
+.sb-label{
+  font-size:10px;font-weight:600;letter-spacing:1.2px;
+  color:var(--text3);text-transform:uppercase;
+  padding:8px 20px 4px;
+}
+.nav-btn{
+  display:flex;align-items:center;gap:10px;
+  width:100%;padding:9px 20px;
+  background:none;border:none;border-right:3px solid transparent;
+  color:var(--text2);font-size:13px;font-family:'Heebo',sans-serif;
+  cursor:pointer;text-align:right;transition:all .15s;
+}
+.nav-btn:hover{color:var(--text);background:rgba(255,255,255,.04)}
+.nav-btn.active{
+  color:var(--gold-l);background:var(--gold-bg);
+  border-right-color:var(--gold);
+}
+.nav-icon{font-size:15px;width:18px;text-align:center;flex-shrink:0}
+.nav-badge{
+  margin-right:auto;margin-left:0;
+  background:var(--red);color:#fff;
+  font-size:10px;font-weight:700;
+  border-radius:10px;padding:1px 6px;min-width:18px;text-align:center;
+}
+
+.sb-time{
+  padding:16px 20px;
+  border-top:1px solid var(--border);
+  font-size:11px;color:var(--text3);
+}
+#clock{font-size:22px;font-weight:300;color:var(--text2);letter-spacing:1px}
+
+/* ── MAIN ────────────────────────────────────────────── */
+#main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+
+/* ── TOPBAR ──────────────────────────────────────────── */
+#topbar{
+  height:58px;flex-shrink:0;
+  background:var(--ink2);
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;
+  padding:0 28px;gap:16px;
+}
+.page-title{font-family:'Playfair Display',serif;font-size:20px;color:var(--text);flex:1}
+.page-sub{font-size:12px;color:var(--text3);margin-top:1px}
+
+.topbar-actions{display:flex;align-items:center;gap:10px}
+.tb-btn{
+  background:var(--gold-bg);border:1px solid rgba(201,168,76,.25);
+  color:var(--gold-l);font-family:'Heebo',sans-serif;font-size:12px;
+  padding:7px 14px;border-radius:var(--r);cursor:pointer;transition:all .15s;
+  display:flex;align-items:center;gap:6px;
+}
+.tb-btn:hover{background:var(--gold-bg2);border-color:rgba(201,168,76,.5)}
+.tb-btn.danger{background:var(--red-bg);border-color:rgba(239,68,68,.25);color:var(--red)}
+
+/* ── CONTENT ─────────────────────────────────────────── */
+#content{flex:1;overflow-y:auto;padding:24px 28px}
+
+/* ── PAGES ───────────────────────────────────────────── */
+.page{display:none}
+.page.active{display:block}
+
+/* ── STATS ROW ───────────────────────────────────────── */
+.stats-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:22px}
+.stat{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r2);padding:18px 20px;
+  position:relative;overflow:hidden;
+}
+.stat::before{
+  content:'';position:absolute;inset:0 auto 0 0;
+  width:3px;background:var(--gold);
+}
+.stat.green::before{background:var(--green)}
+.stat.blue::before{background:var(--blue)}
+.stat.amber::before{background:var(--amber)}
+.stat.red::before{background:var(--red)}
+.stat-label{font-size:11px;color:var(--text3);margin-bottom:6px;letter-spacing:.3px}
+.stat-val{font-size:30px;font-weight:700;color:var(--text);line-height:1}
+.stat-sub{font-size:11px;color:var(--text3);margin-top:5px}
+.stat-icon{position:absolute;top:16px;left:18px;font-size:22px;opacity:.15}
+
+/* ── CARD ────────────────────────────────────────────── */
+.card{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r2);margin-bottom:18px;overflow:hidden;
+}
+.card-head{
+  display:flex;align-items:center;
+  padding:16px 20px;border-bottom:1px solid var(--border);
+  gap:10px;
+}
+.card-title{font-size:14px;font-weight:600;color:var(--text)}
+.card-count{
+  font-size:11px;padding:2px 8px;border-radius:12px;
+  background:var(--gold-bg);color:var(--gold-l);
+  border:1px solid rgba(201,168,76,.2);
+}
+.card-actions{margin-right:auto;display:flex;gap:8px}
+
+/* ── TABLE ───────────────────────────────────────────── */
+.tbl{width:100%;border-collapse:collapse}
+.tbl th{
+  text-align:right;font-size:11px;font-weight:600;
+  letter-spacing:.5px;color:var(--text3);text-transform:uppercase;
+  padding:10px 14px;border-bottom:1px solid var(--border);
+}
+.tbl td{padding:11px 14px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tbody tr{transition:background .1s}
+.tbl tbody tr:hover{background:rgba(255,255,255,.02)}
+
+/* ── PILLS ───────────────────────────────────────────── */
+.pill{
+  display:inline-flex;align-items:center;gap:4px;
+  font-size:11px;font-weight:500;padding:3px 9px;
+  border-radius:20px;
+}
+.pill-green{background:var(--green-bg);color:var(--green);border:1px solid rgba(34,197,94,.2)}
+.pill-blue{background:var(--blue-bg);color:var(--blue);border:1px solid rgba(59,130,246,.2)}
+.pill-amber{background:var(--amber-bg);color:var(--amber);border:1px solid rgba(245,158,11,.2)}
+.pill-red{background:var(--red-bg);color:var(--red);border:1px solid rgba(239,68,68,.2)}
+.pill-gray{background:rgba(255,255,255,.06);color:var(--text2);border:1px solid var(--border)}
+
+/* ── ICON BTN ────────────────────────────────────────── */
+.icon-btn{
+  background:none;border:1px solid var(--border2);
+  color:var(--text2);font-size:12px;padding:5px 11px;
+  border-radius:7px;cursor:pointer;font-family:'Heebo',sans-serif;
+  transition:all .15s;
+}
+.icon-btn:hover{border-color:var(--gold-d);color:var(--gold-l)}
+
+/* ── CHAT LAYOUT ─────────────────────────────────────── */
+.chat-wrap{
+  display:grid;grid-template-columns:280px 1fr;
+  border:1px solid var(--border);border-radius:var(--r2);
+  overflow:hidden;height:calc(100vh - 180px);
+}
+.chat-list-panel{
+  background:var(--ink2);
+  border-left:1px solid var(--border);
+  display:flex;flex-direction:column;
+}
+.clp-head{
+  padding:14px 16px;border-bottom:1px solid var(--border);
+  font-size:12px;font-weight:600;color:var(--text3);
+  letter-spacing:.5px;text-transform:uppercase;
+}
+.clp-search{
+  padding:10px 12px;border-bottom:1px solid var(--border);
+}
+.clp-search input{
+  width:100%;background:rgba(255,255,255,.05);
+  border:1px solid var(--border2);border-radius:7px;
+  padding:7px 10px;color:var(--text);font-family:'Heebo',sans-serif;
+  font-size:12px;outline:none;
+}
+.clp-search input::placeholder{color:var(--text3)}
+.clp-list{flex:1;overflow-y:auto}
+.cli{
+  padding:13px 16px;border-bottom:1px solid var(--border);
+  cursor:pointer;transition:background .1s;
+}
+.cli:hover{background:rgba(255,255,255,.03)}
+.cli.selected{background:var(--gold-bg);border-right:2px solid var(--gold)}
+.cli-row1{display:flex;align-items:center;justify-content:space-between;margin-bottom:3px}
+.cli-name{font-size:13px;font-weight:500;color:var(--text)}
+.cli-time{font-size:10px;color:var(--text3)}
+.cli-preview{font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cli-room{font-size:11px;color:var(--text3);margin-top:2px}
+
+.chat-view{display:flex;flex-direction:column;background:var(--surface2)}
+.cv-head{
+  padding:14px 20px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:12px;flex-shrink:0;
+}
+.cv-avatar{
+  width:38px;height:38px;border-radius:50%;
+  background:linear-gradient(135deg,var(--gold-d),var(--gold));
+  display:flex;align-items:center;justify-content:center;
+  font-size:16px;font-weight:600;color:var(--ink);
+  flex-shrink:0;
+}
+.cv-name{font-size:14px;font-weight:600}
+.cv-meta{font-size:11px;color:var(--text3);margin-top:1px}
+.cv-actions{margin-right:auto;display:flex;gap:8px}
+
+.cv-msgs{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:10px}
+.bubble{max-width:72%;padding:10px 14px;border-radius:12px;font-size:13px;line-height:1.55}
+.bubble.guest{
+  background:var(--ink3);align-self:flex-end;
+  border-bottom-left-radius:3px;
+}
+.bubble.bot{
+  background:var(--gold-bg);border:1px solid rgba(201,168,76,.15);
+  align-self:flex-start;border-bottom-right-radius:3px;
+}
+.bubble-meta{font-size:10px;color:var(--text3);margin-top:3px}
+
+.cv-input{
+  padding:14px 16px;border-top:1px solid var(--border);
+  display:flex;gap:10px;flex-shrink:0;
+}
+.cv-input input{
+  flex:1;background:var(--ink2);border:1px solid var(--border2);
+  border-radius:var(--r);padding:9px 14px;
+  color:var(--text);font-family:'Heebo',sans-serif;font-size:13px;outline:none;
+  transition:border-color .15s;
+}
+.cv-input input:focus{border-color:var(--gold-d)}
+.send-btn{
+  background:var(--gold);color:var(--ink);border:none;
+  border-radius:var(--r);padding:9px 18px;
+  font-weight:700;font-size:13px;cursor:pointer;
+  font-family:'Heebo',sans-serif;transition:background .15s;
+}
+.send-btn:hover{background:var(--gold-l)}
+
+/* ── ALERTS ──────────────────────────────────────────── */
+.alert-list{display:flex;flex-direction:column;gap:10px}
+.alert-item{
+  display:flex;gap:14px;align-items:flex-start;
+  padding:14px 16px;background:var(--surface2);
+  border-radius:var(--r);border-right:3px solid;
+}
+.alert-item.housekeeping{border-right-color:var(--amber)}
+.alert-item.reception{border-right-color:var(--blue)}
+.alert-item.maintenance{border-right-color:var(--red)}
+.alert-item.concierge{border-right-color:var(--green)}
+.ai-icon{font-size:22px;flex-shrink:0;margin-top:1px}
+.ai-title{font-size:13px;font-weight:600;margin-bottom:3px}
+.ai-detail{font-size:12px;color:var(--text2)}
+.ai-time{font-size:10px;color:var(--text3);margin-top:4px}
+.ai-priority{font-size:10px;font-weight:700;color:var(--red);letter-spacing:.5px}
+
+/* ── CONFIG FORM ─────────────────────────────────────── */
+.cfg-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.cfg-grid.cols3{grid-template-columns:1fr 1fr 1fr}
+.fgroup{display:flex;flex-direction:column;gap:5px}
+.fgroup.span2{grid-column:1/-1}
+.flabel{font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.3px}
+.finput{
+  background:var(--ink2);border:1px solid var(--border2);
+  border-radius:var(--r);padding:9px 13px;
+  color:var(--text);font-family:'Heebo',sans-serif;font-size:13px;
+  outline:none;transition:border-color .15s;width:100%;
+}
+.finput:focus{border-color:var(--gold-d)}
+textarea.finput{resize:vertical;min-height:90px;line-height:1.5}
+.save-btn{
+  display:inline-flex;align-items:center;gap:8px;
+  background:linear-gradient(135deg,var(--gold-d),var(--gold));
+  color:var(--ink);border:none;border-radius:var(--r);
+  padding:10px 24px;font-weight:700;font-size:14px;
+  cursor:pointer;font-family:'Heebo',sans-serif;
+  transition:opacity .15s;margin-top:6px;
+}
+.save-btn:hover{opacity:.9}
+
+/* ── SECTION DIVIDER ─────────────────────────────────── */
+.sdivider{
+  display:flex;align-items:center;gap:12px;
+  margin:24px 0 16px;
+}
+.sdivider-line{flex:1;height:1px;background:var(--border)}
+.sdivider-text{font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.5px;text-transform:uppercase;white-space:nowrap}
+
+/* ── EMPTY STATE ─────────────────────────────────────── */
+.empty-state{
+  padding:56px 20px;text-align:center;color:var(--text3);
+}
+.empty-state .ei{font-size:40px;margin-bottom:12px;opacity:.5}
+.empty-state .et{font-size:13px}
+
+/* ── QUICK ACTION BUTTONS ────────────────────────────── */
+.quick-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px}
+.quick-card{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r2);padding:16px;
+  cursor:pointer;transition:all .15s;text-align:center;
+}
+.quick-card:hover{border-color:var(--gold-d);background:var(--gold-bg)}
+.quick-card .qc-icon{font-size:26px;margin-bottom:8px}
+.quick-card .qc-label{font-size:12px;font-weight:500;color:var(--text2)}
+
+/* ── MODAL ───────────────────────────────────────────── */
+.modal-bg{
+  display:none;position:fixed;inset:0;
+  background:rgba(0,0,0,.7);z-index:200;
+  align-items:center;justify-content:center;
+}
+.modal-bg.open{display:flex}
+.modal{
+  background:var(--surface2);border:1px solid var(--border2);
+  border-radius:var(--r2);padding:28px;width:440px;max-width:95vw;
+}
+.modal-title{font-size:16px;font-weight:600;margin-bottom:20px;color:var(--text)}
+.modal-actions{display:flex;gap:10px;margin-top:20px;justify-content:flex-end}
+.btn-cancel{
+  background:none;border:1px solid var(--border2);
+  color:var(--text2);font-family:'Heebo',sans-serif;font-size:13px;
+  padding:8px 16px;border-radius:var(--r);cursor:pointer;
+}
+
+/* ── TOAST ───────────────────────────────────────────── */
+#toast{
+  position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(70px);
+  background:var(--ink3);border:1px solid var(--border2);
+  color:var(--gold-l);padding:11px 22px;border-radius:var(--r);
+  font-size:13px;font-weight:500;z-index:999;
+  transition:transform .3s ease;white-space:nowrap;
+  pointer-events:none;
+}
+#toast.show{transform:translateX(-50%) translateY(0)}
+
+/* ── SCROLLBAR ───────────────────────────────────────── */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.2)}
+
+/* ── LOGIN ───────────────────────────────────────────── */
+#login-screen{
+  display:flex;align-items:center;justify-content:center;
+  height:100vh;background:var(--ink);
+}
+.login-box{
+  background:var(--surface);border:1px solid var(--border2);
+  border-radius:var(--r2);padding:40px 36px;width:340px;text-align:center;
+}
+.login-logo{
+  font-family:'Playfair Display',serif;font-size:24px;
+  color:var(--gold-l);margin-bottom:4px;
+}
+.login-sub{font-size:12px;color:var(--text3);margin-bottom:28px}
+.login-box input{
+  width:100%;background:var(--ink2);border:1px solid var(--border2);
+  border-radius:var(--r);padding:11px 14px;color:var(--text);
+  font-family:'Heebo',sans-serif;font-size:14px;outline:none;
+  text-align:center;letter-spacing:2px;
+}
+.login-box input:focus{border-color:var(--gold-d)}
+.login-btn{
+  width:100%;margin-top:14px;
+  background:linear-gradient(135deg,var(--gold-d),var(--gold));
+  color:var(--ink);border:none;border-radius:var(--r);
+  padding:11px;font-weight:700;font-size:14px;cursor:pointer;
+  font-family:'Heebo',sans-serif;
+}
+.login-err{font-size:12px;color:var(--red);margin-top:10px;min-height:18px}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">✦ Concierge OS</div>
+    <div class="login-sub">Hotel Management Dashboard</div>
+    <input type="password" id="pw-input" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()">
+    <button class="login-btn" onclick="doLogin()">כניסה</button>
+    <div class="login-err" id="login-err"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app" style="display:none">
+
+  <!-- SIDEBAR -->
+  <nav id="sidebar">
+    <div class="sb-brand">
+      <div class="sb-logo">✦ Concierge OS</div>
+      <div class="sb-sub">Hotel Dashboard v2.0</div>
+      <div class="sb-status"><span class="dot"></span>מחובר ופעיל</div>
+    </div>
+    <div class="sb-nav">
+      <div class="sb-section">
+        <div class="sb-label">ראשי</div>
+        <button class="nav-btn active" onclick="goto('overview',this)"><span class="nav-icon">📊</span>סקירה כללית</button>
+        <button class="nav-btn" onclick="goto('conversations',this)"><span class="nav-icon">💬</span>שיחות<span class="nav-badge" id="badge-conv" style="display:none">0</span></button>
+        <button class="nav-btn" onclick="goto('alerts',this)"><span class="nav-icon">🔔</span>התראות<span class="nav-badge" id="badge-alerts" style="display:none">0</span></button>
+      </div>
+      <div class="sb-section">
+        <div class="sb-label">ניהול</div>
+        <button class="nav-btn" onclick="goto('guests',this)"><span class="nav-icon">👥</span>אורחים</button>
+        <button class="nav-btn" onclick="goto('config',this)"><span class="nav-icon">⚙️</span>הגדרות מלון</button>
+      </div>
+    </div>
+    <div class="sb-time">
+      <div id="clock">--:--</div>
+      <div style="font-size:11px;margin-top:2px;color:var(--text3)" id="date-str"></div>
+    </div>
+  </nav>
+
+  <!-- MAIN -->
+  <div id="main">
+    <div id="topbar">
+      <div>
+        <div class="page-title" id="topbar-title">סקירה כללית</div>
+      </div>
+      <div class="topbar-actions">
+        <button class="tb-btn" onclick="openAlertModal()">➕ שלח התראה ידנית</button>
+        <button class="tb-btn" onclick="loadAll()">🔄 רענן</button>
+      </div>
+    </div>
+
+    <div id="content">
+
+      <!-- ══ OVERVIEW ══ -->
+      <div class="page active" id="page-overview">
+        <div class="stats-grid">
+          <div class="stat gold">
+            <div class="stat-icon">💬</div>
+            <div class="stat-label">שיחות פעילות</div>
+            <div class="stat-val" id="s-total">0</div>
+            <div class="stat-sub">כרגע במערכת</div>
+          </div>
+          <div class="stat green">
+            <div class="stat-icon">✅</div>
+            <div class="stat-label">צ׳ק אין</div>
+            <div class="stat-val" id="s-checkin">0</div>
+            <div class="stat-sub">השלימו היום</div>
+          </div>
+          <div class="stat blue">
+            <div class="stat-icon">🚪</div>
+            <div class="stat-label">צ׳ק אאוט</div>
+            <div class="stat-val" id="s-checkout">0</div>
+            <div class="stat-sub">עזבו היום</div>
+          </div>
+          <div class="stat amber">
+            <div class="stat-icon">🛎️</div>
+            <div class="stat-label">בקשות שירות</div>
+            <div class="stat-val" id="s-service">0</div>
+            <div class="stat-sub">הועברו לצוות</div>
+          </div>
+          <div class="stat red">
+            <div class="stat-icon">📨</div>
+            <div class="stat-label">הודעות סה״כ</div>
+            <div class="stat-val" id="s-msgs">0</div>
+            <div class="stat-sub">כל הזמנים</div>
+          </div>
+        </div>
+
+        <div class="quick-grid">
+          <div class="quick-card" onclick="goto('conversations',document.querySelector('[onclick*=conversations]'))">
+            <div class="qc-icon">💬</div><div class="qc-label">שיחות פעילות</div>
+          </div>
+          <div class="quick-card" onclick="goto('alerts',document.querySelector('[onclick*=alerts]'))">
+            <div class="qc-icon">🔔</div><div class="qc-label">התראות אחרונות</div>
+          </div>
+          <div class="quick-card" onclick="openAlertModal('housekeeping')">
+            <div class="qc-icon">🧹</div><div class="qc-label">קרא לניקיון</div>
+          </div>
+          <div class="quick-card" onclick="goto('config',document.querySelector('[onclick*=config]'))">
+            <div class="qc-icon">⚙️</div><div class="qc-label">הגדרות מלון</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">אורחים פעילים</span>
+            <span class="card-count" id="ov-count">0</span>
+          </div>
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th>שם אורח</th><th>חדר</th><th>שפה</th><th>מצב</th><th>הודעות</th><th>פעיל לאחרונה</th><th>פעולות</th>
+              </tr>
+            </thead>
+            <tbody id="ov-tbody">
+              <tr><td colspan="7"><div class="empty-state"><div class="ei">💤</div><div class="et">ממתין לאורחים ראשונים…</div></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ══ CONVERSATIONS ══ -->
+      <div class="page" id="page-conversations">
+        <div class="chat-wrap">
+          <div class="chat-list-panel">
+            <div class="clp-head">שיחות</div>
+            <div class="clp-search"><input placeholder="🔍 חפש אורח…" oninput="filterChats(this.value)" id="chat-search"></div>
+            <div class="clp-list" id="chat-list"></div>
+          </div>
+          <div class="chat-view">
+            <div class="cv-head" id="cv-head">
+              <div class="cv-avatar">🏨</div>
+              <div><div class="cv-name">בחר שיחה</div><div class="cv-meta">מהרשימה</div></div>
+            </div>
+            <div class="cv-msgs" id="cv-msgs">
+              <div class="empty-state" style="margin:auto"><div class="ei">💬</div><div class="et">בחר שיחה לצפייה</div></div>
+            </div>
+            <div class="cv-input">
+              <input id="manual-input" placeholder="הקלד הודעה ידנית לאורח…" onkeydown="if(event.key==='Enter')sendManual()">
+              <button class="send-btn" onclick="sendManual()">שלח</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ ALERTS ══ -->
+      <div class="page" id="page-alerts">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">יומן התראות</span>
+            <span class="card-count" id="alerts-count">0</span>
+          </div>
+          <div style="padding:16px">
+            <div class="alert-list" id="alerts-list">
+              <div class="empty-state"><div class="ei">🔔</div><div class="et">אין התראות עדיין</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ GUESTS ══ -->
+      <div class="page" id="page-guests">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">כל האורחים</span>
+            <span class="card-count" id="guests-count">0</span>
+          </div>
+          <table class="tbl">
+            <thead>
+              <tr><th>שם</th><th>חדר</th><th>טלפון</th><th>שפה</th><th>צ׳ק אין</th><th>צ׳ק אאוט</th><th>מצב</th><th>הודעות</th></tr>
+            </thead>
+            <tbody id="guests-tbody">
+              <tr><td colspan="8"><div class="empty-state"><div class="ei">👥</div><div class="et">אין אורחים עדיין</div></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ══ CONFIG ══ -->
+      <div class="page" id="page-config">
+        <div class="card">
+          <div class="card-head"><span class="card-title">פרטי המלון</span></div>
+          <div style="padding:20px">
+            <div class="cfg-grid">
+              <div class="fgroup"><label class="flabel">שם המלון (עברית)</label><input class="finput" id="c-name-he" placeholder="מלון קמפינסקי"></div>
+              <div class="fgroup"><label class="flabel">Hotel Name (English)</label><input class="finput" id="c-name-en" placeholder="Kempinski Hotel"></div>
+              <div class="fgroup"><label class="flabel">שעת צ׳ק אין</label><input class="finput" type="time" id="c-checkin"></div>
+              <div class="fgroup"><label class="flabel">שעת צ׳ק אאוט</label><input class="finput" type="time" id="c-checkout"></div>
+              <div class="fgroup"><label class="flabel">WiFi — שם רשת</label><input class="finput" id="c-wifi-n" placeholder="Hotel_Guest"></div>
+              <div class="fgroup"><label class="flabel">WiFi — סיסמה</label><input class="finput" id="c-wifi-p" placeholder="Welcome2024"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><span class="card-title">מספרי צוות (WhatsApp)</span></div>
+          <div style="padding:20px">
+            <div class="cfg-grid">
+              <div class="fgroup"><label class="flabel">🧹 Housekeeping</label><input class="finput" id="c-hk" placeholder="whatsapp:+9721234567"></div>
+              <div class="fgroup"><label class="flabel">🏨 קבלה</label><input class="finput" id="c-rec" placeholder="whatsapp:+9727654321"></div>
+              <div class="fgroup"><label class="flabel">🔧 תחזוקה</label><input class="finput" id="c-maint" placeholder="whatsapp:+9729876543"></div>
+              <div class="fgroup"><label class="flabel">⭐ קונסיירז'</label><input class="finput" id="c-conc" placeholder="whatsapp:+9721112233"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><span class="card-title">שעות שירותים</span></div>
+          <div style="padding:20px">
+            <div class="cfg-grid cols3">
+              <div class="fgroup"><label class="flabel">ארוחת בוקר — שעות</label><input class="finput" id="c-bf-h" placeholder="07:00–11:00"></div>
+              <div class="fgroup"><label class="flabel">ארוחת בוקר — מיקום (עב׳)</label><input class="finput" id="c-bf-loc-he" placeholder="מסעדת הגן, קומה 1"></div>
+              <div class="fgroup"><label class="flabel">Breakfast — Location (EN)</label><input class="finput" id="c-bf-loc-en" placeholder="The Garden, Level 1"></div>
+              <div class="fgroup"><label class="flabel">בריכה — שעות</label><input class="finput" id="c-pool-h" placeholder="07:00–22:00"></div>
+              <div class="fgroup"><label class="flabel">בריכה — מיקום (עב׳)</label><input class="finput" id="c-pool-loc-he" placeholder="גג, קומה 12"></div>
+              <div class="fgroup"><label class="flabel">Pool — Location (EN)</label><input class="finput" id="c-pool-loc-en" placeholder="Rooftop, Level 12"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><span class="card-title">הודעות פתיחה</span></div>
+          <div style="padding:20px;display:flex;flex-direction:column;gap:14px">
+            <div class="fgroup">
+              <label class="flabel">הודעת ברוכים הבאים — עברית</label>
+              <textarea class="finput" id="c-welcome-he" style="min-height:120px"></textarea>
+            </div>
+            <div class="fgroup">
+              <label class="flabel">Welcome message — English</label>
+              <textarea class="finput" id="c-welcome-en" style="min-height:120px"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <button class="save-btn" onclick="saveConfig()">💾 שמור הגדרות</button>
+      </div>
+
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<!-- MANUAL ALERT MODAL -->
+<div class="modal-bg" id="alert-modal">
+  <div class="modal">
+    <div class="modal-title">📤 שלח התראה ידנית</div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="fgroup">
+        <label class="flabel">מחלקה</label>
+        <select class="finput" id="m-dept">
+          <option value="housekeeping">🧹 Housekeeping</option>
+          <option value="reception">🏨 קבלה</option>
+          <option value="maintenance">🔧 תחזוקה</option>
+          <option value="concierge">⭐ קונסיירז׳</option>
+        </select>
+      </div>
+      <div class="fgroup"><label class="flabel">מספר חדר</label><input class="finput" id="m-room" placeholder="304"></div>
+      <div class="fgroup"><label class="flabel">שם אורח</label><input class="finput" id="m-guest" placeholder="ישראל ישראלי"></div>
+      <div class="fgroup"><label class="flabel">הודעה</label><textarea class="finput" id="m-msg" placeholder="תיאור הבקשה…"></textarea></div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2);cursor:pointer">
+        <input type="checkbox" id="m-urgent"> דחוף
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">ביטול</button>
+      <button class="save-btn" style="margin-top:0" onclick="sendAlert()">📤 שלח</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ── AUTH ──────────────────────────────────────────────
+let TOKEN = '';
+function doLogin(){
+  TOKEN = document.getElementById('pw-input').value;
+  fetch('/api/stats',{headers:{'x-dashboard-token':TOKEN}})
+    .then(r=>{
+      if(r.ok){
+        document.getElementById('login-screen').style.display='none';
+        document.getElementById('app').style.display='flex';
+        init();
+      } else {
+        document.getElementById('login-err').textContent='סיסמה שגויה';
+        setTimeout(()=>document.getElementById('login-err').textContent='',2000);
+      }
+    }).catch(()=>{ demoMode(); });
+}
+
+// ── STATE ──────────────────────────────────────────────
+let sessions=[], alerts=[], currentPhone=null;
+const API = h=>({headers:{'x-dashboard-token':TOKEN,...(h||{})}});
+
+// ── INIT ──────────────────────────────────────────────
+function init(){
+  tickClock();
+  setInterval(tickClock,1000);
+  loadAll();
+  setInterval(loadAll,6000);
+  loadConfig();
+}
+
+function tickClock(){
+  const n=new Date();
+  document.getElementById('clock').textContent=n.toLocaleTimeString('he-IL',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  document.getElementById('date-str').textContent=n.toLocaleDateString('he-IL',{weekday:'long',day:'numeric',month:'long'});
+}
+
+async function loadAll(){
+  try{
+    const [sRes,aRes,stRes]=await Promise.all([
+      fetch('/api/sessions',API()),
+      fetch('/api/alerts',API()),
+      fetch('/api/stats',API()),
+    ]);
+    sessions=await sRes.json();
+    alerts=await aRes.json();
+    const st=await stRes.json();
+    renderStats(st);
+    renderOverview();
+    renderChatList();
+    renderAlerts();
+    renderGuests();
+  }catch(e){
+    if(!sessions.length) demoMode();
+  }
+}
+
+// ── STATS ──────────────────────────────────────────────
+function renderStats(st){
+  document.getElementById('s-total').textContent=st.activeSessions||0;
+  document.getElementById('s-checkin').textContent=st.checkIns||0;
+  document.getElementById('s-checkout').textContent=st.checkOuts||0;
+  document.getElementById('s-service').textContent=st.serviceRequests||0;
+  document.getElementById('s-msgs').textContent=st.totalMessages||0;
+  const ac=sessions.length;
+  document.getElementById('badge-conv').textContent=ac;
+  document.getElementById('badge-conv').style.display=ac?'inline':'none';
+  const al=alerts.length;
+  document.getElementById('badge-alerts').textContent=al;
+  document.getElementById('badge-alerts').style.display=al>0?'inline':'none';
+}
+
+// ── OVERVIEW TABLE ────────────────────────────────────
+function stagePill(s){
+  const map={
+    new:'<span class="pill pill-gray">חדש</span>',
+    active:'<span class="pill pill-blue">פעיל</span>',
+    checked_in:'<span class="pill pill-green">✅ צ׳ק אין</span>',
+    checked_out:'<span class="pill pill-gray">🚪 יצא</span>',
+  };
+  return map[s]||`<span class="pill pill-gray">${s}</span>`;
+}
+function timeAgo(iso){
+  if(!iso)return'—';
+  const d=Math.floor((Date.now()-new Date(iso))/1000);
+  if(d<60)return`לפני ${d}ש׳`;
+  if(d<3600)return`לפני ${Math.floor(d/60)} דק׳`;
+  return`לפני ${Math.floor(d/3600)} שע׳`;
+}
+function fmtTime(iso){
+  if(!iso)return'—';
+  return new Date(iso).toLocaleTimeString('he-IL',{hour:'2-digit',minute:'2-digit'});
+}
+
+function renderOverview(){
+  document.getElementById('ov-count').textContent=sessions.length;
+  const tb=document.getElementById('ov-tbody');
+  if(!sessions.length){
+    tb.innerHTML='<tr><td colspan="7"><div class="empty-state"><div class="ei">💤</div><div class="et">ממתין לאורחים ראשונים…</div></div></td></tr>';
+    return;
+  }
+  tb.innerHTML=sessions.map(s=>`
+    <tr>
+      <td><strong>${s.guestName||'—'}</strong></td>
+      <td>${s.roomNumber?'🛏 '+s.roomNumber:'—'}</td>
+      <td>${s.lang==='he'?'🇮🇱 עברית':s.lang==='en'?'🇬🇧 English':'—'}</td>
+      <td>${stagePill(s.stage)}</td>
+      <td>${s.messageCount||0}</td>
+      <td style="color:var(--text3);font-size:12px">${timeAgo(s.lastActiveAt)}</td>
+      <td><button class="icon-btn" onclick="openChat('${s.phone}')">💬 צ'אט</button></td>
+    </tr>`).join('');
+}
+
+// ── CHAT ──────────────────────────────────────────────
+function renderChatList(filter=''){
+  const list=document.getElementById('chat-list');
+  const filtered=sessions.filter(s=>!filter||(s.guestName||'').includes(filter)||(s.phone||'').includes(filter));
+  if(!filtered.length){
+    list.innerHTML='<div class="empty-state" style="padding:32px 16px"><div class="ei">💬</div><div class="et">אין שיחות</div></div>';
+    return;
+  }
+  list.innerHTML=filtered.map(s=>`
+    <div class="cli ${currentPhone===s.phone?'selected':''}" onclick="openChat('${s.phone}')">
+      <div class="cli-row1">
+        <div class="cli-name">${s.guestName||'אורח לא מזוהה'}</div>
+        <div class="cli-time">${timeAgo(s.lastActiveAt)}</div>
+      </div>
+      <div class="cli-preview">${(s.history||[]).slice(-1)[0]?.content?.slice(0,50)||'—'}…</div>
+      <div class="cli-room">חדר ${s.roomNumber||'?'} · ${s.lang==='he'?'עב׳':'EN'}</div>
+    </div>`).join('');
+}
+function filterChats(v){renderChatList(v)}
+
+function openChat(phone){
+  currentPhone=phone;
+  const s=sessions.find(x=>x.phone===phone);
+  if(!s)return;
+  renderChatList(document.getElementById('chat-search').value);
+  const init=s.guestName?s.guestName[0].toUpperCase():'?';
+  document.getElementById('cv-head').innerHTML=`
+    <div class="cv-avatar">${init}</div>
+    <div>
+      <div class="cv-name">${s.guestName||'אורח לא מזוהה'}</div>
+      <div class="cv-meta">חדר ${s.roomNumber||'?'} · ${s.phone.replace('whatsapp:','')}</div>
+    </div>
+    <div class="cv-actions">
+      <button class="icon-btn" onclick="openAlertModal('housekeeping')">🧹 ניקיון</button>
+      <button class="icon-btn" onclick="openAlertModal('reception')">🏨 קבלה</button>
+    </div>`;
+  const msgs=document.getElementById('cv-msgs');
+  const hist=s.history||[];
+  if(!hist.length){
+    msgs.innerHTML='<div class="empty-state" style="margin:auto"><div class="ei">💬</div><div class="et">אין הודעות</div></div>';
+    return;
+  }
+  msgs.innerHTML=hist.map(m=>`
+    <div>
+      <div class="bubble ${m.role==='user'?'guest':'bot'}">${m.content.replace(/\n/g,'<br>')}</div>
+      <div class="bubble-meta" style="text-align:${m.role==='user'?'left':'right'}">${m.role==='user'?'👤 אורח':'🤖 בוט'}</div>
+    </div>`).join('');
+  msgs.scrollTop=msgs.scrollHeight;
+  goto('conversations',document.querySelector('[onclick*=conversations]'));
+}
+
+async function sendManual(){
+  const msg=document.getElementById('manual-input').value.trim();
+  if(!msg||!currentPhone)return;
+  try{
+    await fetch('/api/send',{method:'POST',...API({'Content-Type':'application/json'}),body:JSON.stringify({to:currentPhone,message:msg})});
+    document.getElementById('manual-input').value='';
+    toast('✅ הודעה נשלחה');
+    setTimeout(loadAll,800);
+  }catch(e){toast('⚠️ שגיאה בשליחה')}
+}
+
+// ── ALERTS ────────────────────────────────────────────
+const deptIcon={housekeeping:'🧹',reception:'🏨',maintenance:'🔧',concierge:'⭐'};
+const deptName={housekeeping:'Housekeeping',reception:'קבלה',maintenance:'תחזוקה',concierge:'קונסיירז׳'};
+
+function renderAlerts(){
+  document.getElementById('alerts-count').textContent=alerts.length;
+  const el=document.getElementById('alerts-list');
+  if(!alerts.length){
+    el.innerHTML='<div class="empty-state"><div class="ei">🔔</div><div class="et">אין התראות עדיין</div></div>';
+    return;
+  }
+  el.innerHTML=alerts.map(a=>`
+    <div class="alert-item ${a.dept}">
+      <div class="ai-icon">${deptIcon[a.dept]||'🔔'}</div>
+      <div style="flex:1">
+        ${a.priority==='high'?'<div class="ai-priority">⚠️ דחוף</div>':''}
+        <div class="ai-title">${deptName[a.dept]||a.dept}</div>
+        <div class="ai-detail">חדר ${a.roomNumber||'?'} · ${a.guestName||'לא ידוע'} — ${a.message}</div>
+        <div class="ai-time">${timeAgo(a.at)}</div>
+      </div>
+    </div>`).join('');
+}
+
+// ── GUESTS PAGE ───────────────────────────────────────
+function renderGuests(){
+  document.getElementById('guests-count').textContent=sessions.length;
+  const tb=document.getElementById('guests-tbody');
+  if(!sessions.length){
+    tb.innerHTML='<tr><td colspan="8"><div class="empty-state"><div class="ei">👥</div><div class="et">אין אורחים עדיין</div></div></td></tr>';
+    return;
+  }
+  tb.innerHTML=sessions.map(s=>`
+    <tr>
+      <td><strong>${s.guestName||'—'}</strong></td>
+      <td>${s.roomNumber||'—'}</td>
+      <td style="font-size:12px;color:var(--text2)">${s.phone.replace('whatsapp:','')}</td>
+      <td>${s.lang==='he'?'🇮🇱':'🇬🇧'}</td>
+      <td>${fmtTime(s.checkInAt)}</td>
+      <td>${fmtTime(s.checkOutAt)}</td>
+      <td>${stagePill(s.stage)}</td>
+      <td>${s.messageCount||0}</td>
+    </tr>`).join('');
+}
+
+// ── CONFIG ────────────────────────────────────────────
+async function loadConfig(){
+  try{
+    const r=await fetch('/api/config',API());
+    const c=await r.json();
+    document.getElementById('c-name-he').value=c.name_he||'';
+    document.getElementById('c-name-en').value=c.name||'';
+    document.getElementById('c-checkin').value=c.checkin_time||'15:00';
+    document.getElementById('c-checkout').value=c.checkout_time||'12:00';
+    document.getElementById('c-wifi-n').value=c.wifi?.name||'';
+    document.getElementById('c-wifi-p').value=c.wifi?.password||'';
+    document.getElementById('c-hk').value=c.housekeeping_number||'';
+    document.getElementById('c-rec').value=c.reception_number||'';
+    document.getElementById('c-maint').value=c.maintenance_number||'';
+    document.getElementById('c-conc').value=c.concierge_number||'';
+    document.getElementById('c-bf-h').value=c.services?.breakfast?.he?.hours||'';
+    document.getElementById('c-bf-loc-he').value=c.services?.breakfast?.he?.location||'';
+    document.getElementById('c-bf-loc-en').value=c.services?.breakfast?.en?.location||'';
+    document.getElementById('c-pool-h').value=c.services?.pool?.he?.hours||'';
+    document.getElementById('c-pool-loc-he').value=c.services?.pool?.he?.location||'';
+    document.getElementById('c-pool-loc-en').value=c.services?.pool?.en?.location||'';
+    document.getElementById('c-welcome-he').value=c.welcome?.he||'';
+    document.getElementById('c-welcome-en').value=c.welcome?.en||'';
+  }catch(e){/* demo */}
+}
+
+async function saveConfig(){
+  const body={
+    name_he:document.getElementById('c-name-he').value,
+    name:document.getElementById('c-name-en').value,
+    checkin_time:document.getElementById('c-checkin').value,
+    checkout_time:document.getElementById('c-checkout').value,
+    wifi:{name:document.getElementById('c-wifi-n').value,password:document.getElementById('c-wifi-p').value},
+    housekeeping_number:document.getElementById('c-hk').value,
+    reception_number:document.getElementById('c-rec').value,
+    maintenance_number:document.getElementById('c-maint').value,
+    concierge_number:document.getElementById('c-conc').value,
+    welcome:{he:document.getElementById('c-welcome-he').value,en:document.getElementById('c-welcome-en').value},
+  };
+  try{
+    await fetch('/api/config',{method:'POST',...API({'Content-Type':'application/json'}),body:JSON.stringify(body)});
+  }catch(e){}
+  toast('✅ הגדרות נשמרו!');
+}
+
+// ── MANUAL ALERT MODAL ────────────────────────────────
+function openAlertModal(dept){
+  if(dept)document.getElementById('m-dept').value=dept;
+  document.getElementById('alert-modal').classList.add('open');
+}
+function closeModal(){document.getElementById('alert-modal').classList.remove('open')}
+
+async function sendAlert(){
+  const body={
+    dept:document.getElementById('m-dept').value,
+    roomNumber:document.getElementById('m-room').value,
+    guestName:document.getElementById('m-guest').value,
+    message:document.getElementById('m-msg').value,
+    priority:document.getElementById('m-urgent').checked?'high':'normal',
+  };
+  try{
+    await fetch('/api/alert',{method:'POST',...API({'Content-Type':'application/json'}),body:JSON.stringify(body)});
+    toast('✅ התראה נשלחה!');
+  }catch(e){toast('⚠️ שגיאה — מצב דמו')}
+  closeModal();
+  document.getElementById('m-msg').value='';
+  setTimeout(loadAll,800);
+}
+
+// ── NAV ───────────────────────────────────────────────
+const pageTitles={overview:'סקירה כללית',conversations:'שיחות',alerts:'יומן התראות',guests:'אורחים',config:'הגדרות מלון'};
+function goto(id,btn){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.getElementById('page-'+id).classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  if(btn)btn.classList.add('active');
+  document.getElementById('topbar-title').textContent=pageTitles[id]||id;
+}
+
+// ── TOAST ──────────────────────────────────────────────
+function toast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),2400);
+}
+
+// ── DEMO MODE ─────────────────────────────────────────
+function demoMode(){
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('app').style.display='flex';
+  sessions=[
+    {phone:'whatsapp:+972501234567',guestName:'דניאל לוי',roomNumber:'304',lang:'he',stage:'checked_in',messageCount:8,lastActiveAt:new Date().toISOString(),checkInAt:new Date().toISOString(),checkOutAt:null,
+      history:[
+        {role:'user',content:'שלום, אני רוצה לעשות צ׳ק אין'},
+        {role:'assistant',content:'ברוכים הבאים למלון קמפינסקי ✨\nשמח לעזור! מה שמך המלא ומספר ההזמנה?'},
+        {role:'user',content:'דניאל לוי, הזמנה מספר 8842'},
+        {role:'assistant',content:'מצוין דניאל! ✅ הצ׳ק אין אושר בהצלחה.\n🚪 חדרך: *304*, קומה 3\nהמפתח ימתין לך בקבלה.\n\nWiFi: Kempinski_Guest | סיסמה: Welcome2024\n\nתהנה משהייה מפנקת! 🌟'},
+        {role:'user',content:'תודה! עד מתי הבריכה פתוחה?'},
+        {role:'assistant',content:'הבריכה פתוחה עד *22:00* 🏊\nהיא נמצאת בגג הבניין, קומה 12 — מחוממת ועם נוף מדהים לעיר!'},
+        {role:'user',content:'נשפך לי קפה על הרצפה, אפשר מישהו לנקות?'},
+        {role:'assistant',content:'כמובן! 🧹 שלחתי כרגע הודעה לצוות הניקיון.\nהם יגיעו לחדר 304 תוך *10 דקות*.\n\nתודה על הסבלנות — אנחנו כאן לכל עזרה נוספת! ✨'},
+      ]},
+    {phone:'whatsapp:+97225098765',guestName:'Sarah Mitchell',roomNumber:'512',lang:'en',stage:'active',messageCount:3,lastActiveAt:new Date(Date.now()-180000).toISOString(),checkInAt:null,checkOutAt:null,
+      history:[
+        {role:'user',content:'Hi, what time does the spa open?'},
+        {role:'assistant',content:'Good morning! 🌿 The spa is open daily from *09:00 to 21:00*.\n\nTo book a treatment, you can call Ext. 205 or I can arrange it for you — just let me know your preferred time! ✨'},
+      ]},
+    {phone:'whatsapp:+97254321987',guestName:'Moshe Cohen',roomNumber:'201',lang:'he',stage:'checked_out',messageCount:12,lastActiveAt:new Date(Date.now()-7200000).toISOString(),checkInAt:new Date(Date.now()-86400000).toISOString(),checkOutAt:new Date(Date.now()-7200000).toISOString(),history:[]},
+  ];
+  alerts=[
+    {dept:'housekeeping',roomNumber:'304',guestName:'דניאל לוי',message:'קפה נשפך על הרצפה',priority:'normal',at:new Date(Date.now()-300000).toISOString()},
+    {dept:'reception',roomNumber:'304',guestName:'דניאל לוי',message:'Digital check-in completed via WhatsApp',priority:'normal',at:new Date(Date.now()-600000).toISOString()},
+    {dept:'concierge',roomNumber:'512',guestName:'Sarah Mitchell',message:'Guest requested spa booking for tomorrow 10:00',priority:'normal',at:new Date(Date.now()-1200000).toISOString()},
+  ];
+  const st={activeSessions:3,checkIns:2,checkOuts:1,serviceRequests:3,totalMessages:23};
+  renderStats(st);
+  renderOverview();
+  renderChatList();
+  renderAlerts();
+  renderGuests();
+  tickClock();
+  setInterval(tickClock,1000);
+  loadConfig();
+  toast('🎭 מצב הדגמה — חבר שרת אמיתי להפעלה מלאה');
+}
+</script>
+</body>
+</html>
