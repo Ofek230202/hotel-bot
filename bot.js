@@ -195,7 +195,8 @@ export async function handleIncoming(phone, text) {
   // CHECK-IN — always check BEFORE AI
   if (isCheckinIntent(text) && session.stage !== "checked_in") {
     patchSession(phone, { checkinStage: "ask_reservation" });
-    await handleCheckinFlow(phone, text, { ...session, checkinStage: "ask_name" }, lang);
+    const updatedSession = getSession(phone);
+await handleCheckinFlow(phone, text, updatedSession, lang);
     return;
   }
 
