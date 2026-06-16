@@ -198,7 +198,7 @@ async function handleCheckin(phone, text, lang) {
       const { paymentUrl } = await startCheckin(phone, guestName, text);
       await wa(phone, lang === "he"
         ? `✅ *הזמנה מספר ${text} אותרה בהצלחה!*\n\nשלב אחרון — *פיקדון שהייה* בסך ₪500.\n\n🔒 הפיקדון מאובטח לחלוטין ויוחזר אוטומטית לכרטיסך עם הצ׳ק אאוט.\n\nלחץ על הקישור לתשלום מאובטח:\n👉 ${paymentUrl}`
-        : `✅ *Reservation ${text} confirmed!*\n\nOne last step — a *£500 security deposit*.\n\n🔒 Fully secured and automatically refunded at check-out.\n\nTap to pay securely:\n👉 ${paymentUrl}`);
+        : `✅ *Reservation ${text} confirmed!*\n\nOne last step — a *₪500 security deposit*.\n\n🔒 Fully secured and automatically refunded at check-out.\n\nTap to pay securely:\n👉 ${paymentUrl}`);
     } catch (e) {
       console.error("Checkin error:", e.message);
       await wa(phone, lang === "he"

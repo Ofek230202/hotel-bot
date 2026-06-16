@@ -1,7 +1,7 @@
 {
   "name": "hotel-concierge-bot",
   "version": "3.0.0",
-  "description": "AI-powered WhatsApp concierge for luxury hotels — with Stripe check-in",
+  "description": "AI-powered WhatsApp concierge for luxury hotels — check-in with isolated payment layer (mock provider)",
   "type": "module",
   "main": "server.js",
   "scripts": {
@@ -12,7 +12,6 @@
     "@anthropic-ai/sdk": "^0.27.0",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "stripe": "^16.0.0",
     "twilio": "^5.3.0",
     "uuid": "^10.0.0"
   }

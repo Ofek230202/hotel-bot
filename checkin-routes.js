@@ -1,12 +1,11 @@
 // ════════════════════════════════════════════════════════
-//  CHECKIN ROUTES — Stripe webhook + success/cancel pages
+//  CHECKIN ROUTES — payment webhook + success/cancel pages
 // ════════════════════════════════════════════════════════
 import express from "express";
-import Stripe from "stripe";
 import { reservations, completeCheckin, processCheckout } from "./checkin.js";
 import { wa } from "./bot.js";
+import { payments } from "./payments/index.js";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const router = express.Router();
 
 // ── Success page (after guest pays) ──────────────────
@@ -39,19 +38,17 @@ router.get("/checkin/cancel", (req, res) => {
   res.send(cancelPage());
 });
 
-// ── Stripe Webhook ────────────────────────────────────
-router.post("/stripe/webhook",
+// ── Payment Webhook ───────────────────────────────────
+router.post("/payments/webhook",
   express.raw({ type: "application/json" }),
   async (req, res) => {
-    const sig = req.headers["stripe-signature"];
+    const signature = req.headers["x-payment-signature"];
     let event;
 
     try {
-      event = stripe.webhooks.constructEvent(
-        req.body,
-        sig,
-        process.env.STRIPE_WEBHOOK_SECRET
-      );
+      const result = payments.verifyWebhook({ rawBody: req.body, signature });
+      if (!result.valid) throw new Error("Invalid signature");
+      event = result.event;
     } catch (err) {
       console.error("Webhook error:", err.message);
       return res.status(400).send(`Webhook Error: ${err.message}`);

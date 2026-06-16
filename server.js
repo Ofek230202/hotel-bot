@@ -14,7 +14,7 @@ const app  = express();
 const PORT = process.env.PORT || 3000;
 const PASS = process.env.DASHBOARD_PASSWORD || "hotel2024";
 
-app.use("/stripe/webhook", express.raw({ type: "application/json" }));
+app.use("/payments/webhook", express.raw({ type: "application/json" }));
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
