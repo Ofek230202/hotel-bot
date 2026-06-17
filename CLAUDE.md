@@ -27,6 +27,16 @@ code must live behind one isolated abstraction layer with a MOCK implementation*
 behaves as if a deposit was taken and shows a confirmation, without charging. Swapping in a real
 provider later must touch **one place only**.
 
+**Future — full payment policy (לתעד, לא לבנות עכשיו):** today payments cover only the
+check-in **security deposit** (authorize → capture/cancel at check-out). A complete system will
+need a real **payment policy** on top of the same isolated provider layer:
+- **Payment for the stay itself** (room nights / the actual reservation amount), not just a deposit.
+- **Advances / deposits up front** (מקדמות) — partial pre-payment at booking, balance later.
+- **Payment at reception on a different card** — let the guest settle (or top up) with a card other
+  than the one used for the deposit authorization.
+All of this must still flow through the single `payments/` abstraction (one place to swap providers)
+— do not re-couple stay/advance/alternate-card charging to a specific vendor.
+
 **Near-term target:** run **multiple hotels in parallel (multi-tenant)** with correct isolation
 between hotels and stable state.
 
@@ -144,11 +154,16 @@ Priority order (to be decided together):
 - [ ] **P0 — Persistence.** Move sessions/reservations/alerts out of RAM into a datastore.
 - [ ] **P1 — Multi-tenant.** Per-hotel config + `hotelId`-namespaced state + tenant resolution
       from the inbound number.
-- [ ] **P1 — Fix checkout reachability** (set `session.stage` correctly; link session↔reservation).
+- [x] **P1 — Fix checkout reachability** (set `session.stage` correctly; link session↔reservation).
+      Done: `completeCheckin` now marks the session `checked_in` + stores `reservationId`/`roomNumber`;
+      checkout shows the full bill, asks for confirmation, then charges the deposit (3 cases).
 - [ ] **P1 — Email routing** for department dispatch (email + WhatsApp), per goal #4.
 - [ ] **P2 — Harden:** Twilio webhook signature validation, rate limiting, idempotency/dedup of
       inbound webhooks, structured logging, currency → ILS, remove hardcoded room/hotel strings.
 - [ ] **P2 — Make `getSession` side-effect free**; separate read vs. mutate.
+- [ ] **P2 — Full payment policy** (see §1): charge for the stay itself, advances/deposits
+      (מקדמות) at booking, and payment at reception on a different card — all through the existing
+      `payments/` abstraction. (Documented only; not built yet.)
 - [ ] **P3 — Tests** for the check-in/out state machine and payment provider.
 
 ---

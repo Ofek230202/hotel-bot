@@ -6,7 +6,7 @@ import dotenv    from "dotenv";
 import { handleIncoming, wa, notifyStaff } from "./bot.js";
 import { allSessions, sessions, staffAlerts, incidents, stats } from "./state.js";
 import { hotelConfig, updateConfig } from "./config.js";
-import { reservations } from "./checkin.js";
+import { reservations, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES } from "./checkin.js";
 import checkinRouter from "./checkin-routes.js";
 
 dotenv.config();
@@ -89,6 +89,57 @@ app.post("/api/alert", auth, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── DEMO: add a charge to a room's folio ──────────────
+// POST /api/charge  { room | reservationId, amount (₪), category?, description? }
+// משמש לבדיקת הצ'ק אאוט — מוסיף חיוב לחשבון של חדר פעיל.
+app.post("/api/charge", auth, (req, res) => {
+  const { room, roomNumber, reservationId, amount, category, description } = req.body;
+  const targetRoom = String(room ?? roomNumber ?? "");
+
+  const reservation = reservationId
+    ? reservations[reservationId]
+    : Object.values(reservations).find(
+        r => r.roomNumber === targetRoom && r.stage === "checked_in"
+      );
+
+  if (!reservation) {
+    return res.status(404).json({ error: "No active (checked-in) reservation for that room/id" });
+  }
+
+  const shekels = Number(amount);
+  if (!Number.isFinite(shekels) || shekels <= 0) {
+    return res.status(400).json({ error: "amount (in ₪, positive number) required" });
+  }
+
+  const cat = category && FOLIO_CATEGORIES[category] ? category : "OTHER";
+  addFolioItem(reservation.id, cat, description || FOLIO_CATEGORIES[cat][ "he" ], Math.round(shekels * 100));
+
+  res.json({
+    ok: true,
+    reservationId: reservation.id,
+    room: reservation.roomNumber,
+    added: { category: cat, description: description || FOLIO_CATEGORIES[cat].he, amount: shekels },
+    folioTotal: getFolioTotal(reservation.id) / 100,
+  });
+});
+
+// ── DEMO: view a room's folio (for verifying charges) ─
+app.get("/api/folio/:room", auth, (req, res) => {
+  const reservation = Object.values(reservations).find(
+    r => r.roomNumber === String(req.params.room) && r.stage === "checked_in"
+  );
+  if (!reservation) return res.status(404).json({ error: "No active reservation for that room" });
+  res.json({
+    reservationId: reservation.id,
+    room: reservation.roomNumber,
+    guestName: reservation.guestName,
+    deposit: reservation.deposit / 100,
+    folio: reservation.folio.map(i => ({ ...i, amount: i.amount / 100 })),
+    total: getFolioTotal(reservation.id) / 100,
+    preview: formatFolio(reservation, "he"),
+  });
 });
 
 app.get("/api/alerts", auth, (req, res) => res.json(staffAlerts));

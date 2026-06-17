@@ -3,7 +3,7 @@
 // ════════════════════════════════════════════════════════
 import { v4 as uuidv4 } from "uuid";
 import { wa } from "./bot.js";
-import { logAlert, stats } from "./state.js";
+import { logAlert, stats, patchSession } from "./state.js";
 import { payments, PAYMENT_CURRENCY } from "./payments/index.js";
 
 const BASE_URL = process.env.BASE_URL;
@@ -68,6 +68,18 @@ export async function completeCheckin(reservationId, roomNumber) {
   res.checkedInAt = new Date().toISOString();
   res.paidAt      = new Date().toISOString();
   stats.checkIns++;
+
+  // ── קישור session ↔ reservation (Bug #3) ─────────────
+  // מסמן את ה-session כ-checked_in ושומר reservationId + roomNumber,
+  // כדי שזרימת הצ'ק אאוט תהיה נגישה דרך הצ'אט.
+  patchSession(res.phone, {
+    stage:         "checked_in",
+    reservationId: res.id,
+    roomNumber:    res.roomNumber,
+    guestName:     res.guestName,
+    checkinStage:  null,
+    checkInAt:     res.checkedInAt,
+  });
 
   await wa(res.phone,
     `✅ *צ'ק אין אושר!*\n\n` +

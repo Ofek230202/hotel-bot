@@ -42,6 +42,7 @@ export function pushHistory(phone, role, content) {
 }
 
 export function patchSession(phone, patch) {
+  if (!sessions[phone]) getSession(phone);
   Object.assign(sessions[phone], patch);
 }
 

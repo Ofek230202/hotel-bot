@@ -7,7 +7,7 @@ import dotenv    from "dotenv";
 import { hotelConfig }                                    from "./config.js";
 import { getSession, pushHistory, patchSession, logAlert, logIncident, stats, sessions } from "./state.js";
 import { detectLang }                                     from "./i18n.js";
-import { startCheckin, processCheckout }                  from "./checkin.js";
+import { startCheckin, processCheckout, getActiveReservation, formatFolio } from "./checkin.js";
 import { email }                                          from "./email/index.js";
 
 dotenv.config();
@@ -273,13 +273,45 @@ async function handleCheckin(phone, text, lang) {
   }
 }
 
-async function handleCheckout(phone, session, lang) {
+function isAffirmative(text) {
+  const t = text.replace(/['''`״׳.!]/g, "").toLowerCase().trim();
+  return ["כן", "yes", "yep", "yeah", "yup", "אישור", "מאשר", "מאשרת", "אוקיי", "אוקי",
+          "בסדר", "סבבה", "ok", "okay", "confirm", "y", "כן בבקשה", "מאשר/ת"].includes(t);
+}
+
+function isNegative(text) {
+  const t = text.replace(/['''`״׳.!]/g, "").toLowerCase().trim();
+  return ["לא", "no", "nope", "ביטול", "בטל", "בטלי", "cancel", "n", "עוד לא", "לא עכשיו"].includes(t);
+}
+
+// שלב 1 — מציג לאורח את כל החיובים ומבקש אישור
+async function startCheckout(phone, lang) {
+  const res = getActiveReservation(phone);
+  if (!res) {
+    await wa(phone, lang === "he"
+      ? "לא מצאתי הזמנה פעילה על שמך. אנא פנה לקבלה בשלוחה 0."
+      : "No active reservation found. Please contact reception at Ext. 0.");
+    return;
+  }
+  patchSession(phone, { checkoutStage: "awaiting_confirmation" });
+  const bill = formatFolio(res, lang);
+  const header = lang === "he"
+    ? `🚪 *בקשת צ'ק אאוט*\n\nלהלן סיכום מלא של החיובים שלך:\n\n`
+    : `🚪 *Check-out request*\n\nHere is a full summary of your charges:\n\n`;
+  const footer = lang === "he"
+    ? `\n\nלאישור הצ'ק אאוט (כולל חיוב מהפיקדון במידת הצורך), השב *כן*.\nלביטול, השב *לא*.`
+    : `\n\nReply *yes* to confirm check-out (deposit will be charged if needed).\nReply *no* to cancel.`;
+  await wa(phone, header + bill + footer);
+}
+
+// שלב 2 — מבצע בפועל: מחייב מהפיקדון לפי שלושת המקרים
+async function confirmCheckout(phone, session, lang) {
   try {
-    await processCheckout(phone, null);
-    patchSession(phone, { stage: "checked_out", checkinStage: null });
-    stats.checkOuts++;
+    await processCheckout(phone, session.reservationId || null);
+    patchSession(phone, { stage: "checked_out", checkinStage: null, checkoutStage: null });
   } catch (e) {
     console.error("Checkout error:", e.message);
+    patchSession(phone, { checkoutStage: null });
     await wa(phone, lang === "he"
       ? "לא מצאתי הזמנה פעילה על שמך. אנא פנה לקבלה בשלוחה 0."
       : "No active reservation found. Please contact reception at Ext. 0.");
@@ -310,8 +342,25 @@ export async function handleIncoming(phone, text) {
     return;
   }
 
+  // אורח שנמצא באמצע אישור צ'ק אאוט — מטפלים בתשובה כן/לא
+  if (session.checkoutStage === "awaiting_confirmation") {
+    if (isNegative(text)) {
+      patchSession(phone, { checkoutStage: null });
+      await wa(phone, lang === "he"
+        ? "הצ'ק אאוט בוטל. אנחנו כאן אם תצטרך משהו נוסף 😊"
+        : "Check-out cancelled. We're here if you need anything else 😊");
+    } else if (isAffirmative(text)) {
+      await confirmCheckout(phone, session, lang);
+    } else {
+      await wa(phone, lang === "he"
+        ? "לאישור הצ'ק אאוט השב *כן*, או *לא* לביטול."
+        : "Reply *yes* to confirm check-out, or *no* to cancel.");
+    }
+    return;
+  }
+
   if (isCheckoutIntent(text) && session.stage === "checked_in") {
-    await handleCheckout(phone, session, lang);
+    await startCheckout(phone, lang);
     return;
   }
 
