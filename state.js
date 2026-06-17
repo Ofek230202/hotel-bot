@@ -5,7 +5,8 @@ import { v4 as uuidv4 } from "uuid";
 
 export const sessions   = {};   // phone → GuestSession
 export const staffAlerts = [];  // log of all staff notifications
-export let   stats = { totalMessages: 0, checkIns: 0, checkOuts: 0, serviceRequests: 0 };
+export const incidents   = [];  // structured log of every emergency incident
+export let   stats = { totalMessages: 0, checkIns: 0, checkOuts: 0, serviceRequests: 0, emergencies: 0 };
 
 // ── GuestSession schema ───────────────────────────────
 export function getSession(phone) {
@@ -47,6 +48,17 @@ export function patchSession(phone, patch) {
 export function logAlert(alert) {
   staffAlerts.unshift({ ...alert, id: uuidv4(), at: new Date().toISOString() });
   if (staffAlerts.length > 200) staffAlerts.pop();
+}
+
+// ── Emergency incident log ────────────────────────────
+// תיעוד מובנה של כל אירוע חירום — נשמר בנפרד מהתראות הרגילות
+// כדי שיהיה ניתן לעקוב, לבדוק שטופל, ולתחקר בדיעבד.
+export function logIncident(incident) {
+  const rec = { ...incident, id: uuidv4(), at: new Date().toISOString(), status: incident.status || "open" };
+  incidents.unshift(rec);
+  if (incidents.length > 500) incidents.pop();
+  stats.emergencies++;
+  return rec;
 }
 
 export function allSessions() {

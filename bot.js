@@ -5,9 +5,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import twilio    from "twilio";
 import dotenv    from "dotenv";
 import { hotelConfig }                                    from "./config.js";
-import { getSession, pushHistory, patchSession, logAlert, stats, sessions } from "./state.js";
+import { getSession, pushHistory, patchSession, logAlert, logIncident, stats, sessions } from "./state.js";
 import { detectLang }                                     from "./i18n.js";
 import { startCheckin, processCheckout }                  from "./checkin.js";
+import { email }                                          from "./email/index.js";
 
 dotenv.config();
 
@@ -33,14 +34,35 @@ export async function notifyStaff({ dept, roomNumber, guestName, message, priori
     reception:    hotelConfig.reception_number,
     maintenance:  hotelConfig.maintenance_number,
     concierge:    hotelConfig.concierge_number,
+    security:     hotelConfig.security_number,
   };
-  const to = numberMap[dept];
-  if (!to) return;
-  const emoji = { housekeeping: "🧹", reception: "🏨", maintenance: "🔧", concierge: "⭐" }[dept] || "🔔";
+  const emailMap = {
+    housekeeping: hotelConfig.housekeeping_email,
+    reception:    hotelConfig.reception_email,
+    maintenance:  hotelConfig.maintenance_email,
+    concierge:    hotelConfig.concierge_email,
+    security:     hotelConfig.security_email,
+  };
+  const emoji = { housekeeping: "🧹", reception: "🏨", maintenance: "🔧", concierge: "⭐", security: "🚨" }[dept] || "🔔";
   const urgency = priority === "high" ? "🚨 *דחוף* 🚨\n" : "";
   const { full } = israelTime();
   const body = `${urgency}${emoji} *${dept.toUpperCase()}*\n\n👤 אורח: ${guestName || "—"}\n🚪 חדר: ${roomNumber || "—"}\n📝 ${message}\n⏰ ${full}`;
-  try { await wa(to, body); } catch (e) { console.error("Staff notify failed:", e.message); }
+
+  // ── ערוץ 1: וואטסאפ ──────────────────────────────────
+  const to = numberMap[dept];
+  if (to) {
+    try { await wa(to, body); } catch (e) { console.error("Staff notify (WhatsApp) failed:", e.message); }
+  }
+
+  // ── ערוץ 2: מייל (דרך שכבת המייל המבודדת) ────────────
+  const toEmail = emailMap[dept];
+  if (toEmail) {
+    const subject = `${priority === "high" ? "🚨 דחוף — " : ""}${dept.toUpperCase()} | חדר ${roomNumber || "—"} | ${guestName || "—"}`;
+    try {
+      await email.send({ to: toEmail, subject, body, dept, priority, meta: { roomNumber, guestName, message } });
+    } catch (e) { console.error("Staff notify (email) failed:", e.message); }
+  }
+
   logAlert({ dept, roomNumber, guestName, message, priority });
   stats.serviceRequests++;
 }
@@ -84,6 +106,15 @@ function buildPrompt(session, lang) {
 ענה תמיד בעברית תקינה, חמה ואלגנטית. משפטים קצרים וברורים.
 השעה הנוכחית בישראל: ${nowFull}
 
+🚨 חירום — עדיפות עליונה, לפני כל דבר אחר:
+אם האורח מתאר פציעה, מצב רפואי, אש, ריח/דליפת גז, או סכנה מיידית — זהה זאת מיד (לפי המשמעות, לא לפי מילה מסוימת):
+1. הגב מיד ובקצרה. אל תשאל שאלות מיותרות ואל תנהל סמול-טוק.
+2. מקרה רפואי / פציעה → הנחה את האורח להתקשר *מיד ל-101 (מד"א)*.
+   אש / גז → הנחה אותו *מיד ל-102 (כבאות)*, לצאת מהחדר ולהתרחק.
+3. תן 1-2 הוראות בטיחות קצרות וברורות והרגע את האורח.
+4. הוסף תמיד בסוף תגובתך את התג [EMERGENCY:<סוג + תיאור קצר>] — כדי שצוות הביטחון יקבל התראה דחופה ואיש צוות אנושי ייצור קשר.
+לעולם אל תסתמך על עצמך בלבד באירוע חירום — חובה להסלים לאדם דרך התג [EMERGENCY:...].
+
 כללים:
 - אסור לטפל בצ׳ק אין או צ׳ק אאוט — המערכת מטפלת בזה אוטומטית
 - אל תמציא מידע שאינו כתוב כאן
@@ -112,12 +143,22 @@ ${faqs}
 [HK_URGENT:<תיאור>] — ניקיון דחוף
 [MAINTENANCE:<תיאור>] — תקלה טכנית
 [CONCIERGE:<תיאור>] — הזמנת שולחן / מונית / בקשה מיוחדת
-[RECEPTION:<תיאור>] — העברה לנציג אנושי`;
+[RECEPTION:<תיאור>] — העברה לנציג אנושי
+[EMERGENCY:<סוג + תיאור>] — חירום (פציעה / רפואי / אש / גז / סכנה) — הסלמה דחופה לביטחון`;
   }
 
   return `You are the digital concierge of ${cfg.name}, a 5-star luxury hotel.
 Always respond in elegant, warm English. Short, clear sentences.
 Current time in Israel: ${nowFull}
+
+🚨 EMERGENCY — highest priority, before anything else:
+If the guest describes an injury, a medical event, fire, a gas smell/leak, or immediate danger — recognize it instantly (by meaning, not by a specific keyword):
+1. Respond immediately and briefly. Do not ask unnecessary questions or make small talk.
+2. Medical / injury → instruct the guest to *call 101 (Magen David Adom) now*.
+   Fire / gas → instruct them to *call 102 (Fire & Rescue) now*, leave the room and move away.
+3. Give 1-2 short, clear safety instructions and reassure the guest.
+4. Always append the tag [EMERGENCY:<type + short description>] at the end — so security is alerted urgently and a human staff member reaches out.
+Never rely on yourself alone in an emergency — you MUST escalate to a human via the [EMERGENCY:...] tag.
 
 Rules:
 - Never handle check-in or check-out yourself — the system does this automatically
@@ -147,24 +188,40 @@ Internal commands (add at end of reply on a new line, guest never sees these):
 [HK_URGENT:<description>] — urgent housekeeping
 [MAINTENANCE:<description>] — technical issue
 [CONCIERGE:<description>] — restaurant/taxi/special request
-[RECEPTION:<description>] — escalate to human agent`;
+[RECEPTION:<description>] — escalate to human agent
+[EMERGENCY:<type + description>] — emergency (injury/medical/fire/gas/danger) — urgent escalation to security`;
 }
 
 async function runActions(raw, session, phone) {
-  const re = /\[(HK|HK_URGENT|MAINTENANCE|CONCIERGE|RECEPTION):([^\]]*)\]/g;
+  const re = /\[(HK|HK_URGENT|MAINTENANCE|CONCIERGE|RECEPTION|EMERGENCY):([^\]]*)\]/g;
   let m;
   while ((m = re.exec(raw)) !== null) {
     const [, type, payload] = m;
     const dept = {
       HK: "housekeeping", HK_URGENT: "housekeeping",
-      MAINTENANCE: "maintenance", CONCIERGE: "concierge", RECEPTION: "reception"
+      MAINTENANCE: "maintenance", CONCIERGE: "concierge", RECEPTION: "reception",
+      EMERGENCY: "security",
     }[type];
+    const priority = type.includes("URGENT") || type === "RECEPTION" || type === "EMERGENCY"
+      ? "high" : "normal";
+
+    // ── חירום: תיעוד מובנה של האירוע לפני ההסלמה ────────
+    if (type === "EMERGENCY") {
+      logIncident({
+        phone,
+        roomNumber: session.roomNumber,
+        guestName:  session.guestName,
+        description: payload.trim(),
+        channel: "whatsapp",
+      });
+    }
+
     await notifyStaff({
       dept,
       roomNumber: session.roomNumber,
       guestName: session.guestName,
       message: payload,
-      priority: type.includes("URGENT") || type === "RECEPTION" ? "high" : "normal"
+      priority,
     });
   }
   return raw.replace(re, "").replace(/\n{3,}/g, "\n\n").trim();

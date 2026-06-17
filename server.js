@@ -4,7 +4,7 @@
 import express   from "express";
 import dotenv    from "dotenv";
 import { handleIncoming, wa, notifyStaff } from "./bot.js";
-import { allSessions, sessions, staffAlerts, stats } from "./state.js";
+import { allSessions, sessions, staffAlerts, incidents, stats } from "./state.js";
 import { hotelConfig, updateConfig } from "./config.js";
 import { reservations } from "./checkin.js";
 import checkinRouter from "./checkin-routes.js";
@@ -92,6 +92,7 @@ app.post("/api/alert", auth, async (req, res) => {
 });
 
 app.get("/api/alerts", auth, (req, res) => res.json(staffAlerts));
+app.get("/api/incidents", auth, (req, res) => res.json(incidents));
 app.get("/api/config", auth, (req, res) => res.json(hotelConfig));
 app.post("/api/config", auth, (req, res) => { updateConfig(req.body); res.json({ ok: true }); });
 app.get("/health", (req, res) => res.json({ status: "ok", uptime: process.uptime() }));

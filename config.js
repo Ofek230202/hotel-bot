@@ -14,6 +14,14 @@ export let hotelConfig = {
   reception_number:    "whatsapp:+9727654321",
   maintenance_number:  "whatsapp:+9729876543",
   concierge_number:    "whatsapp:+9721112233",
+  security_number:     "whatsapp:+9725556677",   // ביטחון / מנהל תורן — להסלמת חירום
+
+  // ── Internal contacts (Email per department) ─────────
+  housekeeping_email: "housekeeping@kempinski-demo.co.il",
+  reception_email:    "reception@kempinski-demo.co.il",
+  maintenance_email:  "maintenance@kempinski-demo.co.il",
+  concierge_email:    "concierge@kempinski-demo.co.il",
+  security_email:     "security@kempinski-demo.co.il",
 
   // ── Timing ───────────────────────────────────────────
   checkin_time:  "15:00",
