@@ -3,10 +3,16 @@
 // ════════════════════════════════════════════════════════
 import { v4 as uuidv4 } from "uuid";
 import { wa } from "./bot.js";
-import { logAlert, stats, patchSession } from "./state.js";
+import { logAlert, stats, patchSession, sessions } from "./state.js";
 import { payments, PAYMENT_CURRENCY } from "./payments/index.js";
 
-const BASE_URL = process.env.BASE_URL;
+// נקרא תמיד בזמן-קריאה (lazy), אחרי ש-dotenv.config() כבר רץ.
+// אם נשמר כקבוע בראש הקובץ הוא נתפס כ-undefined בגלל סדר טעינת המודולים
+// (checkin.js מיובא לפני ש-dotenv.config() רץ ב-bot.js/server.js) — מה שגרם
+// לקישורי תשלום מסוג "undefined/checkin/success...".
+function baseUrl() {
+  return process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+}
 
 export const reservations = {};
 
@@ -47,8 +53,8 @@ export async function startCheckin(phone, guestName, reservationId) {
     guestName,
     phone,
     description: "פיקדון שהייה — Kempinski Hotel",
-    successUrl: `${BASE_URL}/checkin/success?rid=${id}`,
-    cancelUrl:  `${BASE_URL}/checkin/cancel?rid=${id}`,
+    successUrl: `${baseUrl()}/checkin/success?rid=${id}`,
+    cancelUrl:  `${baseUrl()}/checkin/cancel?rid=${id}`,
   });
 
   reservations[id].paymentId  = auth.paymentId;
@@ -81,16 +87,26 @@ export async function completeCheckin(reservationId, roomNumber) {
     checkInAt:     res.checkedInAt,
   });
 
-  await wa(res.phone,
-    `✅ *צ'ק אין אושר!*\n\n` +
-    `ברוכים הבאים, *${res.guestName}*! 🌟\n\n` +
-    `🚪 *חדר:* ${res.roomNumber}\n` +
-    `💳 *פיקדון ₪500* — יטופל בצ'ק אאוט\n` +
-    `📶 WiFi: Kempinski_Guest | Welcome2024\n\n` +
-    `🍳 ארוחת בוקר: 07:00–11:00\n` +
-    `🏊 בריכה: 07:00–22:00 | גג קומה 12\n` +
-    `🛎️ שירות לחדר: 24/7 | שלוחה 0\n\n` +
-    `לכל בקשה — אני כאן! 😊`
+  const he = (sessions[res.phone]?.lang || "he") === "he";
+  await wa(res.phone, he
+    ? `✅ *צ'ק אין אושר!*\n\n` +
+      `ברוכים הבאים, *${res.guestName}*! 🌟\n\n` +
+      `🚪 *חדר:* ${res.roomNumber}\n` +
+      `🔒 *פיקדון ₪500* — מוקפא להבטחת השהייה. בצ'ק אאוט ינוכו ממנו חיובים אם יהיו, והיתרה תוחזר לכרטיסך\n` +
+      `📶 WiFi: Kempinski_Guest | Welcome2024\n\n` +
+      `🍳 ארוחת בוקר: 07:00–11:00\n` +
+      `🏊 בריכה: 07:00–22:00 | גג קומה 12\n` +
+      `🛎️ שירות לחדר: 24/7 | שלוחה 0\n\n` +
+      `לכל בקשה — אני כאן! 😊`
+    : `✅ *Check-in confirmed!*\n\n` +
+      `Welcome, *${res.guestName}*! 🌟\n\n` +
+      `🚪 *Room:* ${res.roomNumber}\n` +
+      `🔒 *₪500 deposit* — held to secure your stay. At check-out any charges are deducted from it and the balance is refunded to your card\n` +
+      `📶 WiFi: Kempinski_Guest | Welcome2024\n\n` +
+      `🍳 Breakfast: 07:00–11:00\n` +
+      `🏊 Pool: 07:00–22:00 | Rooftop, Level 12\n` +
+      `🛎️ Room service: 24/7 | Ext. 0\n\n` +
+      `I'm here for anything you need! 😊`
   );
 
   await logAlert({
@@ -154,16 +170,16 @@ export function formatFolio(res, lang = "he") {
 }
 
 // ── Process check-out ─────────────────────────────────
-export async function processCheckout(phone, reservationId) {
+export async function processCheckout(phone, reservationId, lang = "he") {
   const res = reservationId
     ? reservations[reservationId]
     : Object.values(reservations).find(r => r.phone === phone && r.stage === "checked_in");
 
   if (!res) throw new Error("No active reservation found");
 
+  const he      = lang === "he";
   const total   = getFolioTotal(res.id);
   const deposit = res.deposit;
-  const lang    = "he";
 
   res.stage        = "checked_out";
   res.checkedOutAt = new Date().toISOString();
@@ -174,12 +190,17 @@ export async function processCheckout(phone, reservationId) {
     try { await payments.cancel({ paymentId: res.paymentId }); } catch(e) {}
     res.refunded = true;
 
-    await wa(res.phone,
-      `🚪 *צ'ק אאוט הושלם!*\n\n` +
-      `תודה, *${res.guestName}*! שמחנו לארח אותך 🌟\n\n` +
-      `✅ אין חיובים נוספים\n` +
-      `💳 *פיקדון ₪500 בוטל* — לא חויית דבר\n\n` +
-      `נשמח לראותך שוב! ⭐`
+    await wa(res.phone, he
+      ? `🚪 *צ'ק אאוט הושלם!*\n\n` +
+        `תודה, *${res.guestName}*! שמחנו לארח אותך 🌟\n\n` +
+        `✅ אין חיובים נוספים\n` +
+        `💳 *הפיקדון בסך ₪500 שוחרר במלואו* — לא בוצע חיוב\n\n` +
+        `נשמח לראותך שוב! ⭐`
+      : `🚪 *Check-out complete!*\n\n` +
+        `Thank you, *${res.guestName}*! It was a pleasure hosting you 🌟\n\n` +
+        `✅ No additional charges\n` +
+        `💳 *Your ₪500 deposit was released in full* — nothing was charged\n\n` +
+        `We hope to see you again! ⭐`
     );
   }
 
@@ -194,14 +215,21 @@ export async function processCheckout(phone, reservationId) {
     const charged = (total/100).toFixed(2);
     const refund  = ((deposit-total)/100).toFixed(2);
 
-    await wa(res.phone,
-      `🚪 *צ'ק אאוט הושלם!*\n\n` +
-      `תודה, *${res.guestName}*! 🌟\n\n` +
-      formatFolio(res, lang) + "\n\n" +
-      `💳 *חויב מהפיקדון: ₪${charged}*\n` +
-      `💚 *יוחזר לכרטיסך: ₪${refund}*\n` +
-      `⏱ תוך 3-5 ימי עסקים\n\n` +
-      `נשמח לראותך שוב! ⭐`
+    await wa(res.phone, he
+      ? `🚪 *צ'ק אאוט הושלם!*\n\n` +
+        `תודה, *${res.guestName}*! 🌟\n\n` +
+        formatFolio(res, lang) + "\n\n" +
+        `💳 *נוכה מהפיקדון: ₪${charged}*\n` +
+        `💚 *יתרת הפיקדון שתוחזר לכרטיסך: ₪${refund}*\n` +
+        `⏱ תוך 3-5 ימי עסקים\n\n` +
+        `נשמח לראותך שוב! ⭐`
+      : `🚪 *Check-out complete!*\n\n` +
+        `Thank you, *${res.guestName}*! 🌟\n\n` +
+        formatFolio(res, lang) + "\n\n" +
+        `💳 *Deducted from your deposit: ₪${charged}*\n` +
+        `💚 *Remaining deposit refunded to your card: ₪${refund}*\n` +
+        `⏱ Within 3-5 business days\n\n` +
+        `We hope to see you again! ⭐`
     );
   }
 
@@ -222,26 +250,34 @@ export async function processCheckout(phone, reservationId) {
       reservationId: res.id,
       amount: balance,
       currency: PAYMENT_CURRENCY,
-      description: `יתרת חשבון — חדר ${res.roomNumber} · ${res.guestName}`,
-      successUrl: `${BASE_URL}/checkout/paid?rid=${res.id}`,
-      cancelUrl:  `${BASE_URL}/checkout/skip?rid=${res.id}`,
+      description: he
+        ? `יתרת חשבון — חדר ${res.roomNumber} · ${res.guestName}`
+        : `Balance due — Room ${res.roomNumber} · ${res.guestName}`,
+      successUrl: `${baseUrl()}/checkout/paid?rid=${res.id}`,
+      cancelUrl:  `${baseUrl()}/checkout/skip?rid=${res.id}`,
     });
 
     res.balanceAmount     = balance;
     res.balancePaymentUrl = balPayment.redirectUrl;
 
-    await wa(res.phone,
-      `🚪 *סיכום לצ'ק אאוט — חדר ${res.roomNumber}*\n\n` +
-      formatFolio(res, lang) + "\n\n" +
-      `💳 *פיקדון ₪500 — חויב אוטומטית*\n` +
-      `🔴 *יתרה לתשלום: ₪${balanceStr}*\n\n` +
-      `לתשלום היתרה:\n👉 ${res.balancePaymentUrl}\n\n` +
-      `_לשאלות: קבלה שלוחה 0_`
+    await wa(res.phone, he
+      ? `🚪 *סיכום לצ'ק אאוט — חדר ${res.roomNumber}*\n\n` +
+        formatFolio(res, lang) + "\n\n" +
+        `💳 *הפיקדון בסך ₪500 נוכה במלואו*\n` +
+        `🔴 *יתרה לתשלום: ₪${balanceStr}*\n\n` +
+        `לתשלום היתרה:\n👉 ${res.balancePaymentUrl}\n\n` +
+        `_לשאלות: קבלה שלוחה 0_`
+      : `🚪 *Check-out summary — Room ${res.roomNumber}*\n\n` +
+        formatFolio(res, lang) + "\n\n" +
+        `💳 *Your ₪500 deposit was deducted in full*\n` +
+        `🔴 *Balance due: ₪${balanceStr}*\n\n` +
+        `To pay the balance:\n👉 ${res.balancePaymentUrl}\n\n` +
+        `_Questions? Reception, Ext. 0_`
     );
 
     await logAlert({
       dept: "reception", roomNumber: res.roomNumber, guestName: res.guestName,
-      message: `⚠️ יתרה ₪${balanceStr} | פיקדון חויב אוטומטית | נשלח קישור`,
+      message: `⚠️ יתרה ₪${balanceStr} | פיקדון נוכה במלואו | נשלח קישור`,
       priority: "high",
     });
   }

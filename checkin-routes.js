@@ -134,7 +134,7 @@ h1{font-family:'Playfair Display',serif;font-size:28px;margin-bottom:8px}
     <div class="wifi-info">Kempinski_Guest<br>סיסמה: Welcome2024</div>
   </div>
 
-  <p class="deposit-note">💳 הפיקדון של ₪500 יוחזר אוטומטית לכרטיסך תוך 3-5 ימי עסקים לאחר הצ'ק אאוט.</p>
+  <p class="deposit-note">🔒 הפיקדון בסך ₪500 מוקפא בכרטיסך להבטחת השהייה. בצ'ק אאוט ינוכו ממנו חיובים אם יהיו, והיתרה תוחזר לכרטיסך תוך 3-5 ימי עסקים.</p>
   ` : ''}
 
   <a href="https://wa.me/14155238886" class="back-btn">💬 חזור לצ'אט</a>

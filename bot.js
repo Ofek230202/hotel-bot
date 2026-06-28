@@ -110,10 +110,11 @@ function buildPrompt(session, lang) {
 אם האורח מתאר פציעה, מצב רפואי, אש, ריח/דליפת גז, או סכנה מיידית — זהה זאת מיד (לפי המשמעות, לא לפי מילה מסוימת):
 1. הגב מיד ובקצרה. אל תשאל שאלות מיותרות ואל תנהל סמול-טוק.
 2. מקרה רפואי / פציעה → הנחה את האורח להתקשר *מיד ל-101 (מד"א)*.
-   אש / גז → הנחה אותו *מיד ל-102 (כבאות)*, לצאת מהחדר ולהתרחק.
-3. תן 1-2 הוראות בטיחות קצרות וברורות והרגע את האורח.
-4. הוסף תמיד בסוף תגובתך את התג [EMERGENCY:<סוג + תיאור קצר>] — כדי שצוות הביטחון יקבל התראה דחופה ואיש צוות אנושי ייצור קשר.
-לעולם אל תסתמך על עצמך בלבד באירוע חירום — חובה להסלים לאדם דרך התג [EMERGENCY:...].
+   אש / גז → הנחה אותו *מיד ל-102 (כבאות)*, לצאת מהחדר ולהתרחק למקום בטוח.
+3. הבהר לאורח: *"צוות הביטחון של המלון קיבל התראה ומטפל בכך כעת."* אל תבטיח שאדם מסוים בדרך ואל תנקוב בשם.
+4. ⛔ אסור לך בשום אופן לתת הנחיות רפואיות, עזרה ראשונה או טיפול מכל סוג — לרבות אם לזוז או לא לזוז, ללחוץ על פצע, לתת תרופה, להזיז פצוע וכד'. אמור במפורש שאינך מוסמך לתת הנחיות רפואיות, ושיש לפעול אך ורק לפי הנחיות מוקד 101.
+5. הוסף תמיד בסוף תגובתך את התג [EMERGENCY:<סוג + תיאור קצר>] — כדי שצוות הביטחון יקבל התראה דחופה (וואטסאפ + מייל) ויטופל על ידי אדם.
+לעולם אל תסתמך על עצמך בלבד באירוע חירום — חובה להסלים דרך התג [EMERGENCY:...].
 
 כללים:
 - אסור לטפל בצ׳ק אין או צ׳ק אאוט — המערכת מטפלת בזה אוטומטית
@@ -155,10 +156,11 @@ Current time in Israel: ${nowFull}
 If the guest describes an injury, a medical event, fire, a gas smell/leak, or immediate danger — recognize it instantly (by meaning, not by a specific keyword):
 1. Respond immediately and briefly. Do not ask unnecessary questions or make small talk.
 2. Medical / injury → instruct the guest to *call 101 (Magen David Adom) now*.
-   Fire / gas → instruct them to *call 102 (Fire & Rescue) now*, leave the room and move away.
-3. Give 1-2 short, clear safety instructions and reassure the guest.
-4. Always append the tag [EMERGENCY:<type + short description>] at the end — so security is alerted urgently and a human staff member reaches out.
-Never rely on yourself alone in an emergency — you MUST escalate to a human via the [EMERGENCY:...] tag.
+   Fire / gas → instruct them to *call 102 (Fire & Rescue) now*, leave the room and move to a safe place.
+3. Tell the guest clearly: *"The hotel's security team has been alerted and is handling this now."* Do not promise that a specific person is on the way or name anyone.
+4. ⛔ You must NEVER give medical, first-aid, or treatment instructions of any kind — including whether to move or stay still, applying pressure to a wound, giving medication, moving an injured person, etc. State explicitly that you are not qualified to give medical guidance, and that they must follow the instructions of the 101 dispatcher only.
+5. Always append the tag [EMERGENCY:<type + short description>] at the end — so security is alerted urgently (WhatsApp + email) and a human handles it.
+Never rely on yourself alone in an emergency — you MUST escalate via the [EMERGENCY:...] tag.
 
 Rules:
 - Never handle check-in or check-out yourself — the system does this automatically
@@ -254,8 +256,8 @@ async function handleCheckin(phone, text, lang) {
     try {
       const { paymentUrl } = await startCheckin(phone, guestName, text);
       await wa(phone, lang === "he"
-        ? `✅ *הזמנה מספר ${text} אותרה בהצלחה!*\n\nשלב אחרון — *פיקדון שהייה* בסך ₪500.\n\n🔒 הפיקדון מאובטח לחלוטין ויוחזר אוטומטית לכרטיסך עם הצ׳ק אאוט.\n\nלחץ על הקישור לתשלום מאובטח:\n👉 ${paymentUrl}`
-        : `✅ *Reservation ${text} confirmed!*\n\nOne last step — a *₪500 security deposit*.\n\n🔒 Fully secured and automatically refunded at check-out.\n\nTap to pay securely:\n👉 ${paymentUrl}`);
+        ? `✅ *הזמנה מספר ${text} אותרה בהצלחה!*\n\nשלב אחרון — *פיקדון שהייה* בסך ₪500.\n\n🔒 הפיקדון אינו תשלום — הוא *מוקפא* בכרטיסך להבטחת השהייה. בצ'ק אאוט ינוכו ממנו חיובים אם יהיו, והיתרה תוחזר אליך במלואה.\n\nלחץ על הקישור לתשלום מאובטח:\n👉 ${paymentUrl}`
+        : `✅ *Reservation ${text} confirmed!*\n\nOne last step — a *₪500 security deposit*.\n\n🔒 The deposit is not a charge — it is *held* on your card to secure your stay. At check-out any charges are deducted from it, and the balance is refunded to you in full.\n\nTap to pay securely:\n👉 ${paymentUrl}`);
     } catch (e) {
       console.error("Checkin error:", e.message);
       await wa(phone, lang === "he"
@@ -307,7 +309,7 @@ async function startCheckout(phone, lang) {
 // שלב 2 — מבצע בפועל: מחייב מהפיקדון לפי שלושת המקרים
 async function confirmCheckout(phone, session, lang) {
   try {
-    await processCheckout(phone, session.reservationId || null);
+    await processCheckout(phone, session.reservationId || null, lang);
     patchSession(phone, { stage: "checked_out", checkinStage: null, checkoutStage: null });
   } catch (e) {
     console.error("Checkout error:", e.message);
@@ -359,7 +361,7 @@ export async function handleIncoming(phone, text) {
     return;
   }
 
-  if (isCheckoutIntent(text) && session.stage === "checked_in") {
+  if (isCheckoutIntent(text) && (session.stage === "checked_in" || getActiveReservation(phone))) {
     await startCheckout(phone, lang);
     return;
   }

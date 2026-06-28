@@ -634,7 +634,7 @@ textarea.finput{resize:vertical;min-height:90px;line-height:1.5}
             <div class="cfg-grid">
               <div class="fgroup"><label class="flabel">🧹 Housekeeping</label><input class="finput" id="c-hk" placeholder="whatsapp:+9721234567"></div>
               <div class="fgroup"><label class="flabel">🏨 קבלה</label><input class="finput" id="c-rec" placeholder="whatsapp:+9727654321"></div>
-              <div class="fgroup"><label class="flabel">🔧 תחזוקה</label><input class="finput" id="c-maint" placeholder="whatsapp:+9729876543"></div>
+              <div class="fgroup"><label class="flabel">🔧 אחזקה</label><input class="finput" id="c-maint" placeholder="whatsapp:+9729876543"></div>
               <div class="fgroup"><label class="flabel">⭐ קונסיירז'</label><input class="finput" id="c-conc" placeholder="whatsapp:+9721112233"></div>
             </div>
           </div>
@@ -685,7 +685,7 @@ textarea.finput{resize:vertical;min-height:90px;line-height:1.5}
         <select class="finput" id="m-dept">
           <option value="housekeeping">🧹 Housekeeping</option>
           <option value="reception">🏨 קבלה</option>
-          <option value="maintenance">🔧 תחזוקה</option>
+          <option value="maintenance">🔧 אחזקה</option>
           <option value="concierge">⭐ קונסיירז׳</option>
         </select>
       </div>
@@ -882,7 +882,7 @@ async function sendManual(){
 
 // ── ALERTS ────────────────────────────────────────────
 const deptIcon={housekeeping:'🧹',reception:'🏨',maintenance:'🔧',concierge:'⭐'};
-const deptName={housekeeping:'Housekeeping',reception:'קבלה',maintenance:'תחזוקה',concierge:'קונסיירז׳'};
+const deptName={housekeeping:'Housekeeping',reception:'קבלה',maintenance:'אחזקה',concierge:'קונסיירז׳'};
 
 function renderAlerts(){
   document.getElementById('alerts-count').textContent=alerts.length;
