@@ -44,6 +44,7 @@ export async function startCheckin(phone, guestName, reservationId) {
     paidAt: null, checkedInAt: null, checkedOutAt: null,
     refunded: false, captured: false, capturedAmount: 0,
     balanceAmount: 0, balancePaymentUrl: null,
+    confirmationSent: false, // הגנת idempotency — אישור צ'ק אין יישלח פעם אחת בלבד
   };
 
   const auth = await payments.authorizeDeposit({
@@ -53,6 +54,9 @@ export async function startCheckin(phone, guestName, reservationId) {
     guestName,
     phone,
     description: "פיקדון שהייה — Kempinski Hotel",
+    // עמוד התשלום (אצל ספק אמיתי — דף הסליקה המתארח שלו; אצל ה-Mock —
+    // דף תשלום הדמו הפנימי שלנו). לשם נשלח האורח כדי "לשלם".
+    paymentPageUrl: `${baseUrl()}/checkin/pay?rid=${id}`,
     successUrl: `${baseUrl()}/checkin/success?rid=${id}`,
     cancelUrl:  `${baseUrl()}/checkin/cancel?rid=${id}`,
   });
@@ -66,6 +70,15 @@ export async function startCheckin(phone, guestName, reservationId) {
 export async function completeCheckin(reservationId, roomNumber) {
   const res = reservations[reservationId];
   if (!res) throw new Error("Reservation not found");
+
+  // ── הגנת idempotency (Bug #2) ─────────────────────────
+  // דף האישור (GET /checkin/success) עלול להיטען כמה פעמים — preview
+  // crawlers של וואטסאפ, prefetch, רענון של האורח — וכל טעינה קראה
+  // ל-completeCheckin ושלחה שוב הודעת "צ'ק אין אושר" (נצפו 4 כפילויות).
+  // אם כבר נשלח אישור להזמנה הזו — לא שולחים שוב, פשוט מחזירים אותה.
+  if (res.confirmationSent) return res;
+  res.confirmationSent = true; // מסומן סינכרונית, לפני ה-await, כדי שטעינות
+                               // מקבילות לא יעקפו את ההגנה.
 
   // הפיקדון כבר אושר בשלב startCheckin (paymentId שמור) — אין צורך
   // לשלוף שום דבר מהספק כאן.

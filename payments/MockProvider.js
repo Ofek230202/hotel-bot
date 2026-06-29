@@ -12,12 +12,15 @@ import { v4 as uuidv4 } from "uuid";
 import { PaymentProvider } from "./PaymentProvider.js";
 
 export class MockProvider extends PaymentProvider {
-  // "הרשאת" פיקדון מצליחה תמיד. redirectUrl מצביע על דף
-  // האישור הפנימי של המלון, כדי לשמר את חווית "קישור → אישור".
-  async authorizeDeposit({ successUrl } = {}) {
+  // "הרשאת" פיקדון מצליחה תמיד. redirectUrl מצביע על עמוד התשלום:
+  // אצל ספק אמיתי (CardCom) זה דף הסליקה המתארח שלו; כאן ב-Mock זה
+  // דף תשלום הדמו הפנימי שלנו (paymentPageUrl). האורח "משלם" שם ורק
+  // אז מנותב לדף האישור (successUrl). אם לא סופק paymentPageUrl —
+  // נופלים בחזרה ל-successUrl כדי לא לשבור זרימות קיימות.
+  async authorizeDeposit({ paymentPageUrl, successUrl } = {}) {
     return {
       paymentId: `mock_auth_${uuidv4()}`,
-      redirectUrl: successUrl || null,
+      redirectUrl: paymentPageUrl || successUrl || null,
       status: "authorized",
     };
   }
