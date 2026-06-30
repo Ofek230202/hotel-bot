@@ -171,7 +171,7 @@ h1{font-family:'Playfair Display',serif;font-size:28px;margin-bottom:8px}
     <div class="wifi-info">Kempinski_Guest<br>סיסמה: Welcome2024</div>
   </div>
 
-  <p class="deposit-note">🔒 הפיקדון בסך ₪500 מוקפא בכרטיסך להבטחת השהייה. בצ'ק אאוט ינוכו ממנו חיובים אם יהיו, והיתרה תוחזר לכרטיסך תוך 3-5 ימי עסקים.</p>
+  <p class="deposit-note">🔒 הפיקדון בסך ₪500 מוקפא בכרטיסך להבטחת השהייה. בצ'ק אאוט ינוכו ממנו חיובים אם יהיו, וההקפאה על היתרה תשתחרר תוך 3-5 ימי עסקים.</p>
   ` : ''}
 
   <a href="https://wa.me/14155238886" class="back-btn">💬 חזור לצ'אט</a>
@@ -192,7 +192,7 @@ function paymentPage(rid, reservation, lang = "he") {
         sub: "הקפאת פיקדון מאובטחת",
         depositLabel: "סכום הפיקדון",
         holdNote:
-          "🔒 הפיקדון אינו חיוב — הוא מוקפא בכרטיסך להבטחת השהייה. בצ'ק אאוט ינוכו ממנו חיובים אם יהיו, והיתרה תוחזר אליך במלואה.",
+          "🔒 הפיקדון אינו חיוב — הוא מוקפא בכרטיסך להבטחת השהייה. בצ'ק אאוט ינוכו ממנו חיובים אם יהיו, וההקפאה על היתרה תשתחרר במלואה.",
         cardName: "שם בעל הכרטיס",
         cardNamePh: "כפי שמופיע על הכרטיס",
         cardNumber: "מספר כרטיס",
@@ -212,7 +212,7 @@ function paymentPage(rid, reservation, lang = "he") {
         sub: "Secure deposit hold",
         depositLabel: "Deposit amount",
         holdNote:
-          "🔒 The deposit is not a charge — it is held on your card to secure your stay. At check-out any charges are deducted from it, and the balance is refunded to you in full.",
+          "🔒 The deposit is not a charge — it is held on your card to secure your stay. At check-out any charges are deducted from it, and the remaining hold is released in full.",
         cardName: "Cardholder name",
         cardNamePh: "As shown on the card",
         cardNumber: "Card number",

@@ -9,6 +9,7 @@ import { getSession, pushHistory, patchSession, logAlert, logIncident, stats, se
 import { detectLang }                                     from "./i18n.js";
 import { startCheckin, processCheckout, getActiveReservation, formatFolio } from "./checkin.js";
 import { email }                                          from "./email/index.js";
+import { idVerify }                                       from "./idverify/index.js";
 
 dotenv.config();
 
@@ -248,7 +249,7 @@ async function runActions(raw, session, phone) {
   return raw.replace(re, "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-async function handleCheckin(phone, text, lang) {
+async function handleCheckin(phone, text, lang, media = null) {
   const session = getSession(phone);
   const stage = session.checkinStage;
 
@@ -269,14 +270,48 @@ async function handleCheckin(phone, text, lang) {
   }
 
   if (stage === "waiting_reservation") {
+    // שומרים את מספר ההזמנה ועוברים לשלב אימות הזהות (צילום ת"ז/דרכון),
+    // בדיוק כמו צ'ק אין במלון אמיתי — לפני שלב הפיקדון.
+    patchSession(phone, { checkinStage: "waiting_id", pendingReservation: text });
+    await wa(phone, lang === "he"
+      ? `✅ *הזמנה מספר ${text} אותרה!*\n\nכמו בכל מלון, נדרש *אימות זהות* לצ'ק אין.\n\n🪪 אנא צלם/י ושלח/י כאן *כתמונה* את תעודת הזהות או הדרכון שלך.\n\n🔐 התמונה משמשת לאימות בלבד ואינה נשמרת.`
+      : `✅ *Reservation ${text} found!*\n\nLike any hotel, we need to *verify your identity* to check in.\n\n🪪 Please take a photo of your *ID card or passport* and send it here *as an image*.\n\n🔐 The photo is used for verification only and is not stored.`);
+    return;
+  }
+
+  // ── שלב אימות זהות: קליטת תמונת ת"ז/דרכון דרך שכבת idverify המבודדת ──
+  // המודול מאשר קבלה ואימות בלי לשמור את התמונה (Mock). בעתיד יוחלף
+  // בספק אחסון מאובטח אמיתי — במקום אחד בלבד (idverify/index.js).
+  if (stage === "waiting_id") {
+    const isImage = media && (media.contentType || "").startsWith("image/");
+    if (!isImage) {
+      // לא הגיעה תמונה (טקסט / סוג קובץ אחר) — מבקשים שוב בלי לאבד את השלב.
+      await wa(phone, lang === "he"
+        ? `🪪 לא קיבלתי תמונה. כדי להמשיך, אנא צלם/י ושלח/י *תמונה* של תעודת הזהות או הדרכון.\n\n🔐 לאימות בלבד — לא נשמרת.`
+        : `🪪 I didn't receive a photo. To continue, please send a *photo* of your ID card or passport.\n\n🔐 For verification only — it is not stored.`);
+      return;
+    }
+
     const s = getSession(phone);
-    const guestName = s.pendingName || "אורח";
+    const guestName         = s.pendingName || "אורח";
+    const reservationNumber = s.pendingReservation || "";
     patchSession(phone, { checkinStage: "waiting_payment", guestName });
     try {
-      const { paymentUrl } = await startCheckin(phone, guestName, text);
+      // אימות המסמך עובר דרך שכבת idverify המבודדת (Mock) — מאשר קבלה
+      // בלי לשמור/להוריד את התמונה. mediaUrl מועבר אך אינו נשמר בשום מקום.
+      await idVerify.verifyDocument({
+        reservationId: reservationNumber,
+        phone,
+        guestName,
+        mediaUrl: media.url,
+        contentType: media.contentType,
+        documentType: "id_or_passport",
+      });
+
+      const { paymentUrl } = await startCheckin(phone, guestName, reservationNumber);
       await wa(phone, lang === "he"
-        ? `✅ *הזמנה מספר ${text} אותרה בהצלחה!*\n\nשלב אחרון — *פיקדון שהייה* בסך ₪500.\n\n🔒 הפיקדון אינו תשלום — הוא *מוקפא* בכרטיסך להבטחת השהייה. בצ'ק אאוט ינוכו ממנו חיובים אם יהיו, והיתרה תוחזר אליך במלואה.\n\nלחץ על הקישור לתשלום מאובטח:\n👉 ${paymentUrl}`
-        : `✅ *Reservation ${text} confirmed!*\n\nOne last step — a *₪500 security deposit*.\n\n🔒 The deposit is not a charge — it is *held* on your card to secure your stay. At check-out any charges are deducted from it, and the balance is refunded to you in full.\n\nTap to pay securely:\n👉 ${paymentUrl}`);
+        ? `✅ *תעודת הזהות אומתה בהצלחה!* 🪪\n\nשלב אחרון — *פיקדון שהייה* בסך ₪500.\n\n🔒 הפיקדון אינו תשלום — הוא *מוקפא* בכרטיסך להבטחת השהייה. בצ'ק אאוט ינוכו ממנו חיובים אם יהיו, וההקפאה על היתרה תשתחרר במלואה.\n\nלחץ על הקישור להקפאת הפיקדון:\n👉 ${paymentUrl}`
+        : `✅ *Your ID was verified successfully!* 🪪\n\nOne last step — a *₪500 security deposit*.\n\n🔒 The deposit is not a charge — it is *held* on your card to secure your stay. At check-out any charges are deducted from it, and the remaining hold is released in full.\n\nTap the link to place the deposit hold:\n👉 ${paymentUrl}`);
     } catch (e) {
       console.error("Checkin error:", e.message);
       await wa(phone, lang === "he"
@@ -339,7 +374,7 @@ async function confirmCheckout(phone, session, lang) {
   }
 }
 
-export async function handleIncoming(phone, text) {
+export async function handleIncoming(phone, text, media = null) {
   const session = getSession(phone);
   const lang = session.lang || detectLang(text);
   if (!session.lang) patchSession(phone, { lang });
@@ -359,12 +394,12 @@ export async function handleIncoming(phone, text) {
 
   if (isCheckinIntent(text) && !session.checkinStage && session.stage !== "checked_in") {
     patchSession(phone, { checkinStage: "start" });
-    await handleCheckin(phone, text, lang);
+    await handleCheckin(phone, text, lang, media);
     return;
   }
 
   if (session.checkinStage && session.checkinStage !== "waiting_payment") {
-    await handleCheckin(phone, text, lang);
+    await handleCheckin(phone, text, lang, media);
     return;
   }
 

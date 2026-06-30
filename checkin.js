@@ -121,7 +121,7 @@ export async function completeCheckin(reservationId, roomNumber) {
       `ברוכים הבאים, *${res.guestName}*! 🌟\n\n` +
       `🚪 *חדר:* ${res.roomNumber}\n` +
       `🔑 *כרטיס לחדר ימתין לך מוכן בקבלה* — גש לאסוף אותו, הוא מתוקף לכל משך השהייה\n` +
-      `🔒 *פיקדון ₪500* — מוקפא להבטחת השהייה. בצ'ק אאוט ינוכו ממנו חיובים אם יהיו, והיתרה תוחזר לכרטיסך\n` +
+      `🔒 *פיקדון ₪500* — מוקפא להבטחת השהייה. בצ'ק אאוט ינוכו ממנו חיובים אם יהיו, וההקפאה על היתרה תשתחרר\n` +
       `📶 WiFi: Kempinski_Guest | Welcome2024\n\n` +
       `🍳 ארוחת בוקר: 07:00–11:00\n` +
       `🏊 בריכה: 07:00–22:00 | גג קומה 12\n` +
@@ -131,7 +131,7 @@ export async function completeCheckin(reservationId, roomNumber) {
       `Welcome, *${res.guestName}*! 🌟\n\n` +
       `🚪 *Room:* ${res.roomNumber}\n` +
       `🔑 *Your room key is ready and waiting at reception* — please pick it up; it's valid for your entire stay\n` +
-      `🔒 *₪500 deposit* — held to secure your stay. At check-out any charges are deducted from it and the balance is refunded to your card\n` +
+      `🔒 *₪500 deposit* — held to secure your stay. At check-out any charges are deducted from it and the remaining hold is released\n` +
       `📶 WiFi: Kempinski_Guest | Welcome2024\n\n` +
       `🍳 Breakfast: 07:00–11:00\n` +
       `🏊 Pool: 07:00–22:00 | Rooftop, Level 12\n` +
@@ -181,10 +181,10 @@ export function formatFolio(res, lang = "he") {
     return lang === "he"
       ? `📋 *סיכום חשבון — חדר ${res.roomNumber}*\n` +
         `━━━━━━━━━━━━━━━━━━━━\n✅ אין חיובים נוספים\n` +
-        `━━━━━━━━━━━━━━━━━━━━\n💳 פיקדון ₪500 יוחזר לכרטיסך`
+        `━━━━━━━━━━━━━━━━━━━━\n💳 ההקפאה על הפיקדון בסך ₪500 תשתחרר במלואה`
       : `📋 *Bill Summary — Room ${res.roomNumber}*\n` +
         `━━━━━━━━━━━━━━━━━━━━\n✅ No additional charges\n` +
-        `━━━━━━━━━━━━━━━━━━━━\n💳 ₪500 deposit will be refunded`;
+        `━━━━━━━━━━━━━━━━━━━━\n💳 The ₪500 deposit hold will be released in full`;
   }
 
   const lines = res.folio.map(item => {
@@ -199,8 +199,8 @@ export function formatFolio(res, lang = "he") {
   if (total <= deposit) {
     const refund = ((deposit - total)/100).toFixed(2);
     return lang === "he"
-      ? `📋 *סיכום חשבון — חדר ${res.roomNumber}*\n━━━━━━━━━━━━━━━━━━━━\n${lines}\n━━━━━━━━━━━━━━━━━━━━\nסה"כ:      ₪${totalStr}\nפיקדון:    ₪${depositStr}\n━━━━━━━━━━━━━━━━━━━━\n💚 יחזור לכרטיסך: ₪${refund}`
-      : `📋 *Bill — Room ${res.roomNumber}*\n━━━━━━━━━━━━━━━━━━━━\n${lines}\n━━━━━━━━━━━━━━━━━━━━\nTotal:    ₪${totalStr}\nDeposit:  ₪${depositStr}\n━━━━━━━━━━━━━━━━━━━━\n💚 Refund: ₪${refund}`;
+      ? `📋 *סיכום חשבון — חדר ${res.roomNumber}*\n━━━━━━━━━━━━━━━━━━━━\n${lines}\n━━━━━━━━━━━━━━━━━━━━\nסה"כ:      ₪${totalStr}\nפיקדון:    ₪${depositStr}\n━━━━━━━━━━━━━━━━━━━━\n💚 ההקפאה שתשתחרר: ₪${refund}`
+      : `📋 *Bill — Room ${res.roomNumber}*\n━━━━━━━━━━━━━━━━━━━━\n${lines}\n━━━━━━━━━━━━━━━━━━━━\nTotal:    ₪${totalStr}\nDeposit:  ₪${depositStr}\n━━━━━━━━━━━━━━━━━━━━\n💚 Hold released: ₪${refund}`;
   } else {
     const balance = ((total - deposit)/100).toFixed(2);
     return lang === "he"
@@ -260,15 +260,15 @@ export async function processCheckout(phone, reservationId, lang = "he") {
         `תודה, *${res.guestName}*! 🌟\n\n` +
         formatFolio(res, lang) + "\n\n" +
         `💳 *נוכה מהפיקדון: ₪${charged}*\n` +
-        `💚 *יתרת הפיקדון שתוחזר לכרטיסך: ₪${refund}*\n` +
-        `⏱ תוך 3-5 ימי עסקים\n\n` +
+        `💚 *ההקפאה על יתרת הפיקדון תשתחרר: ₪${refund}*\n` +
+        `⏱ שחרור ההקפאה תוך 3-5 ימי עסקים\n\n` +
         `נשמח לראותך שוב! ⭐`
       : `🚪 *Check-out complete!*\n\n` +
         `Thank you, *${res.guestName}*! 🌟\n\n` +
         formatFolio(res, lang) + "\n\n" +
         `💳 *Deducted from your deposit: ₪${charged}*\n` +
-        `💚 *Remaining deposit refunded to your card: ₪${refund}*\n` +
-        `⏱ Within 3-5 business days\n\n` +
+        `💚 *The hold on the remaining ₪${refund} is released*\n` +
+        `⏱ Hold released within 3-5 business days\n\n` +
         `We hope to see you again! ⭐`
     );
   }

@@ -27,10 +27,21 @@ function auth(req, res, next) {
 // ── WhatsApp Webhook ──────────────────────────────────
 app.post("/webhook", async (req, res) => {
   const from = req.body.From;
-  const body = req.body.Body?.trim();
-  if (!from || !body) return res.sendStatus(200);
-  console.log(`📩 [${from.slice(-8)}] ${body}`);
-  handleIncoming(from, body).catch(console.error);
+  const body = req.body.Body?.trim() || "";
+
+  // ── מדיה נכנסת (תמונה וכו') מטוויליו ─────────────────
+  // אורח ששולח תמונה (למשל צילום ת"ז/דרכון בצ'ק אין) — טוויליו
+  // מצרף NumMedia + MediaUrl0/MediaContentType0. מעבירים את הפרטים
+  // ל-handleIncoming; ⚠️ אנחנו לא מורידים ולא שומרים את התמונה כאן.
+  const numMedia = parseInt(req.body.NumMedia || "0", 10);
+  const media = numMedia > 0
+    ? { url: req.body.MediaUrl0, contentType: req.body.MediaContentType0 || "" }
+    : null;
+
+  // הודעה ריקה לגמרי (בלי טקסט ובלי מדיה) — מתעלמים.
+  if (!from || (!body && !media)) return res.sendStatus(200);
+  console.log(`📩 [${from.slice(-8)}] ${body || `<media:${media?.contentType || "?"}>`}`);
+  handleIncoming(from, body, media).catch(console.error);
   res.type("text/xml").send("<Response></Response>");
 });
 
