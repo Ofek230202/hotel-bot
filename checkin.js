@@ -2,7 +2,7 @@
 //  CHECKIN v4 — Full billing, deposit capture, checkout
 // ════════════════════════════════════════════════════════
 import { v4 as uuidv4 } from "uuid";
-import { wa } from "./bot.js";
+import { wa, notifyStaff } from "./bot.js";
 import { logAlert, stats, patchSession, sessions } from "./state.js";
 import { payments, PAYMENT_CURRENCY } from "./payments/index.js";
 
@@ -30,12 +30,17 @@ export const FOLIO_CATEGORIES = {
 export async function startCheckin(phone, guestName, reservationId) {
   const id      = uuidv4();
   const DEPOSIT = 50000; // ₪500 באגורות (lowest currency unit)
+  // מספר הלילות — דמו: ברירת מחדל. בפרודקשן יישלף מה-PMS לפי ההזמנה.
+  // נחוץ כדי שהקבלה תתקף את כרטיס החדר לכל משך השהייה (ולא ליום אחד).
+  const NIGHTS  = 3;
 
   reservations[id] = {
     id, phone, guestName, reservationId,
     roomNumber: null,
     stage: "pending_payment",
     deposit: DEPOSIT,
+    nights: NIGHTS,
+    checkoutDate: null, // יחושב בצ'ק אין (completeCheckin) לפי תאריך הכניסה + לילות
     currency: PAYMENT_CURRENCY,
     folio: [],
     paymentId: null,
@@ -88,6 +93,16 @@ export async function completeCheckin(reservationId, roomNumber) {
   res.paidAt      = new Date().toISOString();
   stats.checkIns++;
 
+  // ── חישוב תאריך צ'ק אאוט לפי תאריך הכניסה + מספר הלילות ──
+  // משמש את הקבלה כדי לתקף את כרטיס החדר לכל משך השהייה.
+  const nights      = res.nights || 1;
+  const coDate      = new Date(res.checkedInAt);
+  coDate.setDate(coDate.getDate() + nights);
+  res.checkoutDate  = coDate.toISOString();
+  const checkoutStr = coDate.toLocaleDateString("he-IL", {
+    weekday: "long", day: "numeric", month: "long", timeZone: "Asia/Jerusalem",
+  });
+
   // ── קישור session ↔ reservation (Bug #3) ─────────────
   // מסמן את ה-session כ-checked_in ושומר reservationId + roomNumber,
   // כדי שזרימת הצ'ק אאוט תהיה נגישה דרך הצ'אט.
@@ -105,6 +120,7 @@ export async function completeCheckin(reservationId, roomNumber) {
     ? `✅ *צ'ק אין אושר!*\n\n` +
       `ברוכים הבאים, *${res.guestName}*! 🌟\n\n` +
       `🚪 *חדר:* ${res.roomNumber}\n` +
+      `🔑 *כרטיס לחדר ימתין לך מוכן בקבלה* — גש לאסוף אותו, הוא מתוקף לכל משך השהייה\n` +
       `🔒 *פיקדון ₪500* — מוקפא להבטחת השהייה. בצ'ק אאוט ינוכו ממנו חיובים אם יהיו, והיתרה תוחזר לכרטיסך\n` +
       `📶 WiFi: Kempinski_Guest | Welcome2024\n\n` +
       `🍳 ארוחת בוקר: 07:00–11:00\n` +
@@ -114,6 +130,7 @@ export async function completeCheckin(reservationId, roomNumber) {
     : `✅ *Check-in confirmed!*\n\n` +
       `Welcome, *${res.guestName}*! 🌟\n\n` +
       `🚪 *Room:* ${res.roomNumber}\n` +
+      `🔑 *Your room key is ready and waiting at reception* — please pick it up; it's valid for your entire stay\n` +
       `🔒 *₪500 deposit* — held to secure your stay. At check-out any charges are deducted from it and the balance is refunded to your card\n` +
       `📶 WiFi: Kempinski_Guest | Welcome2024\n\n` +
       `🍳 Breakfast: 07:00–11:00\n` +
@@ -122,9 +139,19 @@ export async function completeCheckin(reservationId, roomNumber) {
       `I'm here for anything you need! 😊`
   );
 
-  await logAlert({
-    dept: "reception", roomNumber: res.roomNumber, guestName: res.guestName,
-    message: `✅ צ'ק אין דיגיטלי | פיקדון ₪500 מאושר | חדר ${res.roomNumber}`,
+  // ── התראה לקבלה: להכין כרטיס לחדר מוכן לאיסוף ──────────
+  // נשלחת גם בוואטסאפ וגם במייל (דרך notifyStaff). כוללת את כל הפרטים
+  // הדרושים להכנת הכרטיס מראש, ומדגישה לתקף את הכרטיס לכל משך השהייה.
+  await notifyStaff({
+    dept: "reception",
+    roomNumber: res.roomNumber,
+    guestName: res.guestName,
+    message:
+      `🔑 *להכין כרטיס לחדר מוכן לאיסוף בקבלה*\n` +
+      `✅ צ'ק אין דיגיטלי הושלם | פיקדון ₪500 מאושר\n` +
+      `🌙 לילות: ${nights}\n` +
+      `📅 צ'ק אאוט: ${checkoutStr}\n` +
+      `⏳ *תקף את הכרטיס לכל משך השהייה* (עד ${checkoutStr}) — לא ליום אחד`,
     priority: "normal",
   });
 

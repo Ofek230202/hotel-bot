@@ -186,10 +186,10 @@ function paymentPage(rid, reservation, lang = "he") {
   const amount = ((reservation.deposit || 50000) / 100).toFixed(0); // ₪500
   const T = he
     ? {
-        title: "תשלום פיקדון — Kempinski Hotel",
+        title: "אישור פיקדון — Kempinski Hotel",
         hotel: "✦ Kempinski Hotel",
-        heading: "פיקדון שהייה",
-        sub: "תשלום מאובטח",
+        heading: "אישור פיקדון שהייה",
+        sub: "הקפאת פיקדון מאובטחת",
         depositLabel: "סכום הפיקדון",
         holdNote:
           "🔒 הפיקדון אינו חיוב — הוא מוקפא בכרטיסך להבטחת השהייה. בצ'ק אאוט ינוכו ממנו חיובים אם יהיו, והיתרה תוחזר אליך במלואה.",
@@ -200,16 +200,16 @@ function paymentPage(rid, reservation, lang = "he") {
         cvv: "CVV",
         idNumber: "תעודת זהות של בעל הכרטיס",
         idPh: "9 ספרות",
-        pay: `שלם ₪${amount}`,
-        processing: "מעבד תשלום…",
-        secure: "🔒 תשלום מוצפן ומאובטח",
+        pay: `אשר פיקדון ₪${amount}`,
+        processing: "מאשר פיקדון…",
+        secure: "🔒 הקפאה מוצפנת ומאובטחת — לא מבוצע חיוב",
         invalid: "נא למלא את כל השדות כנדרש",
       }
     : {
-        title: "Deposit Payment — Kempinski Hotel",
+        title: "Confirm Deposit — Kempinski Hotel",
         hotel: "✦ Kempinski Hotel",
-        heading: "Security Deposit",
-        sub: "Secure payment",
+        heading: "Confirm Security Deposit",
+        sub: "Secure deposit hold",
         depositLabel: "Deposit amount",
         holdNote:
           "🔒 The deposit is not a charge — it is held on your card to secure your stay. At check-out any charges are deducted from it, and the balance is refunded to you in full.",
@@ -220,9 +220,9 @@ function paymentPage(rid, reservation, lang = "he") {
         cvv: "CVV",
         idNumber: "Cardholder ID number",
         idPh: "9 digits",
-        pay: `Pay ₪${amount}`,
-        processing: "Processing payment…",
-        secure: "🔒 Encrypted & secure payment",
+        pay: `Confirm ₪${amount} deposit`,
+        processing: "Confirming deposit…",
+        secure: "🔒 Encrypted & secure hold — no charge is made",
         invalid: "Please fill in all fields correctly",
       };
 
@@ -369,8 +369,8 @@ p{color:rgba(250,250,248,0.6);font-size:15px;line-height:1.7;margin-bottom:32px}
 <body>
 <div class="card">
   <div class="icon">↩️</div>
-  <h1>התשלום בוטל</h1>
-  <p>לא בוצע חיוב.<br>חזור לוואטסאפ כדי לנסות שוב או לפנות לקבלה.</p>
+  <h1>אישור הפיקדון בוטל</h1>
+  <p>לא בוצעה הקפאת פיקדון ולא בוצע חיוב.<br>חזור לוואטסאפ כדי לנסות שוב או לפנות לקבלה.</p>
   <a href="https://wa.me/14155238886" class="btn">💬 חזור לצ'אט</a>
 </div>
 </body>
