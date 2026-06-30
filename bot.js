@@ -84,6 +84,25 @@ function isCheckoutIntent(text) {
   ].some(x => t.includes(x.replace(/[''']/g, "").toLowerCase()));
 }
 
+// האם ההודעה היא ברכה/פתיחה כללית בלבד (בלי בקשה ממשית)?
+// משמש כדי להחליט אם לשלוח את הודעת הפתיחה/תפריט בהודעה הראשונה.
+// אם נשאר תוכן ממשי אחרי ניקוי הברכות — זו אינה הודעה כללית, ומטפלים בה מיד.
+function isGenericGreeting(text) {
+  let t = (text || "").replace(/['''`״׳.,!?\-—…😊🙂👋🙏🌟]/g, " ").toLowerCase();
+  const greetings = [
+    "שלום רב", "שלום לך", "שלום", "היי", "הייי", "הי", "אהלן", "הלו", "מה נשמע",
+    "מה קורה", "מה המצב", "מה שלומך", "בוקר טוב", "ערב טוב", "צהריים טובים",
+    "לילה טוב", "good morning", "good evening", "good afternoon", "good night",
+    "hello", "hellow", "hey there", "heya", "hey", "hi there", "hii", "hi",
+    "hallo", "yo", "whats up", "how are you",
+  ];
+  for (const g of greetings) {
+    t = t.replace(new RegExp(g.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), " ");
+  }
+  t = t.replace(/\s+/g, " ").trim();
+  return t.length <= 2; // לא נשאר תוכן ממשי → ברכה כללית בלבד
+}
+
 function buildPrompt(session, lang) {
   const cfg = hotelConfig;
   const L = lang === "he" ? "he" : "en";
@@ -325,12 +344,17 @@ export async function handleIncoming(phone, text) {
   const lang = session.lang || detectLang(text);
   if (!session.lang) patchSession(phone, { lang });
 
+  // הודעה ראשונה: שולחים תפריט/פתיחה רק אם זו ברכה כללית בלבד ("שלום"/"היי").
+  // אם יש בהודעה הראשונה כוונה ברורה (צ'ק אין/אאוט, בקשת מחלקה, שאלה) —
+  // ממשיכים מיד לטיפול בה למטה, בלי לשלוח תפריט מקדים.
   if (session.messageCount === 1) {
     patchSession(phone, { stage: "active" });
-    const welcome = hotelConfig.welcome[lang] || hotelConfig.welcome.en;
-    await wa(phone, welcome);
-    pushHistory(phone, "assistant", welcome);
-    return;
+    if (isGenericGreeting(text)) {
+      const welcome = hotelConfig.welcome[lang] || hotelConfig.welcome.en;
+      await wa(phone, welcome);
+      pushHistory(phone, "assistant", welcome);
+      return;
+    }
   }
 
   if (isCheckinIntent(text) && !session.checkinStage && session.stage !== "checked_in") {
