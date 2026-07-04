@@ -36,9 +36,21 @@ export class PaymentProvider {
   }
 
   /**
-   * יוצר תשלום חדש ליתרה (כשהחיובים עולים על הפיקדון).
+   * מחייב סכום נוסף מ*אותו כרטיס* ששימש להרשאת הפיקדון — מעבר לפיקדון עצמו.
+   * משמש כשהחיובים עולים על הפיקדון: הפיקדון נלכד במלואו (capture) וההפרש
+   * מחויב מכאן. אצל ספק אמיתי (CardCom) — חיוב חוזר לפי ה-token שנשמר בהרשאה.
+   * @param {object} params - { paymentId, amount, currency, description }
+   * @returns {Promise<{ success: boolean, chargedAmount: number, status: string }>}
+   */
+  async chargeSameCard(_params) {
+    throw new Error("chargeSameCard not implemented");
+  }
+
+  /**
+   * יוצר תשלום חדש ליתרה בכרטיס *אחר* (כשהאורח בוחר לשלם את ההפרש בכרטיס
+   * שונה מזה של הפיקדון). מחזיר קישור לעמוד סליקה/תשלום.
    * @param {object} params - { reservationId, amount, currency, description,
-   *                            successUrl, cancelUrl }
+   *                            paymentPageUrl, successUrl, cancelUrl }
    * @returns {Promise<{ paymentId: string, redirectUrl: string|null, status: string }>}
    */
   async createBalancePayment(_params) {

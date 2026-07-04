@@ -35,11 +35,18 @@ export class MockProvider extends PaymentProvider {
     return { success: true, status: "canceled" };
   }
 
-  // יצירת תשלום ליתרה — מחזיר קישור לדף האישור הפנימי.
-  async createBalancePayment({ successUrl } = {}) {
+  // "חיוב נוסף" מאותו כרטיס (מעבר לפיקדון) — מצליח תמיד ומחזיר את הסכום.
+  // ב-Mock לא מתבצע חיוב אמיתי; אצל CardCom זה יהיה חיוב חוזר לפי token.
+  async chargeSameCard({ amount } = {}) {
+    return { success: true, chargedAmount: amount || 0, status: "charged" };
+  }
+
+  // יצירת תשלום ליתרה בכרטיס אחר — מחזיר קישור לעמוד התשלום (paymentPageUrl),
+  // ובהיעדרו נופל ל-successUrl כדי לא לשבור זרימות קיימות.
+  async createBalancePayment({ paymentPageUrl, successUrl } = {}) {
     return {
       paymentId: `mock_balance_${uuidv4()}`,
-      redirectUrl: successUrl || null,
+      redirectUrl: paymentPageUrl || successUrl || null,
       status: "pending",
     };
   }

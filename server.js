@@ -6,7 +6,7 @@ import dotenv    from "dotenv";
 import { handleIncoming, wa, notifyStaff } from "./bot.js";
 import { allSessions, sessions, staffAlerts, incidents, stats } from "./state.js";
 import { hotelConfig, updateConfig } from "./config.js";
-import { reservations, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES } from "./checkin.js";
+import { reservations, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES, autoChargeOnNoShow, findNoShowReservations } from "./checkin.js";
 import checkinRouter from "./checkin-routes.js";
 
 dotenv.config();
@@ -151,6 +151,64 @@ app.get("/api/folio/:room", auth, (req, res) => {
     total: getFolioTotal(reservation.id) / 100,
     preview: formatFolio(reservation, "he"),
   });
+});
+
+// ── DEMO: no-show auto-charge ─────────────────────────
+// אורח שהגיע לתאריך הצ'ק אאוט אך לא ביצע צ'ק אאוט ולא שילם — המלון מחייב
+// אוטומטית את הפיקדון (ואת ההפרש מעליו, אם יש). זה מגן מפני "בריחה".
+//
+// בפרודקשן: cron/מנוע-זמן ירוץ מחזורית, יקרא ל-findNoShowReservations לפי
+// תאריך הצ'ק אאוט מה-PMS, ויפעיל autoChargeOnNoShow על כל אחת — ללא התערבות.
+// בדמו: מפעילים ידנית כאן.
+//
+//   POST /api/no-show { room | reservationId }  → מחייב הזמנה ספציפית.
+//   POST /api/no-show { all: true }             → סורק ומחייב את כל מי
+//                                                 שעבר את תאריך הצ'ק אאוט.
+app.post("/api/no-show", auth, async (req, res) => {
+  const { room, roomNumber, reservationId, all } = req.body;
+
+  // מצב "all" — סימולציית ה-cron: מוצא את כל ה-no-shows ומחייב אותם.
+  if (all) {
+    const due = findNoShowReservations();
+    const results = [];
+    for (const r of due) {
+      try {
+        const out = await autoChargeOnNoShow(r.id);
+        results.push({ reservationId: r.id, room: r.roomNumber, charged: !out.alreadyHandled });
+      } catch (e) {
+        results.push({ reservationId: r.id, room: r.roomNumber, error: e.message });
+      }
+    }
+    return res.json({ ok: true, scanned: due.length, results });
+  }
+
+  // מצב יחיד — לפי reservationId או חדר פעיל.
+  const targetRoom = String(room ?? roomNumber ?? "");
+  const reservation = reservationId
+    ? reservations[reservationId]
+    : Object.values(reservations).find(
+        r => r.roomNumber === targetRoom && r.stage === "checked_in"
+      );
+
+  if (!reservation) {
+    return res.status(404).json({ error: "No active (checked-in) reservation for that room/id" });
+  }
+
+  try {
+    const out = await autoChargeOnNoShow(reservation.id);
+    res.json({
+      ok: true,
+      alreadyHandled: out.alreadyHandled || false,
+      reservationId: reservation.id,
+      room: reservation.roomNumber,
+      noShow: reservation.noShow,
+      capturedAmount: reservation.capturedAmount / 100,
+      overageAmount: (reservation.overageAmount || 0) / 100,
+      folioTotal: getFolioTotal(reservation.id) / 100,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get("/api/alerts", auth, (req, res) => res.json(staffAlerts));
