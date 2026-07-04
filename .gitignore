@@ -6,6 +6,11 @@
 # Dependencies
 node_modules/
 
+# Database (SQLite) — לא מעלים את מסד הנתונים ל-git
+*.db
+*.db-shm
+*.db-wal
+
 # Logs
 *.log
 npm-debug.log*

@@ -2,7 +2,7 @@
 //  CHECKIN ROUTES — payment webhook + success/cancel pages
 // ════════════════════════════════════════════════════════
 import express from "express";
-import { reservations, completeCheckin, processCheckout, depositExplainer, switchOverageToAlternateCard } from "./checkin.js";
+import { reservations, completeCheckin, processCheckout, depositExplainer, switchOverageToAlternateCard, markPaid } from "./checkin.js";
 import { wa } from "./bot.js";
 import { payments } from "./payments/index.js";
 import { sessions } from "./state.js";
@@ -137,8 +137,7 @@ router.post("/payments/webhook",
       const rid = session.metadata?.reservation_id;
       const phone = session.metadata?.phone;
 
-      if (rid && reservations[rid]) {
-        reservations[rid].paidAt = new Date().toISOString();
+      if (rid && markPaid(rid)) {
         console.log(`✅ Payment received for reservation ${rid}`);
       }
     }

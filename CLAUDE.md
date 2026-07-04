@@ -72,7 +72,7 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
 - **No real payment isolation** — Stripe is imported and called directly in `checkin.js` /
   `checkin-routes.js`. No abstraction layer, no mock. Will not work in Israel.
 - **Check-in loops back to "full name"** — see bug #1 below.
-- **No persistence** — all state in RAM; a restart wipes every session, reservation, and stat.
+- ~~No persistence~~ **DONE** — state now persists to SQLite (`db.js`, `node:sqlite`); survives restart.
 - **Not multi-tenant** — one global `hotelConfig`, one global `sessions` map keyed only by phone.
 - **No `.env` in repo** — all secrets (ANTHROPIC, TWILIO, STRIPE, BASE_URL) unset locally; with no
   Stripe key, `new Stripe(undefined)` / `startCheckin` fails.
@@ -104,7 +104,9 @@ caused by the **payment step failing and resetting the flow**:
 Fix direction: replace the direct Stripe call with the **mock payment provider** (abstraction
 layer) so the deposit step succeeds; also make failures not silently dump the user back to step 1.
 
-### Bug #2 — `getSession` has side effects (increments `messageCount` on every call)
+### Bug #2 — `getSession` has side effects (increments `messageCount` on every call) — ✅ FIXED
+> Fixed during the persistence work: `getSession` is now a pure read/create; the per-message
+> counter increment lives in `recordActivity`, called exactly once at the top of `handleIncoming`.
 `getSession` mutates `messageCount`/`stats` every call, and it is called multiple times per
 incoming message (in `handleIncoming`, again in `handleCheckin`, again inside `pushHistory`). The
 `messageCount === 1` welcome gate happens to still work, but the counter is unreliable. State reads
@@ -118,9 +120,11 @@ should be side-effect free.
 
 ## 4. State storage (איך נשמר ה-state)
 
-- **In-memory only**, in `state.js`: `sessions` (phone → session), `reservations` (in `checkin.js`),
-  `staffAlerts`, `stats`. Pure JS objects in the Node process.
-- **Not persisted** — restart/redeploy/crash wipes everything.
+- **Now persisted to SQLite** (`db.js`, built-in `node:sqlite`). `state.js` (sessions, alerts,
+  incidents, stats) and `checkin.js` (reservations + folio) keep a live in-memory **write-through
+  cache** that is hydrated from the DB on startup and saved on every mutation. Survives restart.
+- Tables are namespaced by `hotel_id` (constant `"kempinski"` for now) — ready for multi-tenant.
+- ~~Not persisted — restart wipes everything~~ (resolved).
 - **Multi-tenant capacity:** essentially zero as-is. Sessions are keyed by phone only (no hotel id),
   config is a single global object, and nothing isolates one hotel from another. It can hold many
   guests of ONE hotel in RAM until the process restarts, but cannot safely run multiple hotels.
@@ -151,7 +155,10 @@ Priority order (to be decided together):
       ship a mock that "takes" the deposit and confirms without charging. Fixes Bug #1 loop.
 - [ ] **P0 — Safety / emergency flow.** Detect injury/medical/fire/gas → instruct 101/מד"א +
       guaranteed human escalation (security/manager) + structured incident log.
-- [ ] **P0 — Persistence.** Move sessions/reservations/alerts out of RAM into a datastore.
+- [x] **P0 — Persistence.** Done: sessions, reservations+folio, alerts, incidents and stats now
+      persist to SQLite (`db.js`, built-in `node:sqlite` — no native deps) via a write-through cache
+      in `state.js`/`checkin.js`; survives restart. Every table has a `hotel_id` column (ready for
+      multi-tenant). `settleFolio` is step-idempotent (no double-charge on restart/re-run).
 - [ ] **P1 — Multi-tenant.** Per-hotel config + `hotelId`-namespaced state + tenant resolution
       from the inbound number.
 - [x] **P1 — Fix checkout reachability** (set `session.stage` correctly; link session↔reservation).
@@ -160,7 +167,8 @@ Priority order (to be decided together):
 - [ ] **P1 — Email routing** for department dispatch (email + WhatsApp), per goal #4.
 - [ ] **P2 — Harden:** Twilio webhook signature validation, rate limiting, idempotency/dedup of
       inbound webhooks, structured logging, currency → ILS, remove hardcoded room/hotel strings.
-- [ ] **P2 — Make `getSession` side-effect free**; separate read vs. mutate.
+- [x] **P2 — Make `getSession` side-effect free** (Bug #2). Done: `getSession` is now pure;
+      per-message counting moved to `recordActivity`, called once in `handleIncoming`.
 - [ ] **P2 — Full payment policy** (see §1): charge for the stay itself, advances/deposits
       (מקדמות) at booking, and payment at reception on a different card — all through the existing
       `payments/` abstraction. (Documented only; not built yet.)

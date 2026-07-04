@@ -5,7 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import twilio    from "twilio";
 import dotenv    from "dotenv";
 import { hotelConfig }                                    from "./config.js";
-import { getSession, pushHistory, patchSession, logAlert, logIncident, stats, sessions } from "./state.js";
+import { getSession, recordActivity, pushHistory, patchSession, logAlert, logIncident, stats, sessions } from "./state.js";
 import { detectLang }                                     from "./i18n.js";
 import { startCheckin, processCheckout, getActiveReservation, formatFolio, depositExplainer } from "./checkin.js";
 import { email }                                          from "./email/index.js";
@@ -376,6 +376,7 @@ async function confirmCheckout(phone, session, lang) {
 
 export async function handleIncoming(phone, text, media = null) {
   const session = getSession(phone);
+  recordActivity(phone); // רישום ההודעה הנכנסת (messageCount/פעילות) — פעם אחת בלבד (Bug #2)
   const lang = session.lang || detectLang(text);
   if (!session.lang) patchSession(phone, { lang });
 

@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 import { wa, notifyStaff } from "./bot.js";
 import { logAlert, stats, patchSession, sessions } from "./state.js";
 import { payments, PAYMENT_CURRENCY } from "./payments/index.js";
+import { db, DEFAULT_HOTEL_ID } from "./db.js";
 
 // נקרא תמיד בזמן-קריאה (lazy), אחרי ש-dotenv.config() כבר רץ.
 // אם נשמר כקבוע בראש הקובץ הוא נתפס כ-undefined בגלל סדר טעינת המודולים
@@ -15,6 +16,43 @@ function baseUrl() {
 }
 
 export const reservations = {};
+
+// ── persistence (שלב 2) — write-through ל-DB דרך db.js ─
+// כל הזמנה נשמרת כ-JSON מלא (כולל ה-folio) בעמודת data; id/phone/room/
+// stage/checkout_date נשלפים לעמודות לצורך סינון. cache חי בזיכרון
+// (reservations) מגובה ל-DB בכל מוטציה, ומהודרר מה-DB בעליית התהליך —
+// כך כל הקוד שקורא reservations[id] ממשיך לעבוד, אך המידע שורד ריסטארט.
+const HOTEL = DEFAULT_HOTEL_ID;
+const resUpsert = db.prepare(`
+  INSERT INTO reservations (id, hotel_id, phone, room_number, stage, checkout_date, data)
+  VALUES (@id, @hotel_id, @phone, @room_number, @stage, @checkout_date, @data)
+  ON CONFLICT(id) DO UPDATE SET
+    phone         = excluded.phone,
+    room_number   = excluded.room_number,
+    stage         = excluded.stage,
+    checkout_date = excluded.checkout_date,
+    data          = excluded.data
+`);
+
+function persist(res) {
+  resUpsert.run({
+    id:            res.id,
+    hotel_id:      HOTEL,
+    phone:         res.phone ?? null,
+    room_number:   res.roomNumber ?? null,
+    stage:         res.stage ?? null,
+    checkout_date: res.checkoutDate ?? null,
+    data:          JSON.stringify(res),
+  });
+}
+
+// הידרציה: טעינת ההזמנות מה-DB ל-cache בעליית התהליך.
+for (const row of db.prepare(`SELECT data FROM reservations WHERE hotel_id = ?`).all(HOTEL)) {
+  try {
+    const r = JSON.parse(row.data);
+    if (r && r.id) reservations[r.id] = r;
+  } catch { /* שורה פגומה — מדלגים */ }
+}
 
 // ── ניסוח הפיקדון — מקור אמת אחד ─────────────────────
 // כל ההודעות (צ'ק אין, צ'ק אאוט, עמוד התשלום, דף האישור) שואבות מכאן
@@ -91,6 +129,7 @@ export async function startCheckin(phone, guestName, reservationId) {
 
   reservations[id].paymentId  = auth.paymentId;
   reservations[id].paymentUrl = auth.redirectUrl;
+  persist(reservations[id]);
   return { reservationId: id, paymentUrl: auth.redirectUrl };
 }
 
@@ -122,6 +161,7 @@ export async function completeCheckin(reservationId, roomNumber) {
   const coDate      = new Date(res.checkedInAt);
   coDate.setDate(coDate.getDate() + nights);
   res.checkoutDate  = coDate.toISOString();
+  persist(res); // שמירת מצב הצ'ק אין (checked_in + confirmationSent) לפני שליחת ההודעות
   const checkoutStr = coDate.toLocaleDateString("he-IL", {
     weekday: "long", day: "numeric", month: "long", timeZone: "Asia/Jerusalem",
   });
@@ -186,6 +226,7 @@ export function addFolioItem(reservationId, category, description, amountCents) 
   const res = reservations[reservationId];
   if (!res) throw new Error("Reservation not found");
   res.folio.push({ id: uuidv4(), category, description, amount: amountCents, addedAt: new Date().toISOString() });
+  persist(res);
   return res;
 }
 
@@ -241,43 +282,56 @@ async function settleFolio(res, { overageDescription } = {}) {
   const total   = getFolioTotal(res.id);
   const deposit = res.deposit;
 
+  // ── idempotency לכל שלב (הגנת חיוב כפול אחרי ריסטארט) ──
+  // כל פעולת תשלום חיצונית מוגנת בדגל משלה ונשמרת ל-DB *מיד* אחריה.
+  // כך, אם התהליך קרס בין הפעולה החיצונית לשמירה, ריצה חוזרת (למשל
+  // ע"י מנוע ה-no-show) תדלג על מה שכבר בוצע ולא תחייב פעמיים.
+
   // A: אין חיובים → ביטול ההרשאה, שום חיוב.
   if (total === 0) {
-    try { await payments.cancel({ paymentId: res.paymentId }); }
-    catch (e) { console.error("Cancel error:", e.message); }
-    res.refunded = true;
+    if (!res.refunded && !res.captured) {
+      try { await payments.cancel({ paymentId: res.paymentId }); }
+      catch (e) { console.error("Cancel error:", e.message); }
+      res.refunded = true;
+      persist(res);
+    }
     return { total, deposit, captured: 0, overage: 0, released: deposit };
   }
 
-  // B: חיובים ≤ פיקדון → לוכדים בדיוק את סכום החיובים; היתרה משתחררת.
-  if (total <= deposit) {
+  // לכידת חלק הפיקדון — min(חיובים, פיקדון). פעם אחת בלבד.
+  // B: חיובים ≤ פיקדון → נלכד בדיוק סכום החיובים; היתרה משתחררת.
+  // C: חיובים > פיקדון → נלכד מלוא הפיקדון (וההפרש בהמשך).
+  const captureAmount = Math.min(total, deposit);
+  if (!res.captured) {
     try {
-      const cap = await payments.capture({ paymentId: res.paymentId, amount: total });
+      const cap = await payments.capture({ paymentId: res.paymentId, amount: captureAmount });
       res.captured = true; res.capturedAmount = cap.capturedAmount;
     } catch (e) { console.error("Capture error:", e.message); }
-    return { total, deposit, captured: total, overage: 0, released: deposit - total };
+    persist(res);
   }
 
-  // C: חיובים > פיקדון → לוכדים את מלוא הפיקדון, ואת ההפרש מחייבים
-  //    *מאותו כרטיס* של הפיקדון (ברירת מחדל). האורח יוכל לאחר מכן לבחור
-  //    להחליף לכרטיס אחר דרך הקישור (ראה processCheckout).
-  try {
-    const cap = await payments.capture({ paymentId: res.paymentId, amount: deposit });
-    res.captured = true; res.capturedAmount = cap.capturedAmount;
-  } catch (e) { console.error("Capture error:", e.message); }
+  // B: בתוך גבול הפיקדון → סיימנו.
+  if (total <= deposit) {
+    return { total, deposit, captured: captureAmount, overage: 0, released: deposit - total };
+  }
 
+  // C: ההפרש מעל הפיקדון מחויב *מאותו כרטיס* (ברירת מחדל). פעם אחת בלבד.
+  //    האורח יוכל לאחר מכן להחליף לכרטיס אחר דרך הקישור (ראה processCheckout).
   const overage = total - deposit;
-  try {
-    const extra = await payments.chargeSameCard({
-      paymentId: res.paymentId,
-      amount: overage,
-      currency: res.currency || PAYMENT_CURRENCY,
-      description: overageDescription || `הפרש מעל פיקדון — חדר ${res.roomNumber}`,
-    });
-    res.overageCharged = true;
-    res.overageAmount  = extra.chargedAmount;
-  } catch (e) { console.error("Overage charge error:", e.message); }
-  res.overageChargedTo = "deposit_card";
+  if (!res.overageCharged) {
+    try {
+      const extra = await payments.chargeSameCard({
+        paymentId: res.paymentId,
+        amount: overage,
+        currency: res.currency || PAYMENT_CURRENCY,
+        description: overageDescription || `הפרש מעל פיקדון — חדר ${res.roomNumber}`,
+      });
+      res.overageCharged = true;
+      res.overageAmount  = extra.chargedAmount;
+    } catch (e) { console.error("Overage charge error:", e.message); }
+    res.overageChargedTo = "deposit_card";
+    persist(res);
+  }
   return { total, deposit, captured: deposit, overage, released: 0 };
 }
 
@@ -298,6 +352,7 @@ export async function processCheckout(phone, reservationId, lang = "he") {
 
   res.stage        = "checked_out";
   res.checkedOutAt = new Date().toISOString();
+  persist(res); // מצב הצ'ק אאוט + תוצאת הסליקה נשמרים יחד (עקבי) לפני ההודעות
   stats.checkOuts++;
 
   // ── A: No charges → deposit released in full ──────
@@ -360,6 +415,7 @@ export async function processCheckout(phone, reservationId, lang = "he") {
 
     res.balanceAmount = s.overage;
     res.altCardUrl    = altPayment.redirectUrl;
+    persist(res);
 
     await wa(res.phone, he
       ? `🚪 *צ'ק אאוט הושלם — חדר ${res.roomNumber}*\n\n` +
@@ -408,6 +464,7 @@ export async function switchOverageToAlternateCard(reservationId, lang = "he") {
   if (!res.overageAmount) return res; // אין הפרש — אין מה להחליף
 
   res.overageChargedTo = "alternate_card";
+  persist(res);
   const he = lang === "he";
   const balanceStr = (res.overageAmount/100).toFixed(2);
 
@@ -450,6 +507,7 @@ export async function autoChargeOnNoShow(reservationId, lang = "he") {
   res.stage        = "checked_out";
   res.noShow       = true;
   res.checkedOutAt = new Date().toISOString();
+  persist(res); // מצב ה-no-show + תוצאת הסליקה נשמרים יחד לפני ההודעות
   stats.checkOuts++;
 
   const totalStr = (s.total/100).toFixed(2);
@@ -526,6 +584,17 @@ export function findNoShowReservations(now = new Date()) {
 
 export function getActiveReservation(phone) {
   return Object.values(reservations).find(r => r.phone === phone && r.stage === "checked_in");
+}
+
+// ── סימון "תשלום התקבל" (webhook) — מעדכן paidAt ושומר ל-DB ──
+// נקרא מ-checkin-routes.js (webhook) במקום מוטציה ישירה על reservations,
+// כדי שהעדכון יישמר ל-DB. מחזיר את ההזמנה, או null אם לא נמצאה.
+export function markPaid(reservationId) {
+  const res = reservations[reservationId];
+  if (!res) return null;
+  res.paidAt = new Date().toISOString();
+  persist(res);
+  return res;
 }
 
 // ── Demo helper — adds sample charges for presentation ─

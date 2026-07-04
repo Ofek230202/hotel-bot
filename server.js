@@ -4,7 +4,7 @@
 import express   from "express";
 import dotenv    from "dotenv";
 import { handleIncoming, wa, notifyStaff } from "./bot.js";
-import { allSessions, sessions, staffAlerts, incidents, stats } from "./state.js";
+import { allSessions, sessions, staffAlerts, incidents, stats, deleteSession, clearAllSessions } from "./state.js";
 import { hotelConfig, updateConfig } from "./config.js";
 import { reservations, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES, autoChargeOnNoShow, findNoShowReservations } from "./checkin.js";
 import checkinRouter from "./checkin-routes.js";
@@ -52,8 +52,7 @@ app.use(checkinRouter);
 app.get("/reset/:phone", auth, (req, res) => {
   const phone = decodeURIComponent(req.params.phone);
   const full = phone.startsWith("whatsapp:") ? phone : `whatsapp:${phone}`;
-  if (sessions[full]) {
-    delete sessions[full];
+  if (deleteSession(full)) {
     console.log(`🔄 Session reset: ${full}`);
     res.json({ ok: true, message: `Session reset for ${full}` });
   } else {
@@ -63,8 +62,7 @@ app.get("/reset/:phone", auth, (req, res) => {
 
 // ── RESET ALL SESSIONS ────────────────────────────────
 app.get("/reset-all", auth, (req, res) => {
-  const count = Object.keys(sessions).length;
-  Object.keys(sessions).forEach(k => delete sessions[k]);
+  const count = clearAllSessions();
   console.log(`🔄 All ${count} sessions reset`);
   res.json({ ok: true, message: `Reset ${count} sessions` });
 });
