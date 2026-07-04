@@ -7,7 +7,7 @@ import dotenv    from "dotenv";
 import { hotelConfig }                                    from "./config.js";
 import { getSession, pushHistory, patchSession, logAlert, logIncident, stats, sessions } from "./state.js";
 import { detectLang }                                     from "./i18n.js";
-import { startCheckin, processCheckout, getActiveReservation, formatFolio } from "./checkin.js";
+import { startCheckin, processCheckout, getActiveReservation, formatFolio, depositExplainer } from "./checkin.js";
 import { email }                                          from "./email/index.js";
 import { idVerify }                                       from "./idverify/index.js";
 
@@ -310,8 +310,8 @@ async function handleCheckin(phone, text, lang, media = null) {
 
       const { paymentUrl } = await startCheckin(phone, guestName, reservationNumber);
       await wa(phone, lang === "he"
-        ? `✅ *תעודת הזהות אומתה בהצלחה!* 🪪\n\nשלב אחרון — *פיקדון שהייה* בסך ₪500.\n\n🔒 הפיקדון אינו תשלום — הוא *מוקפא* בכרטיסך להבטחת השהייה. בצ'ק אאוט ינוכו ממנו חיובים אם יהיו, וההקפאה על היתרה תשתחרר במלואה.\n\nלחץ על הקישור להקפאת הפיקדון:\n👉 ${paymentUrl}`
-        : `✅ *Your ID was verified successfully!* 🪪\n\nOne last step — a *₪500 security deposit*.\n\n🔒 The deposit is not a charge — it is *held* on your card to secure your stay. At check-out any charges are deducted from it, and the remaining hold is released in full.\n\nTap the link to place the deposit hold:\n👉 ${paymentUrl}`);
+        ? `✅ *תעודת הזהות אומתה בהצלחה!* 🪪\n\nשלב אחרון — *פיקדון שהייה*.\n\n${depositExplainer("he")}\n\nלחץ על הקישור להקפאת הפיקדון:\n👉 ${paymentUrl}`
+        : `✅ *Your ID was verified successfully!* 🪪\n\nOne last step — a *security deposit*.\n\n${depositExplainer("en")}\n\nTap the link to place the deposit hold:\n👉 ${paymentUrl}`);
     } catch (e) {
       console.error("Checkin error:", e.message);
       await wa(phone, lang === "he"

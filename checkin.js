@@ -22,9 +22,15 @@ export const reservations = {};
 export function depositExplainer(lang = "he") {
   return lang === "he"
     ? "🔒 הפיקדון (₪500) מוקפא בכרטיסך להבטחת השהייה.\n" +
-      "בצ'ק אאוט: אם אין חיובים — ההקפאה משתחררת במלואה; אם יש חיובים — הם ינוכו מהפיקדון, והשאר משתחרר."
+      "בצ'ק אאוט:\n" +
+      "- אם אין חיובים — כל הפיקדון משתחרר.\n" +
+      "- אם יש חיובים — הם ינוכו מהפיקדון, והיתרה שנשארת משתחררת.\n" +
+      "- אם החיובים גדולים מהפיקדון — ההפרש יחויב מאותו כרטיס אשראי שהזנת בפיקדון."
     : "🔒 The ₪500 deposit is held on your card to secure your stay.\n" +
-      "At check-out: if there are no charges the hold is released in full; if there are charges they are deducted from the deposit and the rest is released.";
+      "At check-out:\n" +
+      "- If there are no charges — the full deposit is released.\n" +
+      "- If there are charges — they are deducted from the deposit, and the remainder is released.\n" +
+      "- If charges exceed the deposit — the difference is charged to the same card you used for the deposit.";
 }
 
 export const FOLIO_CATEGORIES = {
@@ -320,15 +326,13 @@ export async function processCheckout(phone, reservationId, lang = "he") {
         `תודה, *${res.guestName}*! 🌟\n\n` +
         formatFolio(res, lang) + "\n\n" +
         `💳 *נוכה מהפיקדון: ₪${charged}*\n` +
-        `💚 *יתרת הפיקדון שתשתחרר: ₪${refund}*\n` +
-        `⏱ שחרור ההקפאה תוך 3-5 ימי עסקים\n\n` +
+        `💚 *יתרת הפיקדון שתשתחרר: ₪${refund}* (תוך 3-5 ימי עסקים)\n\n` +
         `נשמח לראותך שוב! ⭐`
       : `🚪 *Check-out complete!*\n\n` +
         `Thank you, *${res.guestName}*! 🌟\n\n` +
         formatFolio(res, lang) + "\n\n" +
         `💳 *Deducted from your deposit: ₪${charged}*\n` +
-        `💚 *Remaining deposit released: ₪${refund}*\n` +
-        `⏱ Hold released within 3-5 business days\n\n` +
+        `💚 *Remaining deposit released: ₪${refund}* (within 3-5 business days)\n\n` +
         `We hope to see you again! ⭐`
     );
   }

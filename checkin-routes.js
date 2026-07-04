@@ -212,7 +212,7 @@ h1{font-family:'Playfair Display',serif;font-size:28px;margin-bottom:8px}
     <div class="wifi-info">Kempinski_Guest<br>סיסמה: Welcome2024</div>
   </div>
 
-  <p class="deposit-note">${depositExplainer("he").replace(/\n/g, "<br>")}<br>⏱ שחרור ההקפאה תוך 3-5 ימי עסקים.</p>
+  <p class="deposit-note">${depositExplainer("he").replace(/\n/g, "<br>")}</p>
   ` : ''}
 
   <a href="https://wa.me/14155238886" class="back-btn">💬 חזור לצ'אט</a>
