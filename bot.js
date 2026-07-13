@@ -13,7 +13,35 @@ import { idVerify }                                       from "./idverify/index
 
 dotenv.config();
 
-const ai   = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const AI_MODEL = "claude-sonnet-4-6";
+const ai   = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  // הגנה מפני "Premature close" ותקלות רשת חולפות מול api.anthropic.com בענן:
+  // ה-SDK מנסה שוב לבד על שגיאות רשת/429/5xx, עם timeout סביר לכל ניסיון.
+  maxRetries: 3,
+  timeout: 30_000, // 30s לכל ניסיון (max_tokens קטן, אין streaming)
+});
+
+// קריאה ל-AI עם retry ברמת האפליקציה + לוג ברור של השגיאה המדויקת.
+// חשוב: "Premature close" נזרק בזמן קריאת גוף התשובה — אחרי שה-headers כבר
+// הגיעו — ולכן ה-retry הפנימי של ה-SDK לא תמיד תופס אותו. עוטפים בעצמנו.
+async function createMessageWithRetry(params, attempts = 3) {
+  let lastErr;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await ai.messages.create(params);
+    } catch (e) {
+      lastErr = e;
+      const status = e?.status;
+      const kind   = e?.name || e?.constructor?.name || "Error";
+      console.error(`AI attempt ${i}/${attempts} failed [${kind}${status ? " " + status : ""}]: ${e?.message || e}${e?.cause ? ` | cause: ${e.cause?.message || e.cause}` : ""}`);
+      // שגיאות לקוח קבועות (400/401/403/404) — אין טעם לנסות שוב.
+      if (status && status >= 400 && status < 500 && status !== 429) break;
+      if (i < attempts) await new Promise(r => setTimeout(r, 400 * 2 ** (i - 1)));
+    }
+  }
+  throw lastErr;
+}
 const tw   = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 const FROM = process.env.TWILIO_WHATSAPP_NUMBER;
 
@@ -429,18 +457,24 @@ export async function handleIncoming(phone, text, media = null) {
   pushHistory(phone, "user", text);
   let raw;
   try {
-    const r = await ai.messages.create({
-      model: "claude-sonnet-4-6",
+    const r = await createMessageWithRetry({
+      model: AI_MODEL,
       max_tokens: 500,
       system: buildPrompt(sessions[phone] || session, lang),
       messages: (sessions[phone] || session).history,
     });
-    raw = r.content[0].text;
+    // חילוץ עמיד של הטקסט — מתעלמים מבלוקים שאינם טקסט (thinking וכו').
+    raw = (r.content || [])
+      .filter(b => b.type === "text")
+      .map(b => b.text)
+      .join("")
+      .trim();
+    if (!raw) throw new Error("empty AI response");
   } catch (e) {
-    console.error("AI error:", e.message);
+    console.error("AI error (all retries failed):", e?.message || e);
     raw = lang === "he"
-      ? "מצטערים, אירעה שגיאה זמנית. אנא פנה לקבלה בשלוחה 0."
-      : "Sorry, a temporary error occurred. Please contact reception at Ext. 0.";
+      ? "מצטערים, אירעה שגיאה זמנית. אנא נסה שוב בעוד רגע, או פנה לקבלה בשלוחה 0."
+      : "Sorry, a temporary error occurred. Please try again in a moment, or contact reception at Ext. 0.";
   }
   const reply = await runActions(raw, sessions[phone] || session, phone);
   await wa(phone, reply);
