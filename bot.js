@@ -99,17 +99,20 @@ export async function notifyStaff({ dept, roomNumber, guestName, message, priori
 function isCheckinIntent(text) {
   const t = text.replace(/['''`״׳]/g, "").toLowerCase().trim();
   return [
-    "צק אין", "check in", "checkin", "check-in",
+    "צק אין", "צכ אין", "תק אין", "צאק אין", "צ אין", "צקאין",
+    "check in", "checkin", "check-in", "chek in", "chekin",
     "הגעתי", "אני פה", "רוצה להתחיל", "want to check", "checking in",
-    "לצק אין", "לעשות צק"
+    "לצק אין", "לעשות צק", "wanna check in", "like to check in"
   ].some(x => t.includes(x.replace(/[''']/g, "").toLowerCase()));
 }
 
 function isCheckoutIntent(text) {
   const t = text.replace(/['''`״׳]/g, "").toLowerCase().trim();
   return [
-    "צק אאוט", "check out", "checkout", "check-out",
-    "אני עוזב", "אני יוצא", "leaving", "checking out", "לצאת", "לעזוב"
+    "צק אאוט", "צכ אאוט", "תק אאוט", "צ אאוט", "צקאאוט",
+    "check out", "checkout", "check-out", "chek out", "chekout",
+    "אני עוזב", "אני יוצא", "leaving", "checking out", "לצאת", "לעזוב",
+    "wanna check out", "like to check out"
   ].some(x => t.includes(x.replace(/[''']/g, "").toLowerCase()));
 }
 
@@ -165,9 +168,15 @@ function buildPrompt(session, lang) {
 לעולם אל תסתמך על עצמך בלבד באירוע חירום — חובה להסלים דרך התג [EMERGENCY:...].
 
 כללים:
-- אסור לטפל בצ׳ק אין או צ׳ק אאוט — המערכת מטפלת בזה אוטומטית
+- אסור לטפל בעצמך בצ׳ק אין או צ׳ק אאוט — המערכת מטפלת בזה אוטומטית.
+  אם האורח מבקש *צ'ק אין* (בכל ניסוח, סלנג או שגיאת כתיב — "צק אין", "צכ אין",
+  "תק אין", "רוצה להיכנס", "הגעתי" וכו') — אל תענה תשובה רגילה, החזר *אך ורק* את
+  התג [CHECKIN] וכלום מלבדו. אם האורח מבקש *צ'ק אאוט* (בכל ניסוח/שגיאה —
+  "צק אאוט", "צכ אאוט", "רוצה לעזוב", "מסיים") — החזר *אך ורק* את התג [CHECKOUT].
+  המערכת תשתלט משם.
 - אל תמציא מידע שאינו כתוב כאן
 - לבקשות מחוץ לתחום — הפנה לקבלה בשלוחה 0
+- מחלקת התיקונים הטכניים נקראת תמיד *"אחזקה"* — לעולם אל תכתוב "תחזוקה"
 - השתמש ב-*bold* לדגש, אימוג׳י במידה
 
 מידע המלון:
@@ -211,7 +220,12 @@ If the guest describes an injury, a medical event, fire, a gas smell/leak, or im
 Never rely on yourself alone in an emergency — you MUST escalate via the [EMERGENCY:...] tag.
 
 Rules:
-- Never handle check-in or check-out yourself — the system does this automatically
+- Never handle check-in or check-out yourself — the system does this automatically.
+  If the guest asks to *check in* (in any phrasing, slang or typo — "checkin",
+  "chek in", "i wanna check in", "arrived", "want to get my room") — do NOT reply
+  normally; return *only* the tag [CHECKIN] and nothing else. If the guest asks to
+  *check out* (any phrasing/typo — "checkout", "chekout", "i'm leaving", "wrap up
+  my stay") — return *only* the tag [CHECKOUT]. The system takes over from there.
 - Never invent information not listed here
 - For out-of-scope requests, direct to reception at Ext. 0
 - Use *bold* for emphasis, emojis sparingly
@@ -334,6 +348,23 @@ async function handleCheckin(phone, text, lang, media = null) {
         mediaUrl: media.url,
         contentType: media.contentType,
         documentType: "id_or_passport",
+      });
+
+      // ── התראה לקבלה: אימות הזהות הושלם (Bug #5) ──────────
+      // וואטסאפ + מייל דרך notifyStaff. החדר עדיין לא הוקצה בשלב זה (מוקצה
+      // בתשלום/completeCheckin) — לכן מזוהה לפי מספר ההזמנה. Mock: התמונה
+      // עצמה לא נשמרה; זו רק הודעה שהאימות בוצע.
+      await notifyStaff({
+        dept: "reception",
+        roomNumber: s.roomNumber || null,
+        guestName,
+        message:
+          `🪪 *אימות זהות הושלם בצ'ק אין הדיגיטלי*\n` +
+          `👤 אורח: ${guestName}\n` +
+          `🔖 הזמנה: ${reservationNumber || "—"}\n` +
+          `🏠 חדר: ${s.roomNumber || "יוקצה בשלב הפיקדון"}\n` +
+          `📸 המסמך אומת (דמו — התמונה לא נשמרה). ניתן להמשיך בהקצאת חדר/כרטיס.`,
+        priority: "normal",
       });
 
       const { paymentUrl } = await startCheckin(phone, guestName, reservationNumber);
@@ -476,6 +507,27 @@ export async function handleIncoming(phone, text, media = null) {
       ? "מצטערים, אירעה שגיאה זמנית. אנא נסה שוב בעוד רגע, או פנה לקבלה בשלוחה 0."
       : "Sorry, a temporary error occurred. Please try again in a moment, or contact reception at Ext. 0.";
   }
+
+  // ── גיבוי זיהוי כוונה מבוסס-AI (Bug #2) ────────────────
+  // הכללים המהירים למעלה תופסים ניסוחים ברורים בלי קריאת AI. כשהם מפספסים
+  // (שגיאות כתיב, ניסוח חופשי), הקונסיירז' מזהה את הכוונה ומחזיר תג בלבד —
+  // [CHECKIN] / [CHECKOUT] — ואנחנו מנתבים למכונת המצבים במקום לענות.
+  if (/\[CHECKIN\]/i.test(raw) && !session.checkinStage && session.stage !== "checked_in") {
+    patchSession(phone, { checkinStage: "start" });
+    await handleCheckin(phone, text, lang, media);
+    return;
+  }
+  if (/\[CHECKOUT\]/i.test(raw)) {
+    if (session.stage === "checked_in" || getActiveReservation(phone)) {
+      await startCheckout(phone, lang);
+    } else {
+      await wa(phone, lang === "he"
+        ? "לא מצאתי הזמנה פעילה על שמך לצ'ק אאוט. אם כבר ביצעת צ'ק אין, פנה לקבלה בשלוחה 0."
+        : "I couldn't find an active reservation to check out. If you've already checked in, please contact reception at Ext. 0.");
+    }
+    return;
+  }
+
   const reply = await runActions(raw, sessions[phone] || session, phone);
   await wa(phone, reply);
   pushHistory(phone, "assistant", reply);
