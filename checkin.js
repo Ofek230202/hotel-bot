@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 import { wa, notifyStaff } from "./bot.js";
 import { logAlert, stats, patchSession, sessions } from "./state.js";
 import { payments, PAYMENT_CURRENCY } from "./payments/index.js";
+import { nameFor } from "./names.js";
 import { db, DEFAULT_HOTEL_ID } from "./db.js";
 
 // נקרא תמיד בזמן-קריאה (lazy), אחרי ש-dotenv.config() כבר רץ.
@@ -82,7 +83,14 @@ export const FOLIO_CATEGORIES = {
 };
 
 // ── Start check-in ────────────────────────────────────
-export async function startCheckin(phone, guestName, reservationId) {
+// nameInput יכול להיות מחרוזת (שם בודד, תאימות לאחור) או אובייקט עם שתי
+// הצורות { guestName, guestNameHe, guestNameEn } — כדי שלא ייווצר ערבוב
+// שפות בשם האורח (Bug 2). שומרים תמיד את שתי הצורות על ההזמנה.
+export async function startCheckin(phone, nameInput, reservationId) {
+  const obj         = nameInput && typeof nameInput === "object" ? nameInput : null;
+  const guestNameHe = obj ? (obj.guestNameHe || obj.guestName || "") : (nameInput || "");
+  const guestNameEn = obj ? (obj.guestNameEn || obj.guestName || "") : (nameInput || "");
+  const guestName   = obj ? (obj.guestName || guestNameHe) : (nameInput || "");
   const id      = uuidv4();
   const DEPOSIT = 50000; // ₪500 באגורות (lowest currency unit)
   // מספר הלילות — דמו: ברירת מחדל. בפרודקשן יישלף מה-PMS לפי ההזמנה.
@@ -90,7 +98,7 @@ export async function startCheckin(phone, guestName, reservationId) {
   const NIGHTS  = 3;
 
   reservations[id] = {
-    id, phone, guestName, reservationId,
+    id, phone, guestName, guestNameHe, guestNameEn, reservationId,
     roomNumber: null,
     stage: "pending_payment",
     deposit: DEPOSIT,
@@ -174,14 +182,17 @@ export async function completeCheckin(reservationId, roomNumber) {
     reservationId: res.id,
     roomNumber:    res.roomNumber,
     guestName:     res.guestName,
+    guestNameHe:   res.guestNameHe,
+    guestNameEn:   res.guestNameEn,
     checkinStage:  null,
     checkInAt:     res.checkedInAt,
   });
 
-  const he = (sessions[res.phone]?.lang || "he") === "he";
+  const he   = (sessions[res.phone]?.lang || "he") === "he";
+  const name = nameFor(res, he ? "he" : "en"); // שם בשפת השיחה — בלי ערבוב (Bug 2)
   await wa(res.phone, he
     ? `✅ *צ'ק אין אושר!*\n\n` +
-      `ברוכים הבאים, *${res.guestName}*! 🌟\n\n` +
+      `ברוכים הבאים, *${name}*! 🌟\n\n` +
       `🚪 *חדר:* ${res.roomNumber}\n` +
       `🔑 *כרטיס לחדר ימתין לך מוכן בקבלה* — גש לאסוף אותו, הוא מתוקף לכל משך השהייה\n` +
       `${depositExplainer("he")}\n` +
@@ -191,7 +202,7 @@ export async function completeCheckin(reservationId, roomNumber) {
       `🛎️ שירות לחדר: 24/7 | שלוחה 0\n\n` +
       `לכל בקשה — אני כאן! 😊`
     : `✅ *Check-in confirmed!*\n\n` +
-      `Welcome, *${res.guestName}*! 🌟\n\n` +
+      `Welcome, *${name}*! 🌟\n\n` +
       `🚪 *Room:* ${res.roomNumber}\n` +
       `🔑 *Your room key is ready and waiting at reception* — please pick it up; it's valid for your entire stay\n` +
       `${depositExplainer("en")}\n` +
@@ -343,11 +354,12 @@ export async function processCheckout(phone, reservationId, lang = "he") {
 
   if (!res) throw new Error("No active reservation found");
 
-  const he = lang === "he";
+  const he   = lang === "he";
+  const name = nameFor(res, lang); // שם בשפת השיחה לכל ההודעות לאורח (Bug 2)
   const s  = await settleFolio(res, {
     overageDescription: he
-      ? `יתרה מעל פיקדון — חדר ${res.roomNumber} · ${res.guestName}`
-      : `Amount over deposit — Room ${res.roomNumber} · ${res.guestName}`,
+      ? `יתרה מעל פיקדון — חדר ${res.roomNumber} · ${res.guestNameHe || res.guestName}`
+      : `Amount over deposit — Room ${res.roomNumber} · ${res.guestNameEn || res.guestName}`,
   });
 
   res.stage        = "checked_out";
@@ -359,12 +371,12 @@ export async function processCheckout(phone, reservationId, lang = "he") {
   if (s.total === 0) {
     await wa(res.phone, he
       ? `🚪 *צ'ק אאוט הושלם!*\n\n` +
-        `תודה, *${res.guestName}*! שמחנו לארח אותך 🌟\n\n` +
+        `תודה, *${name}*! שמחנו לארח אותך 🌟\n\n` +
         `✅ אין חיובים — *לא בוצע חיוב.*\n` +
         `💚 ההקפאה על הפיקדון (₪500) תשוחרר על ידי חברת האשראי תוך *3-5 ימי עסקים*.\n\n` +
         `נשמח לראותך שוב! ⭐`
       : `🚪 *Check-out complete!*\n\n` +
-        `Thank you, *${res.guestName}*! It was a pleasure hosting you 🌟\n\n` +
+        `Thank you, *${name}*! It was a pleasure hosting you 🌟\n\n` +
         `✅ No charges — *nothing was charged.*\n` +
         `💚 The hold on your ₪500 deposit will be released by your card issuer within *3–5 business days*.\n\n` +
         `We hope to see you again! ⭐`
@@ -378,13 +390,13 @@ export async function processCheckout(phone, reservationId, lang = "he") {
 
     await wa(res.phone, he
       ? `🚪 *צ'ק אאוט הושלם!*\n\n` +
-        `תודה, *${res.guestName}*! 🌟\n\n` +
+        `תודה, *${name}*! 🌟\n\n` +
         formatFolio(res, lang) + "\n\n" +
         `💳 *נוכה מהפיקדון: ₪${charged}*\n` +
         `💚 *יתרת הפיקדון (₪${refund}) תשוחרר* על ידי חברת האשראי תוך *3-5 ימי עסקים*.\n\n` +
         `נשמח לראותך שוב! ⭐`
       : `🚪 *Check-out complete!*\n\n` +
-        `Thank you, *${res.guestName}*! 🌟\n\n` +
+        `Thank you, *${name}*! 🌟\n\n` +
         formatFolio(res, lang) + "\n\n" +
         `💳 *Deducted from your deposit: ₪${charged}*\n` +
         `💚 *The remaining ₪${refund} will be released* by your card issuer within *3–5 business days*.\n\n` +
@@ -406,8 +418,8 @@ export async function processCheckout(phone, reservationId, lang = "he") {
       amount: s.overage,
       currency: PAYMENT_CURRENCY,
       description: he
-        ? `יתרה מעל פיקדון — חדר ${res.roomNumber} · ${res.guestName}`
-        : `Amount over deposit — Room ${res.roomNumber} · ${res.guestName}`,
+        ? `יתרה מעל פיקדון — חדר ${res.roomNumber} · ${name}`
+        : `Amount over deposit — Room ${res.roomNumber} · ${name}`,
       paymentPageUrl: `${baseUrl()}/checkout/balance/pay?rid=${res.id}`,
       successUrl: `${baseUrl()}/checkout/paid?rid=${res.id}`,
       cancelUrl:  `${baseUrl()}/checkout/skip?rid=${res.id}`,
@@ -419,7 +431,7 @@ export async function processCheckout(phone, reservationId, lang = "he") {
 
     await wa(res.phone, he
       ? `🚪 *צ'ק אאוט הושלם — חדר ${res.roomNumber}*\n\n` +
-        `תודה, *${res.guestName}*! 🌟\n\n` +
+        `תודה, *${name}*! 🌟\n\n` +
         formatFolio(res, lang) + "\n\n" +
         `💳 *הפיקדון (₪500) נוכה במלואו.*\n` +
         `❗ החיובים (₪${totalStr}) עלו על הפיקדון.\n` +
@@ -427,7 +439,7 @@ export async function processCheckout(phone, reservationId, lang = "he") {
         `מעדיף לשלם את ההפרש בכרטיס אחר? אפשר להחליף כאן:\n👉 ${res.altCardUrl}\n\n` +
         `_לשאלות: קבלה שלוחה 0_`
       : `🚪 *Check-out complete — Room ${res.roomNumber}*\n\n` +
-        `Thank you, *${res.guestName}*! 🌟\n\n` +
+        `Thank you, *${name}*! 🌟\n\n` +
         formatFolio(res, lang) + "\n\n" +
         `💳 *The ₪500 deposit was deducted in full.*\n` +
         `❗ Charges (₪${totalStr}) exceeded the deposit.\n` +
@@ -497,11 +509,12 @@ export async function autoChargeOnNoShow(reservationId, lang = "he") {
     return { alreadyHandled: true, reservation: res };
   }
 
-  const he = lang === "he";
+  const he   = lang === "he";
+  const name = nameFor(res, lang);
   const s  = await settleFolio(res, {
     overageDescription: he
-      ? `חיוב אוטומטי (no-show) — חדר ${res.roomNumber} · ${res.guestName}`
-      : `Auto-charge (no-show) — Room ${res.roomNumber} · ${res.guestName}`,
+      ? `חיוב אוטומטי (no-show) — חדר ${res.roomNumber} · ${name}`
+      : `Auto-charge (no-show) — Room ${res.roomNumber} · ${name}`,
   });
 
   res.stage        = "checked_out";

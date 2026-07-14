@@ -6,7 +6,8 @@ import twilio    from "twilio";
 import dotenv    from "dotenv";
 import { hotelConfig }                                    from "./config.js";
 import { getSession, recordActivity, pushHistory, patchSession, logAlert, logIncident, stats, sessions } from "./state.js";
-import { detectLang }                                     from "./i18n.js";
+import { detectLangSignal }                               from "./i18n.js";
+import { resolveNameForms, nameFor }                      from "./names.js";
 import { startCheckin, processCheckout, getActiveReservation, formatFolio, depositExplainer } from "./checkin.js";
 import { email }                                          from "./email/index.js";
 import { idVerify }                                       from "./idverify/index.js";
@@ -194,7 +195,7 @@ ${svcs}
 ${faqs}
 
 פרטי האורח:
-שם: ${session.guestName || "—"} | חדר: ${session.roomNumber || "—"} | מצב: ${session.stage || "—"}
+שם: ${nameFor(session, "he") || "—"} | חדר: ${session.roomNumber || "—"} | מצב: ${session.stage || "—"}
 
 פקודות פנימיות (הוסף בסוף תגובתך בשורה נפרדת, האורח לא יראה אותן):
 [HK:<תיאור>] — בקשת ניקיון
@@ -245,7 +246,7 @@ FAQ:
 ${faqs}
 
 Guest:
-Name: ${session.guestName || "—"} | Room: ${session.roomNumber || "—"}
+Name: ${nameFor(session, "en") || "—"} | Room: ${session.roomNumber || "—"}
 
 Internal commands (add at end of reply on a new line, guest never sees these):
 [HK:<description>] — housekeeping request
@@ -304,10 +305,19 @@ async function handleCheckin(phone, text, lang, media = null) {
   }
 
   if (stage === "waiting_name") {
-    patchSession(phone, { checkinStage: "waiting_reservation", pendingName: text });
+    // שומרים את השם בשתי הצורות (עברית + אנגלית) כבר עכשיו, ומציגים לפי
+    // שפת השיחה — כדי שלא ייווצר ערבוב שפות בשם (Bug 2).
+    const forms = await resolveNameForms(text);
+    patchSession(phone, {
+      checkinStage: "waiting_reservation",
+      pendingName:   text,
+      pendingNameHe: forms.he,
+      pendingNameEn: forms.en,
+    });
+    const shown = lang === "he" ? forms.he : forms.en;
     await wa(phone, lang === "he"
-      ? `תודה, *${text}*! 😊\n\nאנא הקלד את *מספר ההזמנה* שלך:`
-      : `Thank you, *${text}*! 😊\n\nPlease enter your *reservation number*:`);
+      ? `תודה, *${shown}*! 😊\n\nאנא הקלד את *מספר ההזמנה* שלך:`
+      : `Thank you, *${shown}*! 😊\n\nPlease enter your *reservation number*:`);
     return;
   }
 
@@ -335,9 +345,11 @@ async function handleCheckin(phone, text, lang, media = null) {
     }
 
     const s = getSession(phone);
-    const guestName         = s.pendingName || "אורח";
+    const guestNameHe       = s.pendingNameHe || s.pendingName || "אורח";
+    const guestNameEn       = s.pendingNameEn || s.pendingName || "Guest";
+    const guestName         = guestNameHe; // צוות המלון עובד בעברית — שם הצוות בעברית
     const reservationNumber = s.pendingReservation || "";
-    patchSession(phone, { checkinStage: "waiting_payment", guestName });
+    patchSession(phone, { checkinStage: "waiting_payment", guestName, guestNameHe, guestNameEn });
     try {
       // אימות המסמך עובר דרך שכבת idverify המבודדת (Mock) — מאשר קבלה
       // בלי לשמור/להוריד את התמונה. mediaUrl מועבר אך אינו נשמר בשום מקום.
@@ -367,7 +379,7 @@ async function handleCheckin(phone, text, lang, media = null) {
         priority: "normal",
       });
 
-      const { paymentUrl } = await startCheckin(phone, guestName, reservationNumber);
+      const { paymentUrl } = await startCheckin(phone, { guestName, guestNameHe, guestNameEn }, reservationNumber);
       await wa(phone, lang === "he"
         ? `✅ *תעודת הזהות אומתה בהצלחה!* 🪪\n\nשלב אחרון — *פיקדון שהייה*.\n\n${depositExplainer("he")}\n\nלחץ על הקישור להקפאת הפיקדון:\n👉 ${paymentUrl}`
         : `✅ *Your ID was verified successfully!* 🪪\n\nOne last step — a *security deposit*.\n\n${depositExplainer("en")}\n\nTap the link to place the deposit hold:\n👉 ${paymentUrl}`);
@@ -436,8 +448,18 @@ async function confirmCheckout(phone, session, lang) {
 export async function handleIncoming(phone, text, media = null) {
   const session = getSession(phone);
   recordActivity(phone); // רישום ההודעה הנכנסת (messageCount/פעילות) — פעם אחת בלבד (Bug #2)
-  const lang = session.lang || detectLang(text);
-  if (!session.lang) patchSession(phone, { lang });
+
+  // ── שפת השיחה דינמית לפי כל הודעה (Bug 1) ─────────────
+  // מזהים את שפת ההודעה הנוכחית ומעדכנים את שפת השיחה בהתאם — כך אורח
+  // שכותב אנגלית מקבל תשובה באנגלית מיד, בלי לבקש "In English?".
+  // חריג: כשאנחנו באמצע זרימת צ'ק אין/אאוט, הקלט הוא נתונים (שם/מספר הזמנה/
+  // כן-לא) ואסור שיחליף את שפת השיחה — לכן נועלים לשפה שכבר נקבעה.
+  const signal  = detectLangSignal(text); // "he" | "en" | null (אין אות שפה)
+  const inFlow  = !!session.checkinStage || session.checkoutStage === "awaiting_confirmation";
+  const lang    = inFlow
+    ? (session.lang || signal || "en")
+    : (signal || session.lang || "en");
+  if (session.lang !== lang) patchSession(phone, { lang });
 
   // הודעה ראשונה: שולחים תפריט/פתיחה רק אם זו ברכה כללית בלבד ("שלום"/"היי").
   // אם יש בהודעה הראשונה כוונה ברורה (צ'ק אין/אאוט, בקשת מחלקה, שאלה) —
