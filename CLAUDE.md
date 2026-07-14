@@ -55,7 +55,10 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
 | `checkin-routes.js` | Stripe success/cancel HTML pages + Stripe webhook handler. Calls `completeCheckin` after payment. | Coupled to Stripe |
 | `state.js` | **In-memory state** (`sessions`, `staffAlerts`, `stats`). `getSession`, `pushHistory`, `patchSession`, `logAlert`. Comment even says "swap for Redis/DB in production". | Works, NOT persistent, NOT multi-tenant |
 | `config.js` | **Single hotel** config object (`hotelConfig`): identity, dept WhatsApp numbers, times, WiFi, services, parking, FAQ, welcome messages. `updateConfig` mutates it globally. | Works for 1 hotel only |
-| `i18n.js` | `detectLang` (Hebrew unicode range heuristic) + `t` helper. | Works |
+| `i18n.js` | `detectLang` / `detectLangSignal` (Hebrew unicode heuristic), `detectLanguageRequest` + `stripLanguageRequest` (בקשת מעבר שפה), `t` helper. | Works |
+| `validate.js` | אימות קלט האורח (שם / מספר הזמנה / תמונת ת"ז) + `stripInternalTags` — רשת הביטחון שמונעת דליפת תגים פנימיים לאורח. | Works |
+| `idverify/` | שכבת אימות זהות מבודדת. `vision.js` — בדיקת Claude vision אמיתית שהתמונה היא ת"ז/דרכון; `MockIdProvider` — מאמת + שומר מקומית (דמו). נקודת החלפה אחת: `idverify/index.js`. | Works |
+| `e2e.test.mjs` | בדיקות end-to-end לזרימת הצ'ק אין, השפה, התגים והזהות (`npm test`). | Works |
 | `index.html` (50KB) | Standalone dashboard/landing UI. | Present, not wired into the server flow as a tracked file |
 | `package.json` | Deps: `@anthropic-ai/sdk`, `twilio`, `stripe`, `express`, `dotenv`, `uuid`. ESM (`"type":"module"`). | OK |
 
@@ -85,7 +88,15 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
   via chat.
 - **Hardcoded room "304"**, hardcoded currency `gbp` (should be ILS), hardcoded hotel name in
   several strings.
-- No tests, no logging/monitoring, no rate-limiting, no Twilio request validation (security).
+- No logging/monitoring, no rate-limiting, no Twilio request validation (security).
+- ~~No tests~~ **PARTIAL** — `e2e.test.mjs` מכסה צ'ק אין, אימות קלט, שפה, תגים וזהות (`npm test`).
+  עדיין חסרות בדיקות לצ'ק אאוט ולשכבת התשלום.
+
+### ID document storage (אחסון תעודות זהות)
+`idverify/MockIdProvider` שומר את התמונה ל-`id-documents/` (ב-`.gitignore`) —
+**אחסון דמו בלבד: מקומי, לא מוצפן, בלי בקרת גישה ובלי retention.**
+⚠️ אסור להריץ כך בפרודקשן עם אורחים אמיתיים. המעבר לאחסון מאובטח ומוצפן
+נעשה במקום אחד: `idverify/index.js`.
 
 ---
 
@@ -172,7 +183,17 @@ Priority order (to be decided together):
 - [ ] **P2 — Full payment policy** (see §1): charge for the stay itself, advances/deposits
       (מקדמות) at booking, and payment at reception on a different card — all through the existing
       `payments/` abstraction. (Documented only; not built yet.)
-- [ ] **P3 — Tests** for the check-in/out state machine and payment provider.
+- [ ] **P3 — Tests** — done for check-in / input validation / language / tags / ID
+      (`e2e.test.mjs`, `npm test`). Still missing: check-out state machine + payment provider.
+
+### הגנות רוחב (מהבדיקה החיה — כולן ממומשות)
+- **תג פנימי לעולם לא לאורח:** כל ענף של `[CHECKIN]`/`[CHECKOUT]` מסתיים בפעולה + `return`,
+  ו-`wa()` מסנן גנרית כל `[TAG]`/`[TAG:...]` כרשת ביטחון אחרונה.
+- **אף פעם לא שקט:** `handleIncoming` עוטף הכול ב-try/catch → הודעת גיבוי לאורח + הסלמה
+  לקבלה. `wa()` לעולם לא שולח body ריק (טוויליו זורק על כך ומשתיק את הבוט).
+- **קלט:** מאומת בכל שלב (`validate.js`); קלט לא תקין → בקשה חוזרת מנומסת *באותו שלב*.
+- **שפה:** בקשת מעבר שפה גוברת על הכול (גם באמצע צ'ק אין) → `promptStage` שולח את השלב
+  הנוכחי מחדש בשפה החדשה וממשיך משם. לכל שלב יש מקור ניסוח אחד — ולכן אין ערבוב שפות.
 
 ---
 

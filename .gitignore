@@ -11,6 +11,9 @@ node_modules/
 *.db-shm
 *.db-wal
 
+# מסמכי זיהוי של אורחים (PII רגיש) — אחסון דמו מקומי, לעולם לא ל-git
+id-documents/
+
 # Logs
 *.log
 npm-debug.log*

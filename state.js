@@ -92,10 +92,25 @@ function persist(s) {
 }
 
 // ── הידרציה: טעינת כל הסשנים מה-DB ל-cache בעליית התהליך ──
+// כולל *ריפוי* של סשנים שנפגעו: הודעה ריקה בהיסטוריה גורמת ל-400 מול
+// Claude בכל הודעה הבאה, ומכיוון שההיסטוריה נשמרת ב-DB — האורח נשאר
+// תקוע גם אחרי ריסטארט. מנקים את הרשומות הריקות כאן, פעם אחת, כדי
+// לשחרר סשנים שכבר נשברו בשטח לפני התיקון (Bug #2).
 for (const row of db.prepare(`SELECT data FROM sessions WHERE hotel_id = ?`).all(HOTEL)) {
   try {
     const s = JSON.parse(row.data);
-    if (s && s.phone) sessions[s.phone] = s;
+    if (!s || !s.phone) continue;
+    if (Array.isArray(s.history)) {
+      const clean = s.history.filter(h => typeof h?.content === "string" && h.content.trim());
+      if (clean.length !== s.history.length) {
+        console.log(`🧹 סשן ${s.phone}: נוקו ${s.history.length - clean.length} הודעות ריקות מההיסטוריה`);
+        s.history = clean;
+        sessions[s.phone] = s;
+        persist(s);
+        continue;
+      }
+    }
+    sessions[s.phone] = s;
   } catch { /* שורה פגומה — מדלגים */ }
 }
 
@@ -140,9 +155,18 @@ export function recordActivity(phone) {
   return s;
 }
 
+// ── היסטוריית השיחה — לעולם לא ריקה (הגנה בעומק, Bug #2) ──
+// ה-API של Claude דוחה content ריק ב-400. מכיוון שההיסטוריה נשמרת
+// ל-DB, רשומה ריקה אחת "הורגת" את השיחה של האורח לתמיד — גם אחרי
+// ריסטארט. לכן פשוט לא מכניסים רשומות ריקות, מאיזה קורא שלא יהיה.
 export function pushHistory(phone, role, content) {
+  const text = typeof content === "string" ? content.trim() : "";
+  if (!text) {
+    console.error(`⚠️ pushHistory: ניסיון להוסיף הודעת ${role} ריקה (${phone}) — נחסם.`);
+    return;
+  }
   const s = getSession(phone);
-  s.history.push({ role, content });
+  s.history.push({ role, content: text });
   if (s.history.length > 30) s.history = s.history.slice(-30);
   persist(s);
 }

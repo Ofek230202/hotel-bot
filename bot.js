@@ -6,9 +6,10 @@ import twilio    from "twilio";
 import dotenv    from "dotenv";
 import { hotelConfig }                                    from "./config.js";
 import { getSession, recordActivity, pushHistory, patchSession, logAlert, logIncident, stats, sessions } from "./state.js";
-import { detectLangSignal }                               from "./i18n.js";
+import { detectLangSignal, detectLanguageRequest, stripLanguageRequest } from "./i18n.js";
+import { stripInternalTags, hasInternalTag, validateFullName, validateReservationNumber, validateIdMedia } from "./validate.js";
 import { resolveNameForms, nameFor }                      from "./names.js";
-import { startCheckin, processCheckout, getActiveReservation, formatFolio, depositExplainer } from "./checkin.js";
+import { startCheckin, processCheckout, getActiveReservation, getPendingReservation, formatFolio, depositExplainer } from "./checkin.js";
 import { email }                                          from "./email/index.js";
 import { idVerify }                                       from "./idverify/index.js";
 
@@ -46,9 +47,32 @@ async function createMessageWithRetry(params, attempts = 3) {
 const tw   = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 const FROM = process.env.TWILIO_WHATSAPP_NUMBER;
 
-export async function wa(to, body) {
-  await tw.messages.create({ from: FROM, to, body });
-  console.log(`📤 → ${to.slice(-8)}: ${body.slice(0, 60)}…`);
+// ── הודעות מוכנות למקרי קצה — לעולם לא שקט מוחלט (Bug #2) ──
+const FALLBACK_MSG = {
+  he: "אירעה תקלה קלה אצלנו — אני חוזר אליך מיד 🙏\nאם זה דחוף, הקבלה זמינה בשלוחה 0.",
+  en: "We hit a small glitch on our side — I'll be right back with you 🙏\nIf it's urgent, reception is available at Ext. 0.",
+};
+
+// ── ערוץ היציאה היחיד לוואטסאפ — כאן מחטאים כל הודעה ──
+// שתי רשתות ביטחון על *כל* הודעה יוצאת, לאורח ולצוות כאחד:
+// 1. תג פנימי ([CHECKIN] / [HK:...] וכו') לעולם לא ידלוף לאורח (Bug #1).
+//    גם אם הקוד שמעל פספס — כאן זה נעצר, ונרשם ללוג כדי שנדע.
+// 2. הודעה ריקה לא נשלחת לטוויליו (שזורק שגיאה על body ריק ומשתיק את
+//    הבוט) — במקומה נשלחת הודעת גיבוי (Bug #2).
+export async function wa(to, body, { lang = "he" } = {}) {
+  const raw = String(body ?? "");
+  if (hasInternalTag(raw)) {
+    console.error(`🚨 תג פנימי נתפס לפני שליחה לאורח (${to.slice(-8)}) — סונן: ${raw.slice(0, 120)}`);
+  }
+
+  let text = stripInternalTags(raw);
+  if (!text) {
+    console.error(`🚨 הודעה ריקה נחסמה לפני שליחה (${to.slice(-8)}) — נשלחת הודעת גיבוי. raw="${raw.slice(0, 120)}"`);
+    text = FALLBACK_MSG[lang === "he" ? "he" : "en"];
+  }
+
+  await tw.messages.create({ from: FROM, to, body: text });
+  console.log(`📤 → ${to.slice(-8)}: ${text.slice(0, 60)}…`);
 }
 
 function israelTime() {
@@ -155,8 +179,16 @@ function buildPrompt(session, lang) {
 
   if (lang === "he") {
     return `אתה הקונסיירז׳ הדיגיטלי של ${cfg.name_he}, מלון יוקרה 5 כוכבים.
-ענה תמיד בעברית תקינה, חמה ואלגנטית. משפטים קצרים וברורים.
 השעה הנוכחית בישראל: ${nowFull}
+
+🔴 שפת השיחה: *עברית* — חוק ברזל:
+- כתוב אך ורק בעברית תקינה, חמה ואלגנטית. כל מילה. משפטים קצרים וברורים.
+- גם אם ההודעות הקודמות בשיחה נכתבו באנגלית — מעכשיו הכול בעברית בלבד. אל תערבב שפות.
+  (יוצאים מן הכלל: שמות מותג/רשת WiFi/סיסמה/קישורים — אלה נשארים כפי שהם.)
+- אם האורח מבקש לעבור לשפה כלשהי, בכל ניסוח — עבור אליה *מיד*, בלי להתנצל,
+  בלי לשאול, ובלי שום הסבר או תירוץ. ⛔ אסור בהחלט לומר דברים כמו "אני משתדל
+  לתקשר באנגלית כדי להבטיח שירות מיטבי" — זו התנהגות פסולה. פשוט עבור לשפה
+  שהאורח ביקש והמשך משם.
 
 🚨 חירום — עדיפות עליונה, לפני כל דבר אחר:
 אם האורח מתאר פציעה, מצב רפואי, אש, ריח/דליפת גז, או סכנה מיידית — זהה זאת מיד (לפי המשמעות, לא לפי מילה מסוימת):
@@ -207,8 +239,16 @@ ${faqs}
   }
 
   return `You are the digital concierge of ${cfg.name}, a 5-star luxury hotel.
-Always respond in elegant, warm English. Short, clear sentences.
 Current time in Israel: ${nowFull}
+
+🔴 CONVERSATION LANGUAGE: *English* — hard rule:
+- Write in elegant, warm English only. Every word. Short, clear sentences.
+- Even if earlier messages in this conversation were in another language — from now on it is English only. Never mix languages.
+  (Exceptions: brand names / WiFi network / password / links stay as they are.)
+- If the guest asks to switch to another language, in any phrasing — switch *immediately*, with no apology,
+  no questions, and no explanation or excuse. ⛔ Never say things like "I try to communicate in English to
+  ensure the highest level of service" — that is unacceptable. Just switch to the language the guest asked
+  for and continue from there.
 
 🚨 EMERGENCY — highest priority, before anything else:
 If the guest describes an injury, a medical event, fire, a gas smell/leak, or immediate danger — recognize it instantly (by meaning, not by a specific keyword):
@@ -292,112 +332,314 @@ async function runActions(raw, session, phone) {
   return raw.replace(re, "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-async function handleCheckin(phone, text, lang, media = null) {
-  const session = getSession(phone);
-  const stage = session.checkinStage;
+// ════════════════════════════════════════════════════════
+//  צ'ק אין — מכונת מצבים עם אימות קלט בכל שלב
+//  ----------------------------------------------------------
+//  שני עקרונות:
+//  1. קלט לא תקין לעולם לא מתקבל ולעולם לא שובר את הזרימה — מבקשים
+//     שוב בנימוס *באותו שלב* (Bug #3, #9).
+//  2. לכל שלב יש מקור אמת אחד לניסוח (promptStage) — ולכן אפשר לשלוח
+//     אותו מחדש בכל שפה, בכל רגע, בלי להתחיל מהתחלה (Bug #5).
+// ════════════════════════════════════════════════════════
 
+// הסבר מנומס למה הקלט לא התקבל — לפי סוג התקלה ולפי שפה.
+const INPUT_HINTS = {
+  name: {
+    empty:          { he: "לא קיבלתי שם.", en: "I didn't catch a name." },
+    has_digits:     { he: "שם מלא לא כולל ספרות.", en: "A full name shouldn't contain digits." },
+    no_letters:     { he: "זה לא נראה כמו שם.", en: "That doesn't look like a name." },
+    not_a_name:     { he: "זה לא נראה כמו שם.", en: "That doesn't look like a name." },
+    single_word:    { he: "אשמח לשם המלא — שם פרטי ושם משפחה.", en: "I'd love your full name — first and last." },
+    too_many_words: { he: "אשמח רק לשם המלא, בלי פרטים נוספים.", en: "Just the full name please, without extra details." },
+    too_long:       { he: "השם ארוך מדי.", en: "That name is too long." },
+  },
+  reservation: {
+    empty:       { he: "לא קיבלתי מספר הזמנה.", en: "I didn't catch a reservation number." },
+    not_numeric: { he: "מספר ההזמנה מורכב מספרות בלבד.", en: "A reservation number contains digits only." },
+    extra_text:  { he: "מספר ההזמנה מורכב מספרות בלבד.", en: "A reservation number contains digits only." },
+    ambiguous:   { he: "קיבלתי כמה מספרים — אשמח למספר ההזמנה בלבד.", en: "I received several numbers — just the reservation number please." },
+    too_long:    { he: "מספר ההזמנה ארוך מהצפוי.", en: "That reservation number is longer than expected." },
+  },
+  id: {
+    no_media:          { he: "לא קיבלתי תמונה.", en: "I didn't receive a photo." },
+    not_an_image:      { he: "הקובץ ששלחת אינו תמונה.", en: "The file you sent isn't an image." },
+    unsupported_image: { he: "סוג התמונה אינו נתמך — אשמח לצילום רגיל (JPG / PNG).", en: "That image format isn't supported — a regular photo (JPG / PNG) works best." },
+  },
+};
+
+function hint(kind, reason, lang) {
+  const h = INPUT_HINTS[kind]?.[reason] || INPUT_HINTS[kind]?.empty;
+  return h ? (lang === "he" ? h.he : h.en) : "";
+}
+
+// ── מקור האמת לניסוח כל שלב ────────────────────────────
+// prefix = הסבר על קלט קודם שלא התקבל (ריק בפעם הראשונה).
+// נקרא גם בפתיחת שלב, גם אחרי קלט לא תקין, וגם כשאורח מחליף שפה
+// באמצע — ואז השלב פשוט נשלח מחדש בשפה החדשה וממשיכים משם.
+async function promptStage(phone, stage, lang, { prefix = "" } = {}) {
+  const s  = getSession(phone);
+  const he = lang === "he";
+  const p  = prefix ? prefix + "\n\n" : "";
+
+  if (stage === "waiting_name") {
+    return wa(phone, p + (he
+      ? `אנא הקלד/י את *שמך המלא* (שם פרטי ושם משפחה):`
+      : `Please enter your *full name* (first and last):`), { lang });
+  }
+
+  if (stage === "waiting_reservation") {
+    const shown = nameFor({ guestNameHe: s.pendingNameHe, guestNameEn: s.pendingNameEn, guestName: s.pendingName }, lang);
+    const hello = shown ? (he ? `*${shown}*, ` : `*${shown}*, `) : "";
+    return wa(phone, p + (he
+      ? `${hello}אנא הקלד/י את *מספר ההזמנה* שלך (ספרות בלבד):`
+      : `${hello}please enter your *reservation number* (digits only):`), { lang });
+  }
+
+  if (stage === "waiting_id") {
+    return wa(phone, p + (he
+      ? `🪪 כדי להשלים את הצ'ק אין נדרש *אימות זהות*.\n\nאנא צלם/י ושלח/י כאן *כתמונה* את תעודת הזהות או הדרכון שלך — כך שכל הפרטים יהיו ברורים וקריאים.`
+      : `🪪 To complete your check-in we need to *verify your identity*.\n\nPlease take a photo of your *ID card or passport* and send it here *as an image* — with all the details clear and readable.`), { lang });
+  }
+
+  if (stage === "waiting_payment") {
+    // מחדשים את שלב הפיקדון: אותו קישור, בשפה הנוכחית. אם מסיבה כלשהי
+    // אין קישור (תקלה קודמת) — מנסים ליצור אותו מחדש, ולא מחזירים את
+    // האורח לתחילת הצ'ק אין.
+    const url = await ensureDepositLink(phone, lang);
+    if (!url) {
+      return wa(phone, p + (he
+        ? `⏳ אנחנו משלימים את שלב הפיקדון עבורך — נציג מהקבלה יחזור אליך מיד.\n\nלכל שאלה: קבלה, שלוחה 0.`
+        : `⏳ We're finalising the deposit step for you — a receptionist will get back to you shortly.\n\nAny questions: reception, Ext. 0.`), { lang });
+    }
+    // ההודעה כאן מדברת *רק* על הפיקדון. הסטטוס של אימות הזהות מגיע
+    // כ-prefix מהקורא — כדי שלא נכריז "אומת" כשהאימות עדיין ידני.
+    return wa(phone, p + (he
+      ? `שלב אחרון — *פיקדון שהייה*.\n\n${depositExplainer("he")}\n\nלחץ/י על הקישור להקפאת הפיקדון:\n👉 ${url}`
+      : `One last step — a *security deposit*.\n\n${depositExplainer("en")}\n\nTap the link to place the deposit hold:\n👉 ${url}`), { lang });
+  }
+}
+
+// מחזיר קישור לפיקדון: משתמש בהזמנה הממתינה אם קיימת, אחרת יוצר אחת.
+// כך "להמשיך בצ'ק אין" / מעבר שפה לא יוצרים הזמנה כפולה, ותקלה חולפת
+// ביצירת הקישור ניתנת לתיקון בניסיון הבא — בלי לאבד את השלב.
+async function ensureDepositLink(phone, lang) {
+  const existing = getPendingReservation(phone);
+  if (existing?.paymentUrl) return existing.paymentUrl;
+
+  const s = getSession(phone);
+  try {
+    const { paymentUrl } = await startCheckin(
+      phone,
+      { guestName: s.guestName, guestNameHe: s.guestNameHe, guestNameEn: s.guestNameEn },
+      s.pendingReservation || ""
+    );
+    return paymentUrl;
+  } catch (e) {
+    console.error("Deposit link creation failed:", e?.message || e);
+    // הסלמה לאדם — האורח לא נשאר תקוע בלי טיפול.
+    await notifyStaff({
+      dept: "reception",
+      roomNumber: s.roomNumber,
+      guestName: s.guestName,
+      message: `⚠️ יצירת קישור הפיקדון נכשלה בצ'ק אין הדיגיטלי (${phone}). הזמנה: ${s.pendingReservation || "—"}. נדרש טיפול ידני.`,
+      priority: "high",
+    }).catch(() => {});
+    return null;
+  }
+}
+
+// opts.langSwitched — האורח החליף שפה בהודעה הזו.
+async function handleCheckin(phone, text, lang, media = null, opts = {}) {
+  const session = getSession(phone);
+  const stage   = session.checkinStage;
+  const input   = String(text || "").trim();
+
+  // ── פתיחת הצ'ק אין ───────────────────────────────────
   if (!stage || stage === "start") {
-    patchSession(phone, { checkinStage: "waiting_name" });
+    patchSession(phone, { checkinStage: "waiting_name", idAttempts: 0 });
     await wa(phone, lang === "he"
-      ? `ברוך הבא! 🌟 נשמח לעשות עבורך צ׳ק אין דיגיטלי.\n\nאנא הקלד את *שמך המלא*:`
-      : `Welcome! 🌟 Let's get you checked in.\n\nPlease enter your *full name*:`);
+      ? `ברוך הבא! 🌟 נשמח לעשות עבורך צ׳ק אין דיגיטלי.\n\nאנא הקלד/י את *שמך המלא* (שם פרטי ושם משפחה):`
+      : `Welcome! 🌟 Let's get you checked in.\n\nPlease enter your *full name* (first and last):`, { lang });
     return;
   }
 
+  // ── החלפת שפה באמצע (Bug #5) ─────────────────────────
+  // לא נשאר קלט אמיתי מלבד בקשת השפה → שולחים את השלב הנוכחי מחדש
+  // בשפה החדשה וממשיכים בדיוק מאותה נקודה. לא מתחילים מהתחלה.
+  if (opts.langSwitched && !input && !media) {
+    await promptStage(phone, stage, lang, {
+      prefix: lang === "he" ? "בוודאי, נמשיך בעברית 😊" : "Of course, we'll continue in English 😊",
+    });
+    return;
+  }
+
+  // ── שם מלא ───────────────────────────────────────────
   if (stage === "waiting_name") {
+    const v = validateFullName(input);
+    if (!v.ok) {
+      await promptStage(phone, "waiting_name", lang, { prefix: hint("name", v.reason, lang) });
+      return;
+    }
     // שומרים את השם בשתי הצורות (עברית + אנגלית) כבר עכשיו, ומציגים לפי
-    // שפת השיחה — כדי שלא ייווצר ערבוב שפות בשם (Bug 2).
-    const forms = await resolveNameForms(text);
+    // שפת השיחה — כדי שלא ייווצר ערבוב שפות בשם.
+    const forms = await resolveNameForms(v.value);
     patchSession(phone, {
-      checkinStage: "waiting_reservation",
-      pendingName:   text,
+      checkinStage:  "waiting_reservation",
+      pendingName:   v.value,
       pendingNameHe: forms.he,
       pendingNameEn: forms.en,
     });
     const shown = lang === "he" ? forms.he : forms.en;
     await wa(phone, lang === "he"
-      ? `תודה, *${shown}*! 😊\n\nאנא הקלד את *מספר ההזמנה* שלך:`
-      : `Thank you, *${shown}*! 😊\n\nPlease enter your *reservation number*:`);
+      ? `תודה, *${shown}*! 😊\n\nאנא הקלד/י את *מספר ההזמנה* שלך (ספרות בלבד):`
+      : `Thank you, *${shown}*! 😊\n\nPlease enter your *reservation number* (digits only):`, { lang });
     return;
   }
 
+  // ── מספר הזמנה — ספרות בלבד (Bug #3) ─────────────────
   if (stage === "waiting_reservation") {
-    // שומרים את מספר ההזמנה ועוברים לשלב אימות הזהות (צילום ת"ז/דרכון),
-    // בדיוק כמו צ'ק אין במלון אמיתי — לפני שלב הפיקדון.
-    patchSession(phone, { checkinStage: "waiting_id", pendingReservation: text });
+    const v = validateReservationNumber(input);
+    if (!v.ok) {
+      await promptStage(phone, "waiting_reservation", lang, { prefix: hint("reservation", v.reason, lang) });
+      return;
+    }
+    patchSession(phone, { checkinStage: "waiting_id", pendingReservation: v.value, idAttempts: 0 });
     await wa(phone, lang === "he"
-      ? `✅ *הזמנה מספר ${text} אותרה!*\n\nכמו בכל מלון, נדרש *אימות זהות* לצ'ק אין.\n\n🪪 אנא צלם/י ושלח/י כאן *כתמונה* את תעודת הזהות או הדרכון שלך.\n\n🔐 התמונה משמשת לאימות בלבד ואינה נשמרת.`
-      : `✅ *Reservation ${text} found!*\n\nLike any hotel, we need to *verify your identity* to check in.\n\n🪪 Please take a photo of your *ID card or passport* and send it here *as an image*.\n\n🔐 The photo is used for verification only and is not stored.`);
+      ? `✅ *הזמנה מספר ${v.value} אותרה!*\n\nכמו בכל מלון, נדרש *אימות זהות* לצ'ק אין.\n\n🪪 אנא צלם/י ושלח/י כאן *כתמונה* את תעודת הזהות או הדרכון שלך.\n\n🔐 התמונה מאובטחת ומשמשת לאימות הזהות בלבד.`
+      : `✅ *Reservation ${v.value} found!*\n\nLike any hotel, we need to *verify your identity* to check in.\n\n🪪 Please take a photo of your *ID card or passport* and send it here *as an image*.\n\n🔐 The photo is kept secure and used for identity verification only.`, { lang });
     return;
   }
 
-  // ── שלב אימות זהות: קליטת תמונת ת"ז/דרכון דרך שכבת idverify המבודדת ──
-  // המודול מאשר קבלה ואימות בלי לשמור את התמונה (Mock). בעתיד יוחלף
-  // בספק אחסון מאובטח אמיתי — במקום אחד בלבד (idverify/index.js).
+  // ── אימות זהות (Bug #7, #8) ──────────────────────────
   if (stage === "waiting_id") {
-    const isImage = media && (media.contentType || "").startsWith("image/");
-    if (!isImage) {
-      // לא הגיעה תמונה (טקסט / סוג קובץ אחר) — מבקשים שוב בלי לאבד את השלב.
-      await wa(phone, lang === "he"
-        ? `🪪 לא קיבלתי תמונה. כדי להמשיך, אנא צלם/י ושלח/י *תמונה* של תעודת הזהות או הדרכון.\n\n🔐 לאימות בלבד — לא נשמרת.`
-        : `🪪 I didn't receive a photo. To continue, please send a *photo* of your ID card or passport.\n\n🔐 For verification only — it is not stored.`);
+    await handleIdStage(phone, media, lang);
+    return;
+  }
+
+  // ── ממתינים לפיקדון ──────────────────────────────────
+  if (stage === "waiting_payment") {
+    await promptStage(phone, "waiting_payment", lang);
+  }
+}
+
+// שלב תעודת הזהות — הופרד כי הוא הכי עשיר: אימות אמיתי מול ה-AI,
+// דחייה מנומסת, שמירה, והתראה לקבלה.
+async function handleIdStage(phone, media, lang) {
+  const he = lang === "he";
+
+  // 1. חייבת להיות תמונה (Bug #3) — טקסט/קובץ אחר → מבקשים שוב, השלב נשמר.
+  const m = validateIdMedia(media);
+  if (!m.ok) {
+    await promptStage(phone, "waiting_id", lang, { prefix: hint("id", m.reason, lang) });
+    return;
+  }
+
+  const s                 = getSession(phone);
+  const guestNameHe       = s.pendingNameHe || s.pendingName || "אורח";
+  const guestNameEn       = s.pendingNameEn || s.pendingName || "Guest";
+  const guestName         = guestNameHe; // צוות המלון עובד בעברית
+  const reservationNumber = s.pendingReservation || "";
+
+  await wa(phone, he
+    ? "🔎 בודק/ת את המסמך, רגע אחד…"
+    : "🔎 Checking your document, one moment…", { lang });
+
+  // 2. אימות אמיתי דרך שכבת idverify המבודדת (Claude vision).
+  //    לא זורק בזרימה רגילה — תקלה טכנית חוזרת כ-"manual_review".
+  let result;
+  try {
+    result = await idVerify.verifyDocument({
+      reservationId: reservationNumber,
+      phone,
+      guestName,
+      mediaUrl: media.url,
+      contentType: m.value,
+      documentType: "id_or_passport",
+    });
+  } catch (e) {
+    console.error("ID verification crashed:", e?.message || e);
+    result = { status: "manual_review", storedPath: null, documentType: "id" };
+  }
+
+  // 3א. תקלה טכנית אצלנו — לא הצלחנו למשוך את הקובץ. מבקשים לשלוח שוב;
+  //     אחרי 3 פעמים לא מענישים את האורח — ממשיכים והקבלה תשלים ידנית.
+  if (result.status === "retry") {
+    const attempts = (s.idAttempts || 0) + 1;
+    patchSession(phone, { idAttempts: attempts });
+    if (attempts < 3) {
+      await promptStage(phone, "waiting_id", lang, {
+        prefix: `🪪 ${he ? result.reasonHe : result.reasonEn}`,
+      });
+      return;
+    }
+    result = { ...result, status: "manual_review" }; // → ממשיכים לפיקדון למטה
+  }
+
+  // 3ב. נדחה — לא תעודה / לא קריא. מבקשים שוב בנימוס, נשארים בשלב.
+  if (result.status === "rejected") {
+    const attempts = (s.idAttempts || 0) + 1;
+    patchSession(phone, { idAttempts: attempts });
+    const why = (he ? result.reasonHe : result.reasonEn) ||
+      (he ? "התמונה אינה נראית כמו תעודת זהות או דרכון." : "The image doesn't look like an ID card or passport.");
+
+    // אחרי 3 ניסיונות — הסלמה לאדם, אבל האורח עדיין יכול לנסות שוב.
+    if (attempts >= 3) {
+      await notifyStaff({
+        dept: "reception",
+        roomNumber: s.roomNumber,
+        guestName,
+        message:
+          `🪪 *אימות זהות נכשל ${attempts} פעמים* בצ'ק אין הדיגיטלי\n` +
+          `👤 אורח: ${guestName}\n📱 ${phone}\n🔖 הזמנה: ${reservationNumber || "—"}\n` +
+          `📸 המסמך שנשלח אינו מזוהה כתעודה. נדרש טיפול אנושי.`,
+        priority: "high",
+      });
+      await wa(phone, he
+        ? `${why}\n\nאין בעיה — נציג/ה מהקבלה יצור/תיצור איתך קשר לסייע באימות. 🌟\nבינתיים אפשר לנסות לשלוח צילום נוסף, ברור ומלא.`
+        : `${why}\n\nNo problem — a receptionist will contact you to help with the verification. 🌟\nIn the meantime, feel free to send another clear, full photo.`, { lang });
       return;
     }
 
-    const s = getSession(phone);
-    const guestNameHe       = s.pendingNameHe || s.pendingName || "אורח";
-    const guestNameEn       = s.pendingNameEn || s.pendingName || "Guest";
-    const guestName         = guestNameHe; // צוות המלון עובד בעברית — שם הצוות בעברית
-    const reservationNumber = s.pendingReservation || "";
-    patchSession(phone, { checkinStage: "waiting_payment", guestName, guestNameHe, guestNameEn });
-    try {
-      // אימות המסמך עובר דרך שכבת idverify המבודדת (Mock) — מאשר קבלה
-      // בלי לשמור/להוריד את התמונה. mediaUrl מועבר אך אינו נשמר בשום מקום.
-      await idVerify.verifyDocument({
-        reservationId: reservationNumber,
-        phone,
-        guestName,
-        mediaUrl: media.url,
-        contentType: media.contentType,
-        documentType: "id_or_passport",
-      });
-
-      // ── התראה לקבלה: אימות הזהות הושלם (Bug #5) ──────────
-      // וואטסאפ + מייל דרך notifyStaff. החדר עדיין לא הוקצה בשלב זה (מוקצה
-      // בתשלום/completeCheckin) — לכן מזוהה לפי מספר ההזמנה. Mock: התמונה
-      // עצמה לא נשמרה; זו רק הודעה שהאימות בוצע.
-      await notifyStaff({
-        dept: "reception",
-        roomNumber: s.roomNumber || null,
-        guestName,
-        message:
-          `🪪 *אימות זהות הושלם בצ'ק אין הדיגיטלי*\n` +
-          `👤 אורח: ${guestName}\n` +
-          `🔖 הזמנה: ${reservationNumber || "—"}\n` +
-          `🏠 חדר: ${s.roomNumber || "יוקצה בשלב הפיקדון"}\n` +
-          `📸 המסמך אומת (דמו — התמונה לא נשמרה). ניתן להמשיך בהקצאת חדר/כרטיס.`,
-        priority: "normal",
-      });
-
-      const { paymentUrl } = await startCheckin(phone, { guestName, guestNameHe, guestNameEn }, reservationNumber);
-      await wa(phone, lang === "he"
-        ? `✅ *תעודת הזהות אומתה בהצלחה!* 🪪\n\nשלב אחרון — *פיקדון שהייה*.\n\n${depositExplainer("he")}\n\nלחץ על הקישור להקפאת הפיקדון:\n👉 ${paymentUrl}`
-        : `✅ *Your ID was verified successfully!* 🪪\n\nOne last step — a *security deposit*.\n\n${depositExplainer("en")}\n\nTap the link to place the deposit hold:\n👉 ${paymentUrl}`);
-    } catch (e) {
-      console.error("Checkin error:", e.message);
-      await wa(phone, lang === "he"
-        ? "מצטערים, אירעה שגיאה. אנא פנה לקבלה בשלוחה 0."
-        : "Sorry, an error occurred. Please contact reception at Ext. 0.");
-      patchSession(phone, { checkinStage: null });
-    }
+    await promptStage(phone, "waiting_id", lang, { prefix: `🪪 ${why}` });
     return;
   }
 
-  if (stage === "waiting_payment") {
-    await wa(phone, lang === "he"
-      ? "⏳ ממתינים לאישור התשלום שלך.\n\nאם נתקלת בבעיה, פנה לקבלה בשלוחה 0."
-      : "⏳ Waiting for your payment confirmation.\n\nFor assistance, contact reception at Ext. 0.");
-  }
+  // 4. אומת (או ממתין לבדיקה אנושית) — מתקדמים לפיקדון.
+  patchSession(phone, { checkinStage: "waiting_payment", guestName, guestNameHe, guestNameEn, idAttempts: 0 });
+
+  const verified = result.status === "verified";
+
+  // ── התראה לקבלה: וואטסאפ + מייל (Bug #8) ─────────────
+  // כוללת שם אורח, מספר חדר (אם כבר הוקצה) והיכן נשמר המסמך.
+  await notifyStaff({
+    dept: "reception",
+    roomNumber: s.roomNumber || null,
+    guestName,
+    message:
+      (verified
+        ? `🪪 *אימות זהות הושלם בצ'ק אין הדיגיטלי*\n`
+        : `⚠️ *מסמך זיהוי התקבל — לא אומת אוטומטית, נדרשת בדיקה ידנית*\n`) +
+      `👤 אורח: ${guestName}\n` +
+      `🔖 הזמנה: ${reservationNumber || "—"}\n` +
+      `🏠 חדר: ${s.roomNumber || "יוקצה בשלב הפיקדון"}\n` +
+      `📄 סוג מסמך: ${result.documentType || "—"}\n` +
+      (result.storedPath
+        ? `📸 המסמך נשמר: ${result.storedPath}\n   ⚠️ אחסון דמו מקומי — בפרודקשן: אחסון מאובטח ומוצפן\n`
+        : `📸 המסמך לא נשמר\n`) +
+      (verified ? `ניתן להמשיך בהקצאת חדר/כרטיס.` : `נא לאמת את זהות האורח בקבלה.`),
+    priority: verified ? "normal" : "high",
+  });
+
+  // 5. שלב הפיקדון — בשפת השיחה הנוכחית. אומרים "אומת" *רק* אם באמת אומת.
+  await promptStage(phone, "waiting_payment", lang, {
+    prefix: verified
+      ? (he
+          ? "✅ *תעודת הזהות אומתה בהצלחה!* 🪪"
+          : "✅ *Your ID was verified successfully!* 🪪")
+      : (he
+          ? "🪪 קיבלנו את המסמך, תודה! השלמת האימות תיעשה מול הקבלה — נמשיך בינתיים."
+          : "🪪 We've received your document, thank you! Reception will complete the verification — let's continue in the meantime."),
+  });
 }
 
 function isAffirmative(text) {
@@ -417,7 +659,7 @@ async function startCheckout(phone, lang) {
   if (!res) {
     await wa(phone, lang === "he"
       ? "לא מצאתי הזמנה פעילה על שמך. אנא פנה לקבלה בשלוחה 0."
-      : "No active reservation found. Please contact reception at Ext. 0.");
+      : "No active reservation found. Please contact reception at Ext. 0.", { lang });
     return;
   }
   patchSession(phone, { checkoutStage: "awaiting_confirmation" });
@@ -428,7 +670,7 @@ async function startCheckout(phone, lang) {
   const footer = lang === "he"
     ? `\n\nלאישור הצ'ק אאוט (כולל חיוב מהפיקדון במידת הצורך), השב *כן*.\nלביטול, השב *לא*.`
     : `\n\nReply *yes* to confirm check-out (deposit will be charged if needed).\nReply *no* to cancel.`;
-  await wa(phone, header + bill + footer);
+  await wa(phone, header + bill + footer, { lang });
 }
 
 // שלב 2 — מבצע בפועל: מחייב מהפיקדון לפי שלושת המקרים
@@ -441,24 +683,65 @@ async function confirmCheckout(phone, session, lang) {
     patchSession(phone, { checkoutStage: null });
     await wa(phone, lang === "he"
       ? "לא מצאתי הזמנה פעילה על שמך. אנא פנה לקבלה בשלוחה 0."
-      : "No active reservation found. Please contact reception at Ext. 0.");
+      : "No active reservation found. Please contact reception at Ext. 0.", { lang });
   }
 }
 
+// ── שער הכניסה — לעולם לא משאיר אורח בלי מענה (Bug #2) ──
+// כל שגיאה, מכל מקום בזרימה, נתפסת כאן: האורח תמיד מקבל הודעה,
+// והתקלה מוסלמת לקבלה (אדם) כדי שמישהו יטפל. אף פעם לא שקט מוחלט.
 export async function handleIncoming(phone, text, media = null) {
+  try {
+    await processIncoming(phone, text, media);
+  } catch (e) {
+    console.error("🚨 handleIncoming failed:", e?.stack || e?.message || e);
+    const lang = sessions[phone]?.lang || detectLangSignal(text) || "he";
+
+    try {
+      await wa(phone, FALLBACK_MSG[lang], { lang });
+    } catch (e2) {
+      console.error("🚨 Fallback message failed to send:", e2?.message || e2);
+    }
+
+    try {
+      await notifyStaff({
+        dept: "reception",
+        roomNumber: sessions[phone]?.roomNumber,
+        guestName: sessions[phone]?.guestName,
+        message: `⚠️ תקלה טכנית בטיפול בהודעת אורח (${phone}). האורח קיבל הודעת המתנה — נדרש מעקב אנושי.\nשגיאה: ${e?.message || e}`,
+        priority: "high",
+      });
+    } catch (e3) {
+      console.error("🚨 Staff escalation failed:", e3?.message || e3);
+    }
+  }
+}
+
+async function processIncoming(phone, text, media = null) {
   const session = getSession(phone);
   recordActivity(phone); // רישום ההודעה הנכנסת (messageCount/פעילות) — פעם אחת בלבד (Bug #2)
 
-  // ── שפת השיחה דינמית לפי כל הודעה (Bug 1) ─────────────
+  // ── בקשה מפורשת לעבור שפה — קודמת לכל דבר אחר (Bug #4) ─
+  // "אתה יכול לדבר איתי בעברית?" → עוברים מיד, בלי שום תירוץ, גם באמצע
+  // צ'ק אין. מסירים את הבקשה מהטקסט כדי שהשארית ("10") עדיין תטופל
+  // כקלט של השלב הנוכחי — כך גם מחליפים שפה וגם מתקדמים באותה הודעה.
+  const langRequest  = detectLanguageRequest(text);
+  const langSwitched = !!langRequest;
+  let   body         = langSwitched ? stripLanguageRequest(text) : String(text ?? "");
+
+  // ── שפת השיחה דינמית לפי כל הודעה ─────────────────────
   // מזהים את שפת ההודעה הנוכחית ומעדכנים את שפת השיחה בהתאם — כך אורח
   // שכותב אנגלית מקבל תשובה באנגלית מיד, בלי לבקש "In English?".
   // חריג: כשאנחנו באמצע זרימת צ'ק אין/אאוט, הקלט הוא נתונים (שם/מספר הזמנה/
   // כן-לא) ואסור שיחליף את שפת השיחה — לכן נועלים לשפה שכבר נקבעה.
-  const signal  = detectLangSignal(text); // "he" | "en" | null (אין אות שפה)
+  // בקשה מפורשת (langRequest) גוברת תמיד, גם באמצע זרימה (Bug #5).
+  const signal  = detectLangSignal(body); // "he" | "en" | null (אין אות שפה)
   const inFlow  = !!session.checkinStage || session.checkoutStage === "awaiting_confirmation";
-  const lang    = inFlow
-    ? (session.lang || signal || "en")
-    : (signal || session.lang || "en");
+  const lang    = langRequest
+    ? langRequest
+    : inFlow
+      ? (session.lang || signal || "en")
+      : (signal || session.lang || "en");
   if (session.lang !== lang) patchSession(phone, { lang });
 
   // הודעה ראשונה: שולחים תפריט/פתיחה רק אם זו ברכה כללית בלבד ("שלום"/"היי").
@@ -466,48 +749,87 @@ export async function handleIncoming(phone, text, media = null) {
   // ממשיכים מיד לטיפול בה למטה, בלי לשלוח תפריט מקדים.
   if (session.messageCount === 1) {
     patchSession(phone, { stage: "active" });
-    if (isGenericGreeting(text)) {
+    if (isGenericGreeting(body)) {
       const welcome = hotelConfig.welcome[lang] || hotelConfig.welcome.en;
-      await wa(phone, welcome);
+      await wa(phone, welcome, { lang });
       pushHistory(phone, "assistant", welcome);
       return;
     }
   }
 
-  if (isCheckinIntent(text) && !session.checkinStage && session.stage !== "checked_in") {
+  if (isCheckinIntent(body) && !session.checkinStage && session.stage !== "checked_in") {
     patchSession(phone, { checkinStage: "start" });
-    await handleCheckin(phone, text, lang, media);
+    await handleCheckin(phone, body, lang, media, { langSwitched });
     return;
   }
 
-  if (session.checkinStage && session.checkinStage !== "waiting_payment") {
-    await handleCheckin(phone, text, lang, media);
-    return;
+  // באמצע צ'ק אין — כולל שלב הפיקדון. אורח שכותב "להמשיך בצ'ק אין"
+  // בזמן שהוא ממתין לתשלום מקבל את קישור הפיקדון שוב (Bug #1: פעם
+  // ההודעה הזו נפלה ל-AI, שהחזיר [CHECKIN] — והתג נשלח לאורח).
+  if (session.checkinStage) {
+    const waitingPayment = session.checkinStage === "waiting_payment";
+    if (!waitingPayment || langSwitched || isCheckinIntent(body) || !body) {
+      await handleCheckin(phone, body, lang, media, { langSwitched });
+      return;
+    }
+    // בשלב הפיקדון אפשר עדיין לשאול את הקונסיירז' שאלות רגילות — ממשיכים.
   }
 
   // אורח שנמצא באמצע אישור צ'ק אאוט — מטפלים בתשובה כן/לא
   if (session.checkoutStage === "awaiting_confirmation") {
-    if (isNegative(text)) {
+    // החליף שפה באמצע → שולחים את החשבון מחדש בשפה החדשה וממשיכים משם.
+    if (langSwitched && !body) {
+      await startCheckout(phone, lang);
+      return;
+    }
+    if (isNegative(body)) {
       patchSession(phone, { checkoutStage: null });
       await wa(phone, lang === "he"
         ? "הצ'ק אאוט בוטל. אנחנו כאן אם תצטרך משהו נוסף 😊"
-        : "Check-out cancelled. We're here if you need anything else 😊");
-    } else if (isAffirmative(text)) {
+        : "Check-out cancelled. We're here if you need anything else 😊", { lang });
+    } else if (isAffirmative(body)) {
       await confirmCheckout(phone, session, lang);
     } else {
       await wa(phone, lang === "he"
         ? "לאישור הצ'ק אאוט השב *כן*, או *לא* לביטול."
-        : "Reply *yes* to confirm check-out, or *no* to cancel.");
+        : "Reply *yes* to confirm check-out, or *no* to cancel.", { lang });
     }
     return;
   }
 
-  if (isCheckoutIntent(text) && (session.stage === "checked_in" || getActiveReservation(phone))) {
+  if (isCheckoutIntent(body) && (session.stage === "checked_in" || getActiveReservation(phone))) {
     await startCheckout(phone, lang);
     return;
   }
 
-  pushHistory(phone, "user", text);
+  // ── בקשת שפה "טהורה" — עונים מיד, בלי לערב את ה-AI (Bug #4) ──
+  // אין שום תוכן מלבד הבקשה → אישור קצר בשפה החדשה. כך אין שום סיכוי
+  // לתירוץ מהסוג של "אני משתדל לתקשר באנגלית".
+  if (langSwitched && !body) {
+    await wa(phone, lang === "he"
+      ? "בוודאי! מכאן נמשיך בעברית 😊\nאיך אוכל לעזור?"
+      : "Of course! We'll continue in English from here 😊\nHow can I help?", { lang });
+    return;
+  }
+
+  // ── שורש Bug #2: הודעה ריקה בהיסטוריה = בוט מת לצמיתות ──
+  // אורח ששלח *רק* מדיה (תמונה אקראית, ללא טקסט) הכניס לכאן מחרוזת
+  // ריקה. ה-API של Claude דוחה content ריק ב-400, ההיסטוריה נשמרת
+  // ל-SQLite — ולכן *כל* הודעה הבאה של אותו אורח נכשלה שוב, גם אחרי
+  // ריסטארט. מתארים את המדיה במילים במקום לדחוף ריק.
+  const userMsg = body
+    || (media ? (lang === "he" ? "(האורח שלח תמונה ללא טקסט)" : "(the guest sent an image with no text)") : "")
+    || String(text ?? "").trim();
+
+  if (!userMsg) {
+    // אין טקסט ואין מדיה — אין על מה לענות, ואסור להרעיל את ההיסטוריה.
+    await wa(phone, lang === "he"
+      ? "לא הצלחתי לקרוא את ההודעה 🙏 אפשר לנסח אותה שוב?"
+      : "I couldn't read that message 🙏 Could you send it again?", { lang });
+    return;
+  }
+
+  pushHistory(phone, "user", userMsg);
   let raw;
   try {
     const r = await createMessageWithRetry({
@@ -530,13 +852,27 @@ export async function handleIncoming(phone, text, media = null) {
       : "Sorry, a temporary error occurred. Please try again in a moment, or contact reception at Ext. 0.";
   }
 
-  // ── גיבוי זיהוי כוונה מבוסס-AI (Bug #2) ────────────────
+  // ── גיבוי זיהוי כוונה מבוסס-AI ─────────────────────────
   // הכללים המהירים למעלה תופסים ניסוחים ברורים בלי קריאת AI. כשהם מפספסים
   // (שגיאות כתיב, ניסוח חופשי), הקונסיירז' מזהה את הכוונה ומחזיר תג בלבד —
   // [CHECKIN] / [CHECKOUT] — ואנחנו מנתבים למכונת המצבים במקום לענות.
-  if (/\[CHECKIN\]/i.test(raw) && !session.checkinStage && session.stage !== "checked_in") {
-    patchSession(phone, { checkinStage: "start" });
-    await handleCheckin(phone, text, lang, media);
+  //
+  // ⚠️ Bug #1: כאן *חייבים* לטפל בכל מצב אפשרי. בעבר התנאי סינן מצבים
+  // מסוימים (למשל אורח בשלב הפיקדון), התג לא נתפס — ונשלח לאורח כטקסט
+  // גולמי: "[CHECKIN]". עכשיו כל ענף מסתיים בפעולה + return, ותג פנימי
+  // לעולם לא ממשיך לנתיב השליחה. (ו-wa() מסנן כרשת ביטחון אחרונה.)
+  if (/\[CHECKIN\]/i.test(raw)) {
+    if (session.stage === "checked_in") {
+      await wa(phone, lang === "he"
+        ? `אתה כבר רשום אצלנו — חדר *${session.roomNumber || "—"}* 🌟\nאיך אוכל לעזור?`
+        : `You're already checked in — room *${session.roomNumber || "—"}* 🌟\nHow can I help?`, { lang });
+    } else if (session.checkinStage) {
+      // כבר באמצע צ'ק אין → ממשיכים מהשלב הנוכחי, לא מתחילים מהתחלה.
+      await promptStage(phone, session.checkinStage, lang);
+    } else {
+      patchSession(phone, { checkinStage: "start" });
+      await handleCheckin(phone, body, lang, media, { langSwitched });
+    }
     return;
   }
   if (/\[CHECKOUT\]/i.test(raw)) {
@@ -545,12 +881,23 @@ export async function handleIncoming(phone, text, media = null) {
     } else {
       await wa(phone, lang === "he"
         ? "לא מצאתי הזמנה פעילה על שמך לצ'ק אאוט. אם כבר ביצעת צ'ק אין, פנה לקבלה בשלוחה 0."
-        : "I couldn't find an active reservation to check out. If you've already checked in, please contact reception at Ext. 0.");
+        : "I couldn't find an active reservation to check out. If you've already checked in, please contact reception at Ext. 0.", { lang });
     }
     return;
   }
 
-  const reply = await runActions(raw, sessions[phone] || session, phone);
-  await wa(phone, reply);
+  // runActions מטפל בתגי המחלקות ומסיר אותם; stripInternalTags מנקה כל
+  // תג אחר שנותר (כולל כזה שהמצאנו/המצא ה-AI) לפני שליחה ולפני היסטוריה.
+  let reply = stripInternalTags(await runActions(raw, sessions[phone] || session, phone));
+
+  // התשובה הייתה תגים בלבד → אחרי הניקוי לא נשאר טקסט. שולחים אישור
+  // אנושי במקום כלום — האורח לעולם לא נשאר בלי מענה (Bug #2).
+  if (!reply) {
+    reply = lang === "he"
+      ? "קיבלתי! 🌟 העברתי את הבקשה לצוות המתאים, והם מטפלים בזה עכשיו."
+      : "Got it! 🌟 I've passed your request to the right team and they're on it.";
+  }
+
+  await wa(phone, reply, { lang });
   pushHistory(phone, "assistant", reply);
 }

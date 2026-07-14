@@ -599,6 +599,16 @@ export function getActiveReservation(phone) {
   return Object.values(reservations).find(r => r.phone === phone && r.stage === "checked_in");
 }
 
+// ── הזמנה שממתינה לתשלום הפיקדון ──────────────────────
+// משמשת כדי *לחדש* את שלב הפיקדון בלי ליצור הזמנה חדשה: אורח שביקש
+// לעבור שפה באמצע, או שכתב "להמשיך בצ'ק אין", מקבל את אותו קישור תשלום
+// שוב — במקום להתחיל את הצ'ק אין מהתחלה. מחזירה את החדשה ביותר.
+export function getPendingReservation(phone) {
+  return Object.values(reservations)
+    .filter(r => r.phone === phone && r.stage === "pending_payment" && r.paymentUrl)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
+}
+
 // ── סימון "תשלום התקבל" (webhook) — מעדכן paidAt ושומר ל-DB ──
 // נקרא מ-checkin-routes.js (webhook) במקום מוטציה ישירה על reservations,
 // כדי שהעדכון יישמר ל-DB. מחזיר את ההזמנה, או null אם לא נמצאה.
