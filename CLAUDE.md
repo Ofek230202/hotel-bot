@@ -51,13 +51,13 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
 |------|--------------|--------|
 | `server.js` | Express server. Twilio WhatsApp webhook (`POST /webhook`), dashboard API (`/api/*`), session reset endpoints, Stripe webhook mount, static dashboard. | Works (demo) |
 | `bot.js` | **The brain.** `handleIncoming` orchestrates: language detect → welcome → check-in/out intent → check-in state machine → AI concierge (Claude) → `runActions` parses `[HK:...]`/`[MAINTENANCE:...]` tags and notifies staff. | Works, but fragile (see bugs) |
-| `checkin.js` | Check-in / deposit / folio (bill) / check-out logic. **Directly coupled to Stripe.** Reservations stored in an in-memory `reservations` object. | Works only with a live Stripe key |
-| `checkin-routes.js` | Stripe success/cancel HTML pages + Stripe webhook handler. Calls `completeCheckin` after payment. | Coupled to Stripe |
+| `checkin.js` | Check-in / deposit / folio (bill) / check-out logic. Stay dates (`stayCheckIn`/`stayCheckOut`/`nights`) + accepted terms version live on the reservation. Deposit amount + hotel strings come from `config.js`. | Works |
+| `checkin-routes.js` | Deposit / success / cancel / balance HTML pages + payment webhook. **All pages bilingual** — `pageLang()` picks HE/EN per guest (session → Accept-Language → HE), `shellPage()` is the shared HE/EN shell. | Works |
 | `state.js` | **In-memory state** (`sessions`, `staffAlerts`, `stats`). `getSession`, `pushHistory`, `patchSession`, `logAlert`. Comment even says "swap for Redis/DB in production". | Works, NOT persistent, NOT multi-tenant |
-| `config.js` | **Single hotel** config object (`hotelConfig`): identity, dept WhatsApp numbers, times, WiFi, services, parking, FAQ, welcome messages. `updateConfig` mutates it globally. | Works for 1 hotel only |
+| `config.js` | **Single hotel** config object (`hotelConfig`): identity, dept WhatsApp numbers, times, WiFi, services, parking, FAQ, welcome messages, `deposit_amount`, and `terms` (bilingual stay terms + `version`; sample text — replace per hotel in production). `updateConfig` mutates it globally (shallow, not persisted). | Works for 1 hotel only |
 | `i18n.js` | `detectLang` / `detectLangSignal` (Hebrew unicode heuristic), `detectLanguageRequest` + `stripLanguageRequest` (בקשת מעבר שפה), `t` helper. | Works |
-| `validate.js` | אימות קלט האורח (שם / מספר הזמנה / תמונת ת"ז) + `stripInternalTags` — רשת הביטחון שמונעת דליפת תגים פנימיים לאורח. | Works |
-| `idverify/` | שכבת אימות זהות מבודדת. `vision.js` — בדיקת Claude vision אמיתית שהתמונה היא ת"ז/דרכון; `MockIdProvider` — מאמת + שומר מקומית (דמו). נקודת החלפה אחת: `idverify/index.js`. | Works |
+| `validate.js` | אימות קלט האורח: שם (דוחה גם *מילות פקודה* כמו "I want to check in"), מספר הזמנה, תמונת ת"ז, **תאריכי שהייה** (`validateStayDates` — פרסור חופשי HE/EN) ו**אישור תנאים** (`validateTermsConfirmation` — דורש נוסח מפורש). + `stripInternalTags`. | Works |
+| `idverify/` | שכבת אימות זהות מבודדת. `vision.js` — בדיקת Claude vision אמיתית; `MockIdProvider` — אוכף `ACCEPTED_DOC_TYPES = {id_card, passport}` **בקוד** (לא רק ב-prompt) ושומר מקומית (דמו). רישיון נהיגה נדחה במפורש. נקודת החלפה אחת: `idverify/index.js`. | Works |
 | `e2e.test.mjs` | בדיקות end-to-end לזרימת הצ'ק אין, השפה, התגים והזהות (`npm test`). | Works |
 | `index.html` (50KB) | Standalone dashboard/landing UI. | Present, not wired into the server flow as a tracked file |
 | `package.json` | Deps: `@anthropic-ai/sdk`, `twilio`, `stripe`, `express`, `dotenv`, `uuid`. ESM (`"type":"module"`). | OK |
@@ -67,7 +67,9 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
 - Bilingual AI concierge answers (Claude `claude-sonnet-4-6`).
 - AI-driven department routing via internal `[HK:...]` / `[MAINTENANCE:...]` / `[CONCIERGE:...]` /
   `[RECEPTION:...]` tags → `notifyStaff` sends WhatsApp to the dept + logs an alert.
-- Check-in **conversation** state machine (name → reservation → payment).
+- Check-in **conversation** state machine: name → reservation → **stay dates** → ID → **terms
+  acceptance** → deposit. Every stage has exactly one phrasing source (`promptStage`), so a
+  mid-flow language switch re-sends the *current* stage in the new language.
 - Folio/billing math + check-out summary logic (capture ≤ deposit, balance link if over).
 - Dashboard API + session reset endpoints.
 
@@ -86,11 +88,16 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
 - **Check-out intent never fires** — it requires `session.stage === "checked_in"`, but check-in
   sets that flag on the *reservation* object, never on the *session*. So checkout is unreachable
   via chat.
-- **Hardcoded room "304"**, hardcoded currency `gbp` (should be ILS), hardcoded hotel name in
-  several strings.
+- **Hardcoded room "304"** (assigned in `checkin-routes.js`; in production comes from the PMS).
+  ~~hardcoded currency `gbp`~~ → ILS via `payments/index.js`. ~~hardcoded hotel name/deposit~~ →
+  now read from `config.js` (`name`, `name_he`, `deposit_amount`, `wifi`, `services`).
+- **Still not collected at check-in:** number of guests, ETA, email, nationality/ID number,
+  vehicle plate for parking, special requests. **Check-out** still lacks: invoice/receipt,
+  minibar check, luggage storage, late-checkout offer, feedback.
 - No logging/monitoring, no rate-limiting, no Twilio request validation (security).
-- ~~No tests~~ **PARTIAL** — `e2e.test.mjs` מכסה צ'ק אין, אימות קלט, שפה, תגים וזהות (`npm test`).
-  עדיין חסרות בדיקות לצ'ק אאוט ולשכבת התשלום.
+- ~~No tests~~ **PARTIAL** — `e2e.test.mjs` (32 tests, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
+  תגים, זהות, **מדיניות סוגי מסמכים, תאריכי שהייה, אישור תנאים, ועקביות שפה מקצה לקצה**
+  (כולל רינדור עמוד האישור). עדיין חסרות בדיקות לצ'ק אאוט ולשכבת התשלום.
 
 ### ID document storage (אחסון תעודות זהות)
 `idverify/MockIdProvider` שומר את התמונה ל-`id-documents/` (ב-`.gitignore`) —
@@ -176,8 +183,35 @@ Priority order (to be decided together):
       Done: `completeCheckin` now marks the session `checked_in` + stores `reservationId`/`roomNumber`;
       checkout shows the full bill, asks for confirmation, then charges the deposit (3 cases).
 - [ ] **P1 — Email routing** for department dispatch (email + WhatsApp), per goal #4.
+- [x] **P1 — Stay dates.** Done: guest supplies arrival/departure (or arrival + nights) at
+      check-in; `validateStayDates` parses free-form HE/EN ("20.7-23.7", "היום, 2 לילות",
+      "tomorrow until 23/07"). Stored on the reservation; drives room-key validity and the
+      no-show moment (`israelDateTime` → checkout time in Israel, DST-aware). Replaces the
+      `NIGHTS = 3` constant that gave every guest a 3-night stay.
+- [x] **P1 — Stay terms gate.** Done: mandatory acceptance step before the deposit. Terms live
+      in `config.js` (`terms.he`/`terms.en` + `version`, `{hotel}`/`{checkout_time}`/`{deposit}`
+      placeholders). Requires explicit "אני מאשר" / "I confirm" — "כן"/"yes" is not accepted.
+      `termsVersion` + `termsAcceptedAt` persist on the reservation. Refusal → polite stop +
+      escalation to reception. ⚠️ Sample text — each hotel must supply real, lawyer-approved terms.
+- [x] **P1 — Full language consistency** (see §6 "שפה"). Every page bilingual; guest name via
+      `nameFor(holder, lang)`.
+- [x] **P1 — ID policy: ID card or passport only.** Enforced in code
+      (`ACCEPTED_DOC_TYPES` in `MockIdProvider`), not just in the vision prompt — a driver's
+      license is a genuine government document, so the AI returns `is_id=true` for it and the
+      old `valid` check let it through. Now declined with an explicit bilingual explanation and
+      never stored.
 - [ ] **P2 — Harden:** Twilio webhook signature validation, rate limiting, idempotency/dedup of
-      inbound webhooks, structured logging, currency → ILS, remove hardcoded room/hotel strings.
+      inbound webhooks, structured logging, remove the hardcoded room "304".
+      (Done: currency → ILS; hotel name / deposit / WiFi / services now read from `config.js`.)
+- [ ] **P2 — Persist `hotelConfig`.** It is still in-memory only: `updateConfig` is a *shallow*
+      merge (posting `{services:{...}}` wipes the other services) and every edit is lost on
+      restart. Needed before anyone edits terms/prices through the API.
+- [ ] **P2 — Prompt loses labels for config values.** `buildPrompt` renders services with
+      `Object.values(s).join(" | ")`, so `{hours, massage_60}` reaches the AI as
+      "09:00–21:00 | ₪350" with no key names — it would have to guess which price is which.
+      Fix (use `Object.entries`) **before** adding spa/menu prices to `config.js`.
+- [ ] **P2 — Remaining check-in/out data:** guests count, ETA, email, nationality/ID number,
+      vehicle plate, special requests; check-out invoice, minibar check, luggage, feedback.
 - [x] **P2 — Make `getSession` side-effect free** (Bug #2). Done: `getSession` is now pure;
       per-message counting moved to `recordActivity`, called once in `handleIncoming`.
 - [ ] **P2 — Full payment policy** (see §1): charge for the stay itself, advances/deposits
@@ -185,6 +219,14 @@ Priority order (to be decided together):
       `payments/` abstraction. (Documented only; not built yet.)
 - [ ] **P3 — Tests** — done for check-in / input validation / language / tags / ID
       (`e2e.test.mjs`, `npm test`). Still missing: check-out state machine + payment provider.
+
+### שפה — עקביות מקצה לקצה (ממומש)
+אורח שפתח באנגלית מקבל אנגלית ב**כל** נקודה: כל שלבי הצ'אט, עמוד הפיקדון, **עמוד האישור**
+(היה עברית קשיחה), עמודי ביטול/יתרה/שגיאה, והודעת "צ'ק אין אושר". שלושה כללים:
+1. **מקור שפה אחד לעמודים** — `pageLang(req, reservation)`: סשן → Accept-Language → עברית.
+2. **שם האורח לפי שפת ההקשר** — תמיד דרך `nameFor(holder, lang)`, לעולם לא `guestName` הגולמי
+   (שהוא הצורה העברית, לצוות). אורח אנגלי לא יראה "ברוכים הבאים, ג'ון סמית'".
+3. **הצוות תמיד בעברית** — `notifyStaff` בעברית ללא קשר לשפת האורח (כולל שורת "שפת האורח").
 
 ### הגנות רוחב (מהבדיקה החיה — כולן ממומשות)
 - **תג פנימי לעולם לא לאורח:** כל ענף של `[CHECKIN]`/`[CHECKOUT]` מסתיים בפעולה + `return`,
@@ -194,6 +236,9 @@ Priority order (to be decided together):
 - **קלט:** מאומת בכל שלב (`validate.js`); קלט לא תקין → בקשה חוזרת מנומסת *באותו שלב*.
 - **שפה:** בקשת מעבר שפה גוברת על הכול (גם באמצע צ'ק אין) → `promptStage` שולח את השלב
   הנוכחי מחדש בשפה החדשה וממשיך משם. לכל שלב יש מקור ניסוח אחד — ולכן אין ערבוב שפות.
+- **טקסט האורח לא נכנס להודעות המערכת:** הודעת כל שלב היא משפט שלם ועצמאי; פנייה בשם עוברת
+  כ-`prefix` בשורה נפרדת. כך נולד בעבר "I want to check in, please enter your reservation
+  number" — קלט האורח התקבל כשם והודבק לתחילת המשפט הבא. `validateFullName` דוחה מילות פקודה.
 
 ---
 

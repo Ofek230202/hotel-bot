@@ -6,6 +6,7 @@ import { wa, notifyStaff } from "./bot.js";
 import { logAlert, stats, patchSession, sessions } from "./state.js";
 import { payments, PAYMENT_CURRENCY } from "./payments/index.js";
 import { nameFor } from "./names.js";
+import { hotelConfig } from "./config.js";
 import { db, DEFAULT_HOTEL_ID } from "./db.js";
 
 // נקרא תמיד בזמן-קריאה (lazy), אחרי ש-dotenv.config() כבר רץ.
@@ -55,17 +56,77 @@ for (const row of db.prepare(`SELECT data FROM reservations WHERE hotel_id = ?`)
   } catch { /* שורה פגומה — מדלגים */ }
 }
 
+// ── סכומים — מקור אמת אחד ─────────────────────────────
+// סכום הפיקדון מגיע מ-hotelConfig (per-hotel, מוכן למולטי-טננט) ולא
+// מקבוע מפוזר. `shekels` מעצב אגורות → "₪500" בכל ההודעות.
+export function depositAmount() {
+  return hotelConfig.deposit_amount ?? 50000;
+}
+export function shekels(agorot) {
+  const n = (agorot || 0) / 100;
+  return `₪${Number.isInteger(n) ? n : n.toFixed(2)}`;
+}
+
+// ── תצוגת תאריכי שהייה — מקור אמת אחד ─────────────────
+// stay = { checkIn: "YYYY-MM-DD", checkOut: "YYYY-MM-DD", nights }.
+// מוצג לפי שפת השיחה: עברית → "יום שני, 20 ביולי 2026"; אנגלית →
+// "Monday, 20 July 2026". חצות UTC כדי שהתאריך לא יזוז באזור זמן.
+export function formatStayDates(stay, lang = "he") {
+  if (!stay?.checkIn || !stay?.checkOut) return "";
+  const he  = lang === "he";
+  const fmt = (ymd) => new Date(`${ymd}T00:00:00Z`).toLocaleDateString(he ? "he-IL" : "en-GB", {
+    weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC",
+  });
+  const n = stay.nights;
+  return he
+    ? `📅 *הגעה:* ${fmt(stay.checkIn)}\n📅 *עזיבה:* ${fmt(stay.checkOut)}\n🌙 *${n} ${n === 1 ? "לילה" : "לילות"}*`
+    : `📅 *Arrival:* ${fmt(stay.checkIn)}\n📅 *Departure:* ${fmt(stay.checkOut)}\n🌙 *${n} ${n === 1 ? "night" : "nights"}*`;
+}
+
+// גרסה קצרה לשורה אחת — לחשבון, לעמוד האישור ולהתראות הצוות.
+export function formatStayShort(stay, lang = "he") {
+  if (!stay?.checkIn || !stay?.checkOut) return "";
+  const he  = lang === "he";
+  const fmt = (ymd) => new Date(`${ymd}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC" }); // DD/MM/YYYY
+  const n = stay.nights;
+  return he
+    ? `${fmt(stay.checkIn)} – ${fmt(stay.checkOut)} · ${n} ${n === 1 ? "לילה" : "לילות"}`
+    : `${fmt(stay.checkIn)} – ${fmt(stay.checkOut)} · ${n} ${n === 1 ? "night" : "nights"}`;
+}
+
+// שולף את פרטי השהייה מתוך הזמנה (הם שמורים שטוחים על ההזמנה).
+export function stayOf(res) {
+  return res?.stayCheckIn && res?.stayCheckOut
+    ? { checkIn: res.stayCheckIn, checkOut: res.stayCheckOut, nights: res.nights }
+    : null;
+}
+
+// ── תאריך+שעה בשעון ישראל ─────────────────────────────
+// בונה Date עבור "YYYY-MM-DD" + "HH:MM" *בשעון ישראל*, כולל שעון קיץ
+// (ההיסט נשלף בפועל מהתאריך עצמו, לא מקובע ל-+03:00). משמש כדי לקבוע
+// את רגע הצ'ק אאוט — שממנו מנוע ה-no-show מזהה אורח שלא סגר את השהייה.
+function israelDateTime(ymd, hhmm = "12:00") {
+  const guess  = new Date(`${ymd}T${hhmm}:00Z`);
+  const offset = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Jerusalem", timeZoneName: "longOffset",
+  }).formatToParts(guess).find(p => p.type === "timeZoneName")?.value || "GMT+03:00";
+  const m    = offset.match(/GMT([+-])(\d{2}):(\d{2})/);
+  const mins = m ? (m[1] === "-" ? -1 : 1) * (+m[2] * 60 + +m[3]) : 180;
+  return new Date(guess.getTime() - mins * 60_000);
+}
+
 // ── ניסוח הפיקדון — מקור אמת אחד ─────────────────────
 // כל ההודעות (צ'ק אין, צ'ק אאוט, עמוד התשלום, דף האישור) שואבות מכאן
 // כדי שהניסוח יהיה זהה בכל מקום ולא ייווצר drift. ברור ופשוט לאורח.
 export function depositExplainer(lang = "he") {
+  const amt = shekels(depositAmount());
   return lang === "he"
-    ? "🔒 הפיקדון (₪500) מוקפא בכרטיסך להבטחת השהייה — זו הקפאה בלבד, לא חיוב.\n" +
+    ? `🔒 הפיקדון (${amt}) מוקפא בכרטיסך להבטחת השהייה — זו הקפאה בלבד, לא חיוב.\n` +
       "בצ'ק אאוט:\n" +
       "- אם אין חיובים — לא מבוצע חיוב, וההקפאה משוחררת על ידי חברת האשראי תוך 3-5 ימי עסקים.\n" +
       "- אם יש חיובים — הם ינוכו מהפיקדון, והיתרה משוחררת על ידי חברת האשראי תוך 3-5 ימי עסקים.\n" +
       "- אם החיובים גדולים מהפיקדון — ההפרש יחויב מאותו כרטיס אשראי שהזנת בפיקדון."
-    : "🔒 The ₪500 deposit is held on your card to secure your stay — a hold only, not a charge.\n" +
+    : `🔒 The ${amt} deposit is held on your card to secure your stay — a hold only, not a charge.\n` +
       "At check-out:\n" +
       "- If there are no charges — nothing is charged, and the hold is released by your card issuer within 3–5 business days.\n" +
       "- If there are charges — they are deducted from the deposit, and the remainder is released by your card issuer within 3–5 business days.\n" +
@@ -86,16 +147,23 @@ export const FOLIO_CATEGORIES = {
 // nameInput יכול להיות מחרוזת (שם בודד, תאימות לאחור) או אובייקט עם שתי
 // הצורות { guestName, guestNameHe, guestNameEn } — כדי שלא ייווצר ערבוב
 // שפות בשם האורח (Bug 2). שומרים תמיד את שתי הצורות על ההזמנה.
-export async function startCheckin(phone, nameInput, reservationId) {
+// opts.stay  — { checkIn: "YYYY-MM-DD", checkOut: "YYYY-MM-DD", nights } כפי
+//              שהאורח מסר ואומת (validateStayDates). מחליף את הקבוע
+//              NIGHTS=3 שהיה כאן וקבע 3 לילות לכל אורח באשר הוא.
+// opts.terms — { version, acceptedAt } — *איזה* נוסח תנאים האורח אישר
+//              ומתי. נשמר על ההזמנה כראיה, ולא רק כדגל בוליאני.
+export async function startCheckin(phone, nameInput, reservationId, opts = {}) {
   const obj         = nameInput && typeof nameInput === "object" ? nameInput : null;
   const guestNameHe = obj ? (obj.guestNameHe || obj.guestName || "") : (nameInput || "");
   const guestNameEn = obj ? (obj.guestNameEn || obj.guestName || "") : (nameInput || "");
   const guestName   = obj ? (obj.guestName || guestNameHe) : (nameInput || "");
   const id      = uuidv4();
-  const DEPOSIT = 50000; // ₪500 באגורות (lowest currency unit)
-  // מספר הלילות — דמו: ברירת מחדל. בפרודקשן יישלף מה-PMS לפי ההזמנה.
-  // נחוץ כדי שהקבלה תתקף את כרטיס החדר לכל משך השהייה (ולא ליום אחד).
-  const NIGHTS  = 3;
+  const DEPOSIT = depositAmount();
+  const stay    = opts.stay || null;
+  // מספר הלילות מגיע מהאורח. אם משום מה אין (זרימה ישנה/חריגה) — לילה
+  // אחד, שמרני: עדיף כרטיס חדר קצר מדי שמאריכים בקבלה, מאשר חדר שנשאר
+  // פתוח ימים מיותרים.
+  const NIGHTS  = stay?.nights || 1;
 
   reservations[id] = {
     id, phone, guestName, guestNameHe, guestNameEn, reservationId,
@@ -103,7 +171,11 @@ export async function startCheckin(phone, nameInput, reservationId) {
     stage: "pending_payment",
     deposit: DEPOSIT,
     nights: NIGHTS,
-    checkoutDate: null, // יחושב בצ'ק אין (completeCheckin) לפי תאריך הכניסה + לילות
+    stayCheckIn:  stay?.checkIn  || null,
+    stayCheckOut: stay?.checkOut || null,
+    termsVersion:    opts.terms?.version    || null,
+    termsAcceptedAt: opts.terms?.acceptedAt || null,
+    checkoutDate: null, // רגע הצ'ק אאוט בפועל — נקבע ב-completeCheckin
     currency: PAYMENT_CURRENCY,
     folio: [],
     paymentId: null,
@@ -127,7 +199,7 @@ export async function startCheckin(phone, nameInput, reservationId) {
     currency: PAYMENT_CURRENCY,
     guestName,
     phone,
-    description: "פיקדון שהייה — Kempinski Hotel",
+    description: `פיקדון שהייה — ${hotelConfig.name}`,
     // עמוד התשלום (אצל ספק אמיתי — דף הסליקה המתארח שלו; אצל ה-Mock —
     // דף תשלום הדמו הפנימי שלנו). לשם נשלח האורח כדי "לשלם".
     paymentPageUrl: `${baseUrl()}/checkin/pay?rid=${id}`,
@@ -163,11 +235,18 @@ export async function completeCheckin(reservationId, roomNumber) {
   res.paidAt      = new Date().toISOString();
   stats.checkIns++;
 
-  // ── חישוב תאריך צ'ק אאוט לפי תאריך הכניסה + מספר הלילות ──
-  // משמש את הקבלה כדי לתקף את כרטיס החדר לכל משך השהייה.
-  const nights      = res.nights || 1;
-  const coDate      = new Date(res.checkedInAt);
-  coDate.setDate(coDate.getDate() + nights);
+  // ── רגע הצ'ק אאוט ────────────────────────────────────
+  // מקור ראשון: תאריך העזיבה שהאורח מסר, בשעת הצ'ק אאוט של המלון.
+  // גיבוי (הזמנה ישנה בלי תאריכים): תאריך הכניסה + מספר הלילות.
+  // משמש גם לתיקוף כרטיס החדר וגם לזיהוי no-show.
+  const nights = res.nights || 1;
+  let coDate;
+  if (res.stayCheckOut) {
+    coDate = israelDateTime(res.stayCheckOut, hotelConfig.checkout_time || "12:00");
+  } else {
+    coDate = new Date(res.checkedInAt);
+    coDate.setDate(coDate.getDate() + nights);
+  }
   res.checkoutDate  = coDate.toISOString();
   persist(res); // שמירת מצב הצ'ק אין (checked_in + confirmationSent) לפני שליחת ההודעות
   const checkoutStr = coDate.toLocaleDateString("he-IL", {
@@ -188,43 +267,59 @@ export async function completeCheckin(reservationId, roomNumber) {
     checkInAt:     res.checkedInAt,
   });
 
-  const he   = (sessions[res.phone]?.lang || "he") === "he";
-  const name = nameFor(res, he ? "he" : "en"); // שם בשפת השיחה — בלי ערבוב (Bug 2)
+  // ── הודעת האישור לאורח — בשפת השיחה שלו, מהתחלה ועד הסוף ──
+  // כל הפרטים נשאבים מ-hotelConfig לפי השפה (ולא ממחרוזות קשיחות),
+  // כדי שאורח אנגלי לא יקבל "מסעדת הגן, קומה 1" באמצע משפט באנגלית.
+  const lang = sessions[res.phone]?.lang === "en" ? "en" : "he";
+  const he   = lang === "he";
+  const name = nameFor(res, lang); // שם בשפת השיחה — בלי ערבוב (Bug 2)
+  const cfg  = hotelConfig;
+  const svc  = (key) => cfg.services[key]?.[lang] || cfg.services[key]?.en || {};
+  const bf   = svc("breakfast"), pool = svc("pool"), rs = svc("room_service");
+  const stayLines = formatStayDates(stayOf(res), lang);
+
   await wa(res.phone, he
     ? `✅ *צ'ק אין אושר!*\n\n` +
       `ברוכים הבאים, *${name}*! 🌟\n\n` +
       `🚪 *חדר:* ${res.roomNumber}\n` +
-      `🔑 *כרטיס לחדר ימתין לך מוכן בקבלה* — גש לאסוף אותו, הוא מתוקף לכל משך השהייה\n` +
-      `${depositExplainer("he")}\n` +
-      `📶 WiFi: Kempinski_Guest | Welcome2024\n\n` +
-      `🍳 ארוחת בוקר: 07:00–11:00\n` +
-      `🏊 בריכה: 07:00–22:00 | גג קומה 12\n` +
-      `🛎️ שירות לחדר: 24/7 | שלוחה 0\n\n` +
+      (stayLines ? `${stayLines}\n` : "") +
+      `🔑 *כרטיס לחדר ימתין לך מוכן בקבלה* — גש לאסוף אותו, הוא מתוקף לכל משך השהייה\n\n` +
+      `${depositExplainer("he")}\n\n` +
+      `📶 WiFi: ${cfg.wifi.name} | ${cfg.wifi.password}\n` +
+      `🍳 ארוחת בוקר: ${bf.hours} | ${bf.location}\n` +
+      `🏊 בריכה: ${pool.hours} | ${pool.location}\n` +
+      `🛎️ שירות לחדר: ${rs.hours} | ${rs.dial}\n\n` +
       `לכל בקשה — אני כאן! 😊`
     : `✅ *Check-in confirmed!*\n\n` +
       `Welcome, *${name}*! 🌟\n\n` +
       `🚪 *Room:* ${res.roomNumber}\n` +
-      `🔑 *Your room key is ready and waiting at reception* — please pick it up; it's valid for your entire stay\n` +
-      `${depositExplainer("en")}\n` +
-      `📶 WiFi: Kempinski_Guest | Welcome2024\n\n` +
-      `🍳 Breakfast: 07:00–11:00\n` +
-      `🏊 Pool: 07:00–22:00 | Rooftop, Level 12\n` +
-      `🛎️ Room service: 24/7 | Ext. 0\n\n` +
-      `I'm here for anything you need! 😊`
+      (stayLines ? `${stayLines}\n` : "") +
+      `🔑 *Your room key is ready and waiting at reception* — please pick it up; it's valid for your entire stay\n\n` +
+      `${depositExplainer("en")}\n\n` +
+      `📶 WiFi: ${cfg.wifi.name} | ${cfg.wifi.password}\n` +
+      `🍳 Breakfast: ${bf.hours} | ${bf.location}\n` +
+      `🏊 Pool: ${pool.hours} | ${pool.location}\n` +
+      `🛎️ Room service: ${rs.hours} | ${rs.dial}\n\n` +
+      `I'm here for anything you need! 😊`,
+    { lang }
   );
 
   // ── התראה לקבלה: להכין כרטיס לחדר מוכן לאיסוף ──────────
   // נשלחת גם בוואטסאפ וגם במייל (דרך notifyStaff). כוללת את כל הפרטים
   // הדרושים להכנת הכרטיס מראש, ומדגישה לתקף את הכרטיס לכל משך השהייה.
+  // תמיד בעברית — צוות המלון עובד בעברית, ללא קשר לשפת האורח.
+  const stayShort = formatStayShort(stayOf(res), "he");
   await notifyStaff({
     dept: "reception",
     roomNumber: res.roomNumber,
     guestName: res.guestName,
     message:
       `🔑 *להכין כרטיס לחדר מוכן לאיסוף בקבלה*\n` +
-      `✅ צ'ק אין דיגיטלי הושלם | פיקדון ₪500 מאושר\n` +
-      `🌙 לילות: ${nights}\n` +
+      `✅ צ'ק אין דיגיטלי הושלם | פיקדון ${shekels(res.deposit)} מאושר\n` +
+      (stayShort ? `📆 שהייה: ${stayShort}\n` : `🌙 לילות: ${nights}\n`) +
       `📅 צ'ק אאוט: ${checkoutStr}\n` +
+      (res.termsAcceptedAt ? `📝 תנאי שהייה: אושרו ע"י האורח (נוסח ${res.termsVersion || "—"})\n` : "") +
+      `🗣️ שפת האורח: ${he ? "עברית" : "אנגלית"}\n` +
       `⏳ *תקף את הכרטיס לכל משך השהייה* (עד ${checkoutStr}) — לא ליום אחד`,
     priority: "normal",
   });
@@ -252,14 +347,21 @@ export function formatFolio(res, lang = "he") {
   const total   = getFolioTotal(res.id);
   const deposit = res.deposit;
 
+  // כותרת החשבון — כוללת את תאריכי השהייה כפי שהאורח מסר בצ'ק אין,
+  // כדי שיוכל לוודא שחויב על התקופה הנכונה.
+  const stayShort = formatStayShort(stayOf(res), lang);
+  const header = lang === "he"
+    ? `📋 *סיכום חשבון — חדר ${res.roomNumber}*\n` + (stayShort ? `📆 ${stayShort}\n` : "")
+    : `📋 *Bill — Room ${res.roomNumber}*\n` + (stayShort ? `📆 ${stayShort}\n` : "");
+
   if (res.folio.length === 0) {
     return lang === "he"
-      ? `📋 *סיכום חשבון — חדר ${res.roomNumber}*\n` +
+      ? header +
         `━━━━━━━━━━━━━━━━━━━━\n✅ אין חיובים\n` +
-        `━━━━━━━━━━━━━━━━━━━━\n💚 אין מה לנכות — לא יבוצע חיוב, וההקפאה על הפיקדון (₪500) תשוחרר על ידי חברת האשראי תוך 3-5 ימי עסקים`
-      : `📋 *Bill Summary — Room ${res.roomNumber}*\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n💚 אין מה לנכות — לא יבוצע חיוב, וההקפאה על הפיקדון (${shekels(deposit)}) תשוחרר על ידי חברת האשראי תוך 3-5 ימי עסקים`
+      : header +
         `━━━━━━━━━━━━━━━━━━━━\n✅ No charges\n` +
-        `━━━━━━━━━━━━━━━━━━━━\n💚 Nothing to deduct — no charge will be made, and the ₪500 hold will be released by your card issuer within 3–5 business days`;
+        `━━━━━━━━━━━━━━━━━━━━\n💚 Nothing to deduct — no charge will be made, and the ${shekels(deposit)} hold will be released by your card issuer within 3–5 business days`;
   }
 
   const lines = res.folio.map(item => {
@@ -274,13 +376,13 @@ export function formatFolio(res, lang = "he") {
   if (total <= deposit) {
     const refund = ((deposit - total)/100).toFixed(2);
     return lang === "he"
-      ? `📋 *סיכום חשבון — חדר ${res.roomNumber}*\n━━━━━━━━━━━━━━━━━━━━\n${lines}\n━━━━━━━━━━━━━━━━━━━━\nסה"כ חיובים:  ₪${totalStr}\nפיקדון:       ₪${depositStr}\n━━━━━━━━━━━━━━━━━━━━\n💳 ינוכה מהפיקדון: ₪${totalStr}\n💚 יתרת הפיקדון שתשתחרר: ₪${refund}`
-      : `📋 *Bill — Room ${res.roomNumber}*\n━━━━━━━━━━━━━━━━━━━━\n${lines}\n━━━━━━━━━━━━━━━━━━━━\nTotal charges:  ₪${totalStr}\nDeposit:        ₪${depositStr}\n━━━━━━━━━━━━━━━━━━━━\n💳 Deducted from deposit: ₪${totalStr}\n💚 Remaining deposit released: ₪${refund}`;
+      ? header + `━━━━━━━━━━━━━━━━━━━━\n${lines}\n━━━━━━━━━━━━━━━━━━━━\nסה"כ חיובים:  ₪${totalStr}\nפיקדון:       ₪${depositStr}\n━━━━━━━━━━━━━━━━━━━━\n💳 ינוכה מהפיקדון: ₪${totalStr}\n💚 יתרת הפיקדון שתשתחרר: ₪${refund}`
+      : header + `━━━━━━━━━━━━━━━━━━━━\n${lines}\n━━━━━━━━━━━━━━━━━━━━\nTotal charges:  ₪${totalStr}\nDeposit:        ₪${depositStr}\n━━━━━━━━━━━━━━━━━━━━\n💳 Deducted from deposit: ₪${totalStr}\n💚 Remaining deposit released: ₪${refund}`;
   } else {
     const balance = ((total - deposit)/100).toFixed(2);
     return lang === "he"
-      ? `📋 *סיכום חשבון — חדר ${res.roomNumber}*\n━━━━━━━━━━━━━━━━━━━━\n${lines}\n━━━━━━━━━━━━━━━━━━━━\nסה"כ חיובים:  ₪${totalStr}\nפיקדון:       ₪${depositStr}\n━━━━━━━━━━━━━━━━━━━━\n💳 הפיקדון (₪${depositStr}) ינוכה במלואו\n🔴 *ההפרש מעל הפיקדון: ₪${balance}* — יחויב מהכרטיס`
-      : `📋 *Bill — Room ${res.roomNumber}*\n━━━━━━━━━━━━━━━━━━━━\n${lines}\n━━━━━━━━━━━━━━━━━━━━\nTotal charges:  ₪${totalStr}\nDeposit:        ₪${depositStr}\n━━━━━━━━━━━━━━━━━━━━\n💳 The deposit (₪${depositStr}) is deducted in full\n🔴 *Amount over the deposit: ₪${balance}* — charged to the card`;
+      ? header + `━━━━━━━━━━━━━━━━━━━━\n${lines}\n━━━━━━━━━━━━━━━━━━━━\nסה"כ חיובים:  ₪${totalStr}\nפיקדון:       ₪${depositStr}\n━━━━━━━━━━━━━━━━━━━━\n💳 הפיקדון (₪${depositStr}) ינוכה במלואו\n🔴 *ההפרש מעל הפיקדון: ₪${balance}* — יחויב מהכרטיס`
+      : header + `━━━━━━━━━━━━━━━━━━━━\n${lines}\n━━━━━━━━━━━━━━━━━━━━\nTotal charges:  ₪${totalStr}\nDeposit:        ₪${depositStr}\n━━━━━━━━━━━━━━━━━━━━\n💳 The deposit (₪${depositStr}) is deducted in full\n🔴 *Amount over the deposit: ₪${balance}* — charged to the card`;
   }
 }
 
@@ -373,13 +475,14 @@ export async function processCheckout(phone, reservationId, lang = "he") {
       ? `🚪 *צ'ק אאוט הושלם!*\n\n` +
         `תודה, *${name}*! שמחנו לארח אותך 🌟\n\n` +
         `✅ אין חיובים — *לא בוצע חיוב.*\n` +
-        `💚 ההקפאה על הפיקדון (₪500) תשוחרר על ידי חברת האשראי תוך *3-5 ימי עסקים*.\n\n` +
+        `💚 ההקפאה על הפיקדון (${shekels(res.deposit)}) תשוחרר על ידי חברת האשראי תוך *3-5 ימי עסקים*.\n\n` +
         `נשמח לראותך שוב! ⭐`
       : `🚪 *Check-out complete!*\n\n` +
         `Thank you, *${name}*! It was a pleasure hosting you 🌟\n\n` +
         `✅ No charges — *nothing was charged.*\n` +
-        `💚 The hold on your ₪500 deposit will be released by your card issuer within *3–5 business days*.\n\n` +
-        `We hope to see you again! ⭐`
+        `💚 The hold on your ${shekels(res.deposit)} deposit will be released by your card issuer within *3–5 business days*.\n\n` +
+        `We hope to see you again! ⭐`,
+      { lang }
     );
   }
 
@@ -400,7 +503,8 @@ export async function processCheckout(phone, reservationId, lang = "he") {
         formatFolio(res, lang) + "\n\n" +
         `💳 *Deducted from your deposit: ₪${charged}*\n` +
         `💚 *The remaining ₪${refund} will be released* by your card issuer within *3–5 business days*.\n\n` +
-        `We hope to see you again! ⭐`
+        `We hope to see you again! ⭐`,
+      { lang }
     );
   }
 
@@ -433,7 +537,7 @@ export async function processCheckout(phone, reservationId, lang = "he") {
       ? `🚪 *צ'ק אאוט הושלם — חדר ${res.roomNumber}*\n\n` +
         `תודה, *${name}*! 🌟\n\n` +
         formatFolio(res, lang) + "\n\n" +
-        `💳 *הפיקדון (₪500) נוכה במלואו.*\n` +
+        `💳 *הפיקדון (${shekels(res.deposit)}) נוכה במלואו.*\n` +
         `❗ החיובים (₪${totalStr}) עלו על הפיקדון.\n` +
         `✅ *ההפרש (₪${balanceStr}) חויב מכרטיס האשראי שהזנת בצ'ק אין.*\n\n` +
         `מעדיף לשלם את ההפרש בכרטיס אחר? אפשר להחליף כאן:\n👉 ${res.altCardUrl}\n\n` +
@@ -441,11 +545,12 @@ export async function processCheckout(phone, reservationId, lang = "he") {
       : `🚪 *Check-out complete — Room ${res.roomNumber}*\n\n` +
         `Thank you, *${name}*! 🌟\n\n` +
         formatFolio(res, lang) + "\n\n" +
-        `💳 *The ₪500 deposit was deducted in full.*\n` +
+        `💳 *The ${shekels(res.deposit)} deposit was deducted in full.*\n` +
         `❗ Charges (₪${totalStr}) exceeded the deposit.\n` +
         `✅ *The difference (₪${balanceStr}) was charged to the card you entered at check-in.*\n\n` +
         `Prefer to pay the difference with a different card? You can switch here:\n👉 ${res.altCardUrl}\n\n` +
-        `_Questions? Reception, Ext. 0_`
+        `_Questions? Reception, Ext. 0_`,
+      { lang }
     );
 
     await logAlert({
@@ -482,7 +587,8 @@ export async function switchOverageToAlternateCard(reservationId, lang = "he") {
 
   await wa(res.phone, he
     ? `✅ *עודכן!*\n\nההפרש (₪${balanceStr}) חויב מהכרטיס החדש שהזנת, ולא מכרטיס הפיקדון.\n\nתודה! ⭐`
-    : `✅ *Updated!*\n\nThe difference (₪${balanceStr}) was charged to the new card you entered, not to the deposit card.\n\nThank you! ⭐`
+    : `✅ *Updated!*\n\nThe difference (₪${balanceStr}) was charged to the new card you entered, not to the deposit card.\n\nThank you! ⭐`,
+    { lang }
   );
 
   await logAlert({
@@ -531,10 +637,11 @@ export async function autoChargeOnNoShow(reservationId, lang = "he") {
     await wa(res.phone, he
       ? `🚪 *הצ'ק אאוט בוצע אוטומטית — חדר ${res.roomNumber}*\n\n` +
         `לא ביצעת צ'ק אאוט עד שעת הסיום, אז סגרנו את השהייה עבורך.\n` +
-        `✅ אין חיובים — *לא בוצע חיוב*. ההקפאה על הפיקדון (₪500) תשוחרר על ידי חברת האשראי תוך *3-5 ימי עסקים*.\n\nתודה! ⭐`
+        `✅ אין חיובים — *לא בוצע חיוב*. ההקפאה על הפיקדון (${shekels(res.deposit)}) תשוחרר על ידי חברת האשראי תוך *3-5 ימי עסקים*.\n\nתודה! ⭐`
       : `🚪 *Check-out was completed automatically — Room ${res.roomNumber}*\n\n` +
         `You didn't check out by the deadline, so we closed the stay for you.\n` +
-        `✅ No charges — *nothing was charged*. The hold on your ₪500 deposit will be released by your card issuer within *3–5 business days*.\n\nThank you! ⭐`
+        `✅ No charges — *nothing was charged*. The hold on your ${shekels(res.deposit)} deposit will be released by your card issuer within *3–5 business days*.\n\nThank you! ⭐`,
+      { lang }
     );
   } else if (s.overage === 0) {
     const refund = (s.released/100).toFixed(2);
@@ -550,7 +657,8 @@ export async function autoChargeOnNoShow(reservationId, lang = "he") {
         formatFolio(res, lang) + "\n\n" +
         `💳 *Deducted from your deposit: ₪${totalStr}*\n` +
         `💚 *The remaining ₪${refund} will be released* by your card issuer within *3–5 business days*.\n\n` +
-        `Questions? Reception, Ext. 0`
+        `Questions? Reception, Ext. 0`,
+      { lang }
     );
   } else {
     const balanceStr = (s.overage/100).toFixed(2);
@@ -558,15 +666,16 @@ export async function autoChargeOnNoShow(reservationId, lang = "he") {
       ? `🚪 *הצ'ק אאוט בוצע אוטומטית — חדר ${res.roomNumber}*\n\n` +
         `לא ביצעת צ'ק אאוט עד שעת הסיום, אז סגרנו את השהייה עבורך.\n\n` +
         formatFolio(res, lang) + "\n\n" +
-        `💳 *הפיקדון (₪500) נוכה במלואו.*\n` +
+        `💳 *הפיקדון (${shekels(res.deposit)}) נוכה במלואו.*\n` +
         `✅ *ההפרש (₪${balanceStr}) חויב מכרטיס האשראי שהזנת בצ'ק אין.*\n\n` +
         `לשאלות: קבלה שלוחה 0`
       : `🚪 *Check-out was completed automatically — Room ${res.roomNumber}*\n\n` +
         `You didn't check out by the deadline, so we closed the stay for you.\n\n` +
         formatFolio(res, lang) + "\n\n" +
-        `💳 *The ₪500 deposit was deducted in full.*\n` +
+        `💳 *The ${shekels(res.deposit)} deposit was deducted in full.*\n` +
         `✅ *The difference (₪${balanceStr}) was charged to the card you entered at check-in.*\n\n` +
-        `Questions? Reception, Ext. 0`
+        `Questions? Reception, Ext. 0`,
+      { lang }
     );
   }
 

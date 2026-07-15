@@ -29,6 +29,52 @@ export let hotelConfig = {
   early_checkin: true,
   late_checkout: true,
 
+  // ── Deposit ───────────────────────────────────────────
+  // סכום פיקדון השהייה, באגורות (50000 = ₪500). מקור אמת אחד: משמש
+  // את שכבת התשלום (checkin.js), את הסבר הפיקדון ואת תנאי השהייה —
+  // כדי שהסכום שהאורח מאשר בתנאים יהיה תמיד הסכום שבאמת מוקפא.
+  deposit_amount: 50000,
+
+  // ── Stay terms (תנאי שהייה) ───────────────────────────
+  // ⚠️ תנאים *לדוגמה* בלבד — לצורכי הדמו.
+  //    בפרודקשן כל מלון מחליף אותם בתנאים המשפטיים האמיתיים שלו,
+  //    לאחר אישור יועץ משפטי (חוק הגנת הצרכן, חוק הגנת הפרטיות,
+  //    ומדיניות הביטול בפועל של המלון).
+  //    מכיוון שהתנאים יושבים כאן, ב-hotelConfig, הם כבר per-hotel —
+  //    כשנעבור למולטי-טננט כל מלון יקבל את הנוסח שלו בלי שינוי קוד.
+  //
+  //    `version` נשמר על ההזמנה יחד עם רגע האישור — כדי שתמיד נדע
+  //    *איזה* נוסח האורח אישר בפועל. כל שינוי בתנאים = version חדש.
+  //
+  //    placeholders שמוחלפים בזמן השליחה: {hotel} {checkout_time} {deposit}
+  terms: {
+    version: "demo-2026-01",
+    he: [
+      { title: "אחריות לנזקים",
+        body: "האורח אחראי לכל נזק שייגרם לחדר, לתכולתו או לרכוש {hotel} במהלך שהייתו, ויחויב בעלות התיקון או ההחלפה." },
+      { title: "שעת צ'ק אאוט",
+        body: "יש לפנות את החדר עד השעה {checkout_time} ביום העזיבה. צ'ק אאוט מאוחר כפוף לזמינות ועשוי להיות כרוך בתשלום נוסף." },
+      { title: "פיקדון ומדיניות ביטול",
+        body: "פיקדון בסך {deposit} מוקפא בכרטיס האשראי להבטחת השהייה — הקפאה בלבד, לא חיוב. בצ'ק אאוט ינוכו החיובים שנצברו, והיתרה תשוחרר על ידי חברת האשראי תוך 3-5 ימי עסקים. ביטול עד 24 שעות לפני מועד ההגעה — ללא חיוב." },
+      { title: "מלון ללא עישון",
+        body: "העישון אסור בכל שטחי המלון, לרבות החדרים והמרפסות. הפרה תחויב בדמי ניקוי בסך ₪1,500." },
+      { title: "נכונות הפרטים",
+        body: "האורח מאשר כי הפרטים שמסר — השם המלא, מספר ההזמנה, תאריכי השהייה ומסמך הזיהוי — נכונים ומדויקים." },
+    ],
+    en: [
+      { title: "Liability for damages",
+        body: "The guest is responsible for any damage caused to the room, its contents or the property of {hotel} during the stay, and will be charged the cost of repair or replacement." },
+      { title: "Check-out time",
+        body: "The room must be vacated by {checkout_time} on the day of departure. Late check-out is subject to availability and may incur an additional charge." },
+      { title: "Deposit & cancellation policy",
+        body: "A {deposit} deposit is held on your credit card to secure the stay — a hold only, not a charge. At check-out any accrued charges are deducted, and the remainder is released by your card issuer within 3–5 business days. Cancellation up to 24 hours before arrival is free of charge." },
+      { title: "Non-smoking hotel",
+        body: "Smoking is prohibited throughout the hotel, including guest rooms and balconies. A cleaning fee of ₪1,500 applies to any breach." },
+      { title: "Accuracy of details",
+        body: "The guest confirms that the details provided — full name, reservation number, stay dates and identity document — are true and accurate." },
+    ],
+  },
+
   // ── WiFi ──────────────────────────────────────────────
   wifi: { name: "Kempinski_Guest", password: "Welcome2024" },
 

@@ -28,6 +28,25 @@ import { fetchMedia, inspectIdImage } from "./vision.js";
 const STORE_DIR = path.resolve("id-documents");
 const EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
 
+// ── מדיניות: אילו מסמכים קבילים לצ'ק אין ───────────────
+// אכיפה *בקוד*, לא רק ב-prompt. בלי הרשימה הזו כל מסמך ממשלתי היה
+// עובר — כולל רישיון נהיגה, שהוא באמת תעודה ממשלתית ולכן ה-AI מחזיר
+// עליו is_id=true. במלון מקבלים תעודת זהות או דרכון בלבד.
+const ACCEPTED_DOC_TYPES = new Set(["id_card", "passport"]);
+
+// הסבר לאורח כשהמסמך אמיתי אך אינו קביל — מנוסח כאן ולא ע"י ה-AI,
+// כדי שהניסוח יהיה עקבי ולא ישתנה בין קריאה לקריאה.
+const NOT_ACCEPTED_REASON = {
+  drivers_license: {
+    he: "רישיון נהיגה אינו קביל לצ'ק אין — אשמח לצילום של *תעודת זהות* או *דרכון*.",
+    en: "A driver's license can't be accepted for check-in — please send a photo of your *ID card* or *passport*.",
+  },
+  other: {
+    he: "המסמך אינו קביל לצ'ק אין — אשמח לצילום של *תעודת זהות* או *דרכון*.",
+    en: "That document can't be accepted for check-in — please send a photo of your *ID card* or *passport*.",
+  },
+};
+
 // README שמסביר לכל מי שנתקל בתיקייה למה היא כאן ומה אסור לעשות איתה.
 const README = `⚠️ מסמכי זיהוי של אורחים — אחסון דמו בלבד
 ================================================
@@ -100,6 +119,20 @@ export class MockIdProvider extends IdProvider {
         isId: check.isId, readable: check.readable, confidence: check.confidence,
         reasonHe: check.reasonHe || "התמונה אינה נראית כמו תעודת זהות או דרכון.",
         reasonEn: check.reasonEn || "The image doesn't look like an ID card or passport.",
+      };
+    }
+
+    // ── 3ב. תעודה אמיתית וקריאה — אך אינה קבילה במלון ────
+    // רישיון נהיגה מגיע לכאן: is_id=true, readable=true. נדחה במפורש,
+    // עם הסבר משלנו, ו*לא* נשמר — אין סיבה לאחסן מסמך שלא קיבלנו.
+    if (!ACCEPTED_DOC_TYPES.has(check.docType)) {
+      const why = NOT_ACCEPTED_REASON[check.docType] || NOT_ACCEPTED_REASON.other;
+      console.log(`🪪 [ID] נדחה — סוג מסמך לא קביל (${check.docType}) — לא נשמר.`);
+      return {
+        success: false, documentId: null, documentType: check.docType,
+        status: "rejected", storedPath: null,
+        isId: check.isId, readable: check.readable, confidence: check.confidence,
+        reasonHe: why.he, reasonEn: why.en,
       };
     }
 

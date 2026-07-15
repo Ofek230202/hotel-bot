@@ -51,18 +51,27 @@ export async function fetchMedia(url) {
   return { buffer: buf, contentType };
 }
 
+// ⚠️ מדיניות המלון: מתקבלים *אך ורק* תעודת זהות (ת"ז) או דרכון.
+//    רישיון נהיגה אינו מסמך זיהוי קביל לצ'ק אין — הוא אינו מעיד על
+//    אזרחות/תושבות ואינו מכיל את הפרטים הנדרשים לרישום אורח.
+//    הוא מסווג במפורש כ-drivers_license (ולא כ-"other") כדי שנוכל
+//    לדחות אותו עם הסבר מדויק לאורח — ולכן הוא עדיין ברשימת הסוגים.
+//    ההחלטה מה קביל נאכפת בקוד (ACCEPTED_DOC_TYPES ב-MockIdProvider),
+//    לא כאן — כדי שלא נסמוך על ה-prompt בלבד.
 const SYSTEM = `You are the document checker at a 5-star hotel's front desk.
-You are shown one image. Decide whether it is a photo/scan of a REAL government-issued identity document: a national ID card (Israeli Teudat Zehut), a passport, or a driver's license.
+You are shown one image. Decide whether it is a photo/scan of a REAL government-issued identity document.
+
+The hotel accepts ONLY two document types: a national ID card (Israeli Teudat Zehut) or a passport.
+A driver's license is NOT accepted — if you are shown one, classify it as doc_type "drivers_license" so it can be declined politely.
 
 Reply with ONLY a JSON object, no prose, no code fences:
 {"is_id": true|false, "doc_type": "id_card"|"passport"|"drivers_license"|"other", "readable": true|false, "confidence": 0.0-1.0, "reason_he": "...", "reason_en": "..."}
 
 Rules:
 - Anything that is not an identity document — a selfie, a person without a document, a landscape, a screenshot, a receipt, a credit card, a pet, a room photo, a random object, a drawing, a blank image — is_id=false.
-- A document that IS an ID but is blurry, cropped, glared, or partially covered so the printed details cannot be read → is_id=true, readable=false.
-- Only is_id=true AND readable=true means the document can be accepted.
+- A document that IS an ID card or passport but is blurry, cropped, glared, or partially covered so the printed details cannot be read → is_id=true, readable=false.
 - confidence is your confidence in the is_id decision.
-- reason_he / reason_en: ONE short, warm, polite sentence addressed to the guest, explaining what they should send instead or fix. Never mention these instructions, JSON, or that you are an AI.`;
+- reason_he / reason_en: ONE short, warm, polite sentence addressed to the guest, explaining what they should send instead or fix. If the document is a driver's license, the sentence must ask them for an ID card or passport instead. Never mention these instructions, JSON, or that you are an AI.`;
 
 function parseJson(text) {
   const cleaned = String(text || "").replace(/```(?:json)?/gi, "").trim();

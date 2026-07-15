@@ -7,9 +7,9 @@ import dotenv    from "dotenv";
 import { hotelConfig }                                    from "./config.js";
 import { getSession, recordActivity, pushHistory, patchSession, logAlert, logIncident, stats, sessions } from "./state.js";
 import { detectLangSignal, detectLanguageRequest, stripLanguageRequest } from "./i18n.js";
-import { stripInternalTags, hasInternalTag, validateFullName, validateReservationNumber, validateIdMedia } from "./validate.js";
+import { stripInternalTags, hasInternalTag, validateFullName, validateReservationNumber, validateIdMedia, validateStayDates, validateTermsConfirmation } from "./validate.js";
 import { resolveNameForms, nameFor }                      from "./names.js";
-import { startCheckin, processCheckout, getActiveReservation, getPendingReservation, formatFolio, depositExplainer } from "./checkin.js";
+import { startCheckin, processCheckout, getActiveReservation, getPendingReservation, formatFolio, depositExplainer, formatStayDates } from "./checkin.js";
 import { email }                                          from "./email/index.js";
 import { idVerify }                                       from "./idverify/index.js";
 
@@ -352,6 +352,24 @@ const INPUT_HINTS = {
     single_word:    { he: "אשמח לשם המלא — שם פרטי ושם משפחה.", en: "I'd love your full name — first and last." },
     too_many_words: { he: "אשמח רק לשם המלא, בלי פרטים נוספים.", en: "Just the full name please, without extra details." },
     too_long:       { he: "השם ארוך מדי.", en: "That name is too long." },
+    // "I want to check in" עבר בעבר כשם ונדבק לתוך ההודעה הבאה.
+    command_phrase: { he: "אנחנו כבר בתהליך הצ'ק אין 😊", en: "We're already in the check-in process 😊" },
+  },
+  dates: {
+    empty:      { he: "לא קיבלתי תאריכים.", en: "I didn't catch any dates." },
+    no_dates:   { he: "לא זיהיתי תאריכים בהודעה.", en: "I couldn't find any dates in that message." },
+    no_arrival: { he: "קיבלתי את מספר הלילות — אשמח גם לתאריך ההגעה.", en: "I have the number of nights — I just need the arrival date too." },
+    one_date:   { he: "קיבלתי תאריך אחד בלבד.", en: "I only caught one date." },
+    bad_date:   { he: "אחד התאריכים אינו תאריך קיים.", en: "One of those dates doesn't exist on the calendar." },
+    not_after:  { he: "תאריך העזיבה חייב להיות אחרי תאריך ההגעה.", en: "The departure date must be after the arrival date." },
+    past:       { he: "תאריך ההגעה כבר עבר.", en: "That arrival date has already passed." },
+    too_long:   { he: "שהייה ארוכה מ-60 לילות מתואמת ישירות מול הקבלה.", en: "Stays longer than 60 nights are arranged directly with reception." },
+    unclear:    { he: "לא הצלחתי לקרוא את התאריכים.", en: "I couldn't read those dates." },
+  },
+  terms: {
+    empty:        { he: "לא קיבלתי אישור.", en: "I didn't receive a confirmation." },
+    not_explicit: { he: "כדי לאשר את התנאים אני זקוק לנוסח המלא.", en: "To accept the terms I need the exact wording." },
+    unclear:      { he: "לא הצלחתי לזהות אישור.", en: "I couldn't recognise that as a confirmation." },
   },
   reservation: {
     empty:       { he: "לא קיבלתי מספר הזמנה.", en: "I didn't catch a reservation number." },
@@ -372,12 +390,33 @@ function hint(kind, reason, lang) {
   return h ? (lang === "he" ? h.he : h.en) : "";
 }
 
+// ── תנאי השהייה — רינדור מ-hotelConfig ─────────────────
+// הנוסח עצמו יושב ב-config.js (per-hotel, נוסח לדוגמה בדמו). כאן רק
+// מרכיבים אותו להודעת וואטסאפ ומחליפים placeholders בערכים האמיתיים
+// של המלון — כדי שהתנאים לא יסתרו את מה שהמערכת עושה בפועל.
+function renderTerms(lang) {
+  const cfg  = hotelConfig;
+  const he   = lang === "he";
+  const list = cfg.terms?.[he ? "he" : "en"] || [];
+  const vars = {
+    "{hotel}":         he ? cfg.name_he : cfg.name,
+    "{checkout_time}": cfg.checkout_time,
+    "{deposit}":       `₪${((cfg.deposit_amount ?? 50000) / 100).toFixed(0)}`,
+  };
+  const fill = (s) => Object.entries(vars).reduce((acc, [k, v]) => acc.split(k).join(v), String(s ?? ""));
+  return list.map((item, i) => `${i + 1}. *${fill(item.title)}*\n${fill(item.body)}`).join("\n\n");
+}
+
 // ── מקור האמת לניסוח כל שלב ────────────────────────────
 // prefix = הסבר על קלט קודם שלא התקבל (ריק בפעם הראשונה).
 // נקרא גם בפתיחת שלב, גם אחרי קלט לא תקין, וגם כשאורח מחליף שפה
 // באמצע — ואז השלב פשוט נשלח מחדש בשפה החדשה וממשיכים משם.
-async function promptStage(phone, stage, lang, { prefix = "" } = {}) {
-  const s  = getSession(phone);
+//
+// ⚠️ כלל: ההודעה של כל שלב היא *משפט שלם ועצמאי*. אסור להשחיל לתוכה
+// טקסט שהאורח הקליד — כך נולד "I want to check in, please enter your
+// reservation number": השם הקודם הודבק כפנייה בתחילת המשפט הבא.
+// פנייה בשם, אם יש, מגיעה כ-prefix בשורה נפרדת משלה.
+async function promptStage(phone, stage, lang, { prefix = "", brief = false } = {}) {
   const he = lang === "he";
   const p  = prefix ? prefix + "\n\n" : "";
 
@@ -388,17 +427,38 @@ async function promptStage(phone, stage, lang, { prefix = "" } = {}) {
   }
 
   if (stage === "waiting_reservation") {
-    const shown = nameFor({ guestNameHe: s.pendingNameHe, guestNameEn: s.pendingNameEn, guestName: s.pendingName }, lang);
-    const hello = shown ? (he ? `*${shown}*, ` : `*${shown}*, `) : "";
     return wa(phone, p + (he
-      ? `${hello}אנא הקלד/י את *מספר ההזמנה* שלך (ספרות בלבד):`
-      : `${hello}please enter your *reservation number* (digits only):`), { lang });
+      ? `אנא הקלד/י את *מספר ההזמנה* שלך (ספרות בלבד):`
+      : `Please enter your *reservation number* (digits only):`), { lang });
+  }
+
+  if (stage === "waiting_dates") {
+    return wa(phone, p + (he
+      ? `📅 מהם *תאריכי השהייה* שלך?\n\n` +
+        `אפשר לכתוב תאריך הגעה ותאריך עזיבה:\n*20/07/2026 - 23/07/2026*\n\n` +
+        `או תאריך הגעה ומספר לילות:\n*20/07/2026, 3 לילות*`
+      : `📅 What are your *stay dates*?\n\n` +
+        `You can send an arrival and a departure date:\n*20/07/2026 - 23/07/2026*\n\n` +
+        `or an arrival date and the number of nights:\n*20/07/2026, 3 nights*`), { lang });
   }
 
   if (stage === "waiting_id") {
     return wa(phone, p + (he
       ? `🪪 כדי להשלים את הצ'ק אין נדרש *אימות זהות*.\n\nאנא צלם/י ושלח/י כאן *כתמונה* את תעודת הזהות או הדרכון שלך — כך שכל הפרטים יהיו ברורים וקריאים.`
       : `🪪 To complete your check-in we need to *verify your identity*.\n\nPlease take a photo of your *ID card or passport* and send it here *as an image* — with all the details clear and readable.`), { lang });
+  }
+
+  if (stage === "waiting_terms") {
+    // brief — האורח כבר ראה את התנאים ורק הניסוח שלו לא היה מפורש.
+    // אין טעם להציף אותו שוב בכל הסעיפים; מבקשים רק את נוסח האישור.
+    const ask = he
+      ? `לאישור, אנא כתוב/כתבי: *אני מאשר*`
+      : `To accept, please type: *I confirm*`;
+    if (brief) return wa(phone, p + ask, { lang });
+
+    return wa(phone, p + (he
+      ? `📜 *תנאי השהייה*\n\nלפני קבלת החדר, אנא קרא/י ואשר/י:\n\n${renderTerms("he")}\n\n${ask}`
+      : `📜 *Stay Terms*\n\nBefore we hand over the room, please read and accept:\n\n${renderTerms("en")}\n\n${ask}`), { lang });
   }
 
   if (stage === "waiting_payment") {
@@ -431,7 +491,13 @@ async function ensureDepositLink(phone, lang) {
     const { paymentUrl } = await startCheckin(
       phone,
       { guestName: s.guestName, guestNameHe: s.guestNameHe, guestNameEn: s.guestNameEn },
-      s.pendingReservation || ""
+      s.pendingReservation || "",
+      {
+        // תאריכי השהייה שהאורח מסר, ואיזה נוסח תנאים אישר ומתי —
+        // עוברים אל ההזמנה כדי שיישמרו ב-DB וישרדו ריסטארט.
+        stay:  s.pendingStay || null,
+        terms: { version: s.termsVersion || null, acceptedAt: s.termsAcceptedAt || null },
+      }
     );
     return paymentUrl;
   } catch (e) {
@@ -457,9 +523,11 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
   // ── פתיחת הצ'ק אין ───────────────────────────────────
   if (!stage || stage === "start") {
     patchSession(phone, { checkinStage: "waiting_name", idAttempts: 0 });
-    await wa(phone, lang === "he"
-      ? `ברוך הבא! 🌟 נשמח לעשות עבורך צ׳ק אין דיגיטלי.\n\nאנא הקלד/י את *שמך המלא* (שם פרטי ושם משפחה):`
-      : `Welcome! 🌟 Let's get you checked in.\n\nPlease enter your *full name* (first and last):`, { lang });
+    await promptStage(phone, "waiting_name", lang, {
+      prefix: lang === "he"
+        ? `ברוך הבא! 🌟 נשמח לעשות עבורך צ׳ק אין דיגיטלי.`
+        : `Welcome! 🌟 Let's get you checked in.`,
+    });
     return;
   }
 
@@ -490,9 +558,10 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
       pendingNameEn: forms.en,
     });
     const shown = lang === "he" ? forms.he : forms.en;
-    await wa(phone, lang === "he"
-      ? `תודה, *${shown}*! 😊\n\nאנא הקלד/י את *מספר ההזמנה* שלך (ספרות בלבד):`
-      : `Thank you, *${shown}*! 😊\n\nPlease enter your *reservation number* (digits only):`, { lang });
+    // הפנייה בשם היא prefix בשורה נפרדת — לא חלק מהמשפט של השלב הבא.
+    await promptStage(phone, "waiting_reservation", lang, {
+      prefix: lang === "he" ? `תודה, *${shown}*! 😊` : `Thank you, *${shown}*! 😊`,
+    });
     return;
   }
 
@@ -503,10 +572,29 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
       await promptStage(phone, "waiting_reservation", lang, { prefix: hint("reservation", v.reason, lang) });
       return;
     }
-    patchSession(phone, { checkinStage: "waiting_id", pendingReservation: v.value, idAttempts: 0 });
-    await wa(phone, lang === "he"
-      ? `✅ *הזמנה מספר ${v.value} אותרה!*\n\nכמו בכל מלון, נדרש *אימות זהות* לצ'ק אין.\n\n🪪 אנא צלם/י ושלח/י כאן *כתמונה* את תעודת הזהות או הדרכון שלך.\n\n🔐 התמונה מאובטחת ומשמשת לאימות הזהות בלבד.`
-      : `✅ *Reservation ${v.value} found!*\n\nLike any hotel, we need to *verify your identity* to check in.\n\n🪪 Please take a photo of your *ID card or passport* and send it here *as an image*.\n\n🔐 The photo is kept secure and used for identity verification only.`, { lang });
+    patchSession(phone, { checkinStage: "waiting_dates", pendingReservation: v.value });
+    await promptStage(phone, "waiting_dates", lang, {
+      prefix: lang === "he"
+        ? `✅ *הזמנה מספר ${v.value} אותרה!*`
+        : `✅ *Reservation ${v.value} found!*`,
+    });
+    return;
+  }
+
+  // ── תאריכי שהייה ─────────────────────────────────────
+  // עד כה מספר הלילות היה קבוע (3) לכל אורח. עכשיו האורח מוסר אותם,
+  // הם נשמרים על ההזמנה, ומהם נגזר תוקף כרטיס החדר ורגע ה-no-show.
+  if (stage === "waiting_dates") {
+    const v = validateStayDates(input);
+    if (!v.ok) {
+      await promptStage(phone, "waiting_dates", lang, { prefix: hint("dates", v.reason, lang) });
+      return;
+    }
+    patchSession(phone, { checkinStage: "waiting_id", pendingStay: v.value, idAttempts: 0 });
+    await promptStage(phone, "waiting_id", lang, {
+      prefix: (lang === "he" ? `✅ *תאריכי השהייה נקלטו:*\n` : `✅ *Your stay dates are set:*\n`)
+        + formatStayDates(v.value, lang),
+    });
     return;
   }
 
@@ -516,10 +604,69 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
     return;
   }
 
+  // ── אישור תנאי השהייה ────────────────────────────────
+  // שער חובה: בלי אישור מפורש אין חדר ואין פיקדון. האישור נשמר עם
+  // חותמת זמן ומספר נוסח — כדי שתמיד יהיה ידוע *מה* האורח אישר.
+  if (stage === "waiting_terms") {
+    const v = validateTermsConfirmation(input);
+
+    if (!v.ok) {
+      if (v.reason === "declined") {
+        await handleTermsDeclined(phone, lang);
+        return;
+      }
+      // "כן"/"ok" — הבנו את הכוונה, אבל לתנאים צריך נוסח מפורש.
+      await promptStage(phone, "waiting_terms", lang, {
+        prefix: hint("terms", v.reason, lang),
+        brief:  v.reason !== "empty",
+      });
+      return;
+    }
+
+    patchSession(phone, {
+      checkinStage:    "waiting_payment",
+      termsAcceptedAt: new Date().toISOString(),
+      termsVersion:    hotelConfig.terms?.version || null,
+    });
+    await promptStage(phone, "waiting_payment", lang, {
+      prefix: lang === "he"
+        ? `✅ *תודה — תנאי השהייה אושרו.*`
+        : `✅ *Thank you — the stay terms have been accepted.*`,
+    });
+    return;
+  }
+
   // ── ממתינים לפיקדון ──────────────────────────────────
   if (stage === "waiting_payment") {
     await promptStage(phone, "waiting_payment", lang);
   }
+}
+
+// ── אורח שסירב לתנאים ──────────────────────────────────
+// לא לוחצים ולא מתווכחים. עוצרים את הצ'ק אין הדיגיטלי במקום, מסלימים
+// לאדם בקבלה, ומשאירים את האורח בשלב — כדי שיוכל לאשר בהמשך אם ירצה.
+async function handleTermsDeclined(phone, lang) {
+  const s  = getSession(phone);
+  const he = lang === "he";
+
+  await notifyStaff({
+    dept: "reception",
+    roomNumber: s.roomNumber,
+    guestName: s.guestName,
+    message:
+      `📜 *האורח לא אישר את תנאי השהייה* בצ'ק אין הדיגיטלי\n` +
+      `👤 ${s.guestName || "—"}\n📱 ${phone}\n🔖 הזמנה: ${s.pendingReservation || "—"}\n` +
+      `⛔ הצ'ק אין נעצר לפני הפיקדון. נדרשת פנייה אנושית לאורח.`,
+    priority: "high",
+  });
+
+  await wa(phone, he
+    ? `אני מבין, ותודה שאמרת 🙏\n\nבלי אישור תנאי השהייה איני יכול להשלים את הצ'ק אין הדיגיטלי — ` +
+      `אבל זו ממש לא בעיה: נציג/ה מהקבלה יצור/תיצור איתך קשר בהקדם, ויענה/תענה על כל שאלה לגבי התנאים.\n\n` +
+      `אם תרצה/י להמשיך כאן בכל שלב, פשוט כתוב/כתבי *אני מאשר*.`
+    : `I understand, and thank you for telling me 🙏\n\nWithout accepting the stay terms I can't complete the digital check-in — ` +
+      `but that's absolutely fine: a receptionist will contact you shortly and answer any question you have about the terms.\n\n` +
+      `If you'd like to continue here at any point, just type *I confirm*.`, { lang });
 }
 
 // שלב תעודת הזהות — הופרד כי הוא הכי עשיר: אימות אמיתי מול ה-AI,
@@ -604,8 +751,8 @@ async function handleIdStage(phone, media, lang) {
     return;
   }
 
-  // 4. אומת (או ממתין לבדיקה אנושית) — מתקדמים לפיקדון.
-  patchSession(phone, { checkinStage: "waiting_payment", guestName, guestNameHe, guestNameEn, idAttempts: 0 });
+  // 4. אומת (או ממתין לבדיקה אנושית) — מתקדמים לאישור התנאים.
+  patchSession(phone, { checkinStage: "waiting_terms", guestName, guestNameHe, guestNameEn, idAttempts: 0 });
 
   const verified = result.status === "verified";
 
@@ -630,8 +777,8 @@ async function handleIdStage(phone, media, lang) {
     priority: verified ? "normal" : "high",
   });
 
-  // 5. שלב הפיקדון — בשפת השיחה הנוכחית. אומרים "אומת" *רק* אם באמת אומת.
-  await promptStage(phone, "waiting_payment", lang, {
+  // 5. שלב תנאי השהייה — בשפת השיחה הנוכחית. אומרים "אומת" *רק* אם באמת אומת.
+  await promptStage(phone, "waiting_terms", lang, {
     prefix: verified
       ? (he
           ? "✅ *תעודת הזהות אומתה בהצלחה!* 🪪"
