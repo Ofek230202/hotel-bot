@@ -5,7 +5,7 @@ import express   from "express";
 import dotenv    from "dotenv";
 import { handleIncoming, wa, notifyStaff } from "./bot.js";
 import { allSessions, sessions, staffAlerts, incidents, stats, deleteSession, clearAllSessions } from "./state.js";
-import { hotelConfig, updateConfig } from "./config.js";
+import { hotelConfig, updateConfig, resetConfig } from "./config.js";
 import { reservations, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES, autoChargeOnNoShow, findNoShowReservations } from "./checkin.js";
 import checkinRouter from "./checkin-routes.js";
 
@@ -212,7 +212,29 @@ app.post("/api/no-show", auth, async (req, res) => {
 app.get("/api/alerts", auth, (req, res) => res.json(staffAlerts));
 app.get("/api/incidents", auth, (req, res) => res.json(incidents));
 app.get("/api/config", auth, (req, res) => res.json(hotelConfig));
-app.post("/api/config", auth, (req, res) => { updateConfig(req.body); res.json({ ok: true }); });
+
+// עדכון קונפיג — מיזוג *עמוק* ונשמר ל-DB (שורד ריסטארט).
+// שולחים רק את מה שמשנים: {"services":{"spa":{"he":{"hours":"10:00–22:00"}}}}
+// משנה את שעות הספא בעברית בלבד ומשאיר את כל השאר. מערך (למשל רשימת
+// הטיפולים) מוחלף כמכלול — מי שמעדכן רשימה שולח אותה במלואה.
+app.post("/api/config", auth, (req, res) => {
+  try {
+    res.json({ ok: true, config: updateConfig(req.body) });
+  } catch (e) {
+    console.error("Config update failed:", e?.message || e);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+// איפוס הקונפיג לברירות המחדל שבקוד (מוחק את כל ה-overrides).
+app.post("/api/config/reset", auth, (req, res) => {
+  try {
+    res.json({ ok: true, config: resetConfig() });
+  } catch (e) {
+    console.error("Config reset failed:", e?.message || e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 app.get("/health", (req, res) => res.json({ status: "ok", uptime: process.uptime() }));
 app.use(express.static("dashboard/public"));
 

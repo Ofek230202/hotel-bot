@@ -17,9 +17,10 @@
 //  getSession/patchSession/addFolioItem (הסינכרוניות היום) בלי להפוך
 //  את כל הקוד ל-async ובלי לשבור את bot.js.
 //
-//  ⚠️ שלב 0 (הכנה): הקובץ הזה עדיין לא מיובא מאף מקום. הוא רק מקים
-//  את הסכימה. שלבים 1–3 יחליפו את הפנימיות של state.js/checkin.js
-//  כדי להשתמש בו — בלי לשנות את החתימות של הפונקציות.
+//  צרכנים: state.js (sessions/alerts/incidents/stats), checkin.js
+//  (reservations+folio) ו-config.js (overrides של קונפיגורציית המלון).
+//  כולם עובדים באותה שיטה: cache חי בזיכרון, write-through ל-DB,
+//  הידרציה בעליית התהליך — כך שחתימות הפונקציות לא השתנו.
 // ════════════════════════════════════════════════════════
 import { DatabaseSync } from "node:sqlite";
 
@@ -96,6 +97,17 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_incidents_at
     ON incidents (hotel_id, at DESC);
+
+  -- קונפיגורציית המלון (config.js). שורה אחת לכל מלון.
+  -- ⚠️ נשמרים כאן *רק ה-overrides* — ההפרש מול ברירות המחדל שבקוד,
+  -- ולא הקונפיג המלא. זו החלטה מכוונת: כך ערך חדש שמתווסף ל-config.js
+  -- (שירות חדש, שדה חדש) מגיע גם למלון שכבר ערך את הקונפיג שלו, במקום
+  -- להיחסם על ידי snapshot ישן שנשמר ב-DB.
+  CREATE TABLE IF NOT EXISTS config (
+    hotel_id   TEXT PRIMARY KEY,
+    data       TEXT NOT NULL,          -- overrides בלבד (JSON)
+    updated_at TEXT
+  );
 
   -- מונים (state.js: stats). שורה אחת לכל מלון.
   CREATE TABLE IF NOT EXISTS stats (

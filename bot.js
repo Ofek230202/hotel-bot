@@ -160,22 +160,116 @@ function isGenericGreeting(text) {
   return t.length <= 2; // לא נשאר תוכן ממשי → ברכה כללית בלבד
 }
 
+// ════════════════════════════════════════════════════════
+//  רינדור המידע המובנה מה-config אל ה-prompt
+//  ----------------------------------------------------------
+//  שם השדה הוא חלק מהמידע. הרינדור הקודם עשה
+//  `Object.values(s).join(" | ")` — ולכן הספא הגיע ל-AI כ-
+//  "09:00–21:00 | ₪350 | ₪480", בלי לדעת איזה מספר הוא שעה, איזה
+//  מחיר שייך לאיזה טיפול, ומה בכלל כל אחד מהם. ה-AI נאלץ לנחש,
+//  ואורח קיבל מחיר שגוי כעובדה.
+//
+//  שני כללים שמונעים את זה מלחזור:
+//  1. כל ערך מגיע עם התווית שלו — לעולם לא ערך ערום.
+//  2. מפתח שאין לו תווית נופל לשם המפתח עצמו. כלומר אפשר להוסיף
+//     שדה חדש ל-config.js בלי לגעת בקוד כאן: הכי גרוע התווית תהיה
+//     "night menu" במקום "תפריט לילה" — אבל המשמעות לא הולכת לאיבוד.
+// ════════════════════════════════════════════════════════
+const FIELD_LABELS = {
+  he: {
+    name: "שם", hours: "שעות פעילות", location: "מיקום", style: "אופי",
+    price: "מחיר", price_range: "טווח מחירים", dietary: "התאמות תזונתיות",
+    note: "לתשומת לב", access: "כניסה", amenities: "מה כלול", children: "ילדים",
+    equipment: "ציוד", classes: "שיעורים", personal_trainer: "מאמן אישי",
+    age_policy: "מדיניות גיל", booking: "איך מזמינים", booking_notice: "הזמנה מראש",
+    treatments: "טיפולים ומחירים", facilities: "מתקנים", arrival: "הגעה",
+    cancellation: "מדיניות ביטול", cuisine: "סוג מטבח", reservations: "הזמנת שולחן",
+    dress_code: "קוד לבוש", dial: "שלוחה", how_to_order: "איך מזמינים",
+    delivery_time: "זמן הגעה", service_charge: "דמי שירות", night_menu: "תפריט לילה",
+    turnaround: "זמן אספקה", express: "שירות אקספרס", type: "סוג",
+    ev_charging: "טעינת רכב חשמלי", height_limit: "הגבלת גובה", duration: "משך",
+    happy_hour: "שעת האפי האוור",
+  },
+  en: {
+    name: "Name", hours: "Hours", location: "Location", style: "Style",
+    price: "Price", price_range: "Price range", dietary: "Dietary options",
+    note: "Note", access: "Access", amenities: "Included", children: "Children",
+    equipment: "Equipment", classes: "Classes", personal_trainer: "Personal trainer",
+    age_policy: "Age policy", booking: "How to book", booking_notice: "Advance booking",
+    treatments: "Treatments & prices", facilities: "Facilities", arrival: "Arrival",
+    cancellation: "Cancellation policy", cuisine: "Cuisine", reservations: "Table reservations",
+    dress_code: "Dress code", dial: "Dial", how_to_order: "How to order",
+    delivery_time: "Delivery time", service_charge: "Service charge", night_menu: "Night menu",
+    turnaround: "Turnaround", express: "Express service", type: "Type",
+    ev_charging: "EV charging", height_limit: "Height limit", duration: "Duration",
+    happy_hour: "Happy hour",
+  },
+};
+
+function labelFor(key, lang) {
+  return FIELD_LABELS[lang === "he" ? "he" : "en"][key] || String(key).replace(/_/g, " ");
+}
+
+const isPlainObj = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+const hasValue   = (v) => v !== null && v !== undefined && v !== "";
+
+// פריט ברשימה (טיפול בספא, מנה) — כל השדות שלו על שורה אחת, יחד.
+// זה מה שקושר מחיר לטיפול: "עיסוי שוודי | משך: 60 דקות | מחיר: ₪350".
+function renderItem(item, lang) {
+  if (!isPlainObj(item)) return String(item);
+  return Object.entries(item)
+    .filter(([, v]) => hasValue(v))
+    .map(([k, v]) => (k === "name" ? String(v) : `${labelFor(k, lang)}: ${v}`))
+    .join(" | ");
+}
+
+// רינדור גנרי של אובייקט קונפיג לשורות מתויגות. רקורסיבי — כדי
+// שמבנה מקונן שיתווסף בעתיד יגיע שלם ולא ייעלם/יידחס למחרוזת.
+function renderFields(obj, lang, indent = "  ") {
+  const lines = [];
+  for (const [key, val] of Object.entries(obj || {})) {
+    if (!hasValue(val)) continue;
+    const label = labelFor(key, lang);
+
+    if (Array.isArray(val)) {
+      if (!val.length) continue;
+      lines.push(`${indent}${label}:`);
+      for (const item of val) lines.push(`${indent}  • ${renderItem(item, lang)}`);
+    } else if (isPlainObj(val)) {
+      const nested = renderFields(val, lang, indent + "  ");
+      if (nested) lines.push(`${indent}${label}:`, nested);
+    } else {
+      lines.push(`${indent}${label}: ${val}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 function buildPrompt(session, lang) {
   const cfg = hotelConfig;
   const L = lang === "he" ? "he" : "en";
   const { full: nowFull } = israelTime();
 
-  const svcs = Object.entries(cfg.services).map(([k, v]) => {
-    const s = v[L] || v.en;
-    return `- ${k}: ${Object.values(s).join(" | ")}`;
-  }).join("\n");
+  // כל שירות ככותרת + שדות מתויגים. `name` הופך לכותרת ולא חוזר בגוף.
+  const svcs = Object.entries(cfg.services || {}).map(([key, val]) => {
+    const s = { ...(val?.[L] || val?.en || {}) };
+    if (!Object.keys(s).length) return "";
+    const title = s.name || labelFor(key, L);
+    delete s.name;
+    const body = renderFields(s, L);
+    return body ? `▸ ${title}\n${body}` : `▸ ${title}`;
+  }).filter(Boolean).join("\n\n");
 
-  const faqs = cfg.faq.map(f => {
+  const faqs = (cfg.faq || []).map(f => {
     const v = f[L] || f.en;
-    return `ש: ${v.q}\nת: ${v.a}`;
+    return L === "he" ? `ש: ${v.q}\nת: ${v.a}` : `Q: ${v.q}\nA: ${v.a}`;
   }).join("\n\n");
 
-  const park = cfg.parking[L] || cfg.parking.en;
+  // `available: false` היה מתעלם לגמרי ומדפיס חניה שלא קיימת.
+  const parkFields = cfg.parking?.[L] || cfg.parking?.en || {};
+  const park = cfg.parking?.available === false
+    ? (L === "he" ? "  אין חניה במלון." : "  The hotel has no parking.")
+    : renderFields(parkFields, L);
 
   if (lang === "he") {
     return `אתה הקונסיירז׳ הדיגיטלי של ${cfg.name_he}, מלון יוקרה 5 כוכבים.
@@ -212,16 +306,27 @@ function buildPrompt(session, lang) {
 - מחלקת התיקונים הטכניים נקראת תמיד *"אחזקה"* — לעולם אל תכתוב "תחזוקה"
 - השתמש ב-*bold* לדגש, אימוג׳י במידה
 
+💰 מחירים, שעות ופרטי שירות — חוק ברזל:
+- כל המידע על השירותים נמצא למטה, מסודר לפי שירות ולפי שדה מתויג.
+  ענה ממנו ישירות — זה בדיוק מה שהאורח שאל עליו. אל תפנה לקבלה על
+  משהו שכתוב כאן.
+- ⛔ לעולם אל תמציא, תעגל או תשער מחיר, שעה או מדיניות. צטט *בדיוק*
+  את מה שכתוב. אם משהו לא כתוב כאן — אמור שתבדוק והפנה לקבלה, אל תנחש.
+- כשיש כמה אפשרויות (למשל עיסוי 60 דקות מול 90 דקות) — הצג את
+  האפשרויות הרלוונטיות עם *השם המלא, המשך והמחיר יחד*, כדי שהאורח
+  יידע בדיוק מה הוא מזמין.
+
 מידע המלון:
 WiFi: רשת ${cfg.wifi.name} | סיסמה: ${cfg.wifi.password}
 צ׳ק אין: ${cfg.checkin_time} | צ׳ק אאוט: ${cfg.checkout_time}
 צ׳ק אין מוקדם: ${cfg.early_checkin ? "זמין בתיאום" : "לא זמין"}
 צ׳ק אאוט מאוחר: ${cfg.late_checkout ? "זמין בתיאום" : "לא זמין"}
 
-שירותים:
+שירותי המלון:
 ${svcs}
 
-חניה: ${park.type} — ${park.price}. ${park.note}
+▸ חניה
+${park}
 
 שאלות נפוצות:
 ${faqs}
@@ -271,16 +376,28 @@ Rules:
 - For out-of-scope requests, direct to reception at Ext. 0
 - Use *bold* for emphasis, emojis sparingly
 
+💰 Prices, hours and service details — hard rule:
+- All service information is below, organised per service with labelled fields.
+  Answer from it directly — it is exactly what the guest is asking about. Never
+  refer a guest to reception for something that is written here.
+- ⛔ Never invent, round or estimate a price, an opening hour or a policy. Quote
+  *exactly* what is written. If something isn't here, say you'll check and refer
+  to reception — do not guess.
+- When several options exist (e.g. a 60-minute versus a 90-minute massage),
+  present the relevant options with *the full name, duration and price together*,
+  so the guest knows exactly what they are booking.
+
 Hotel Information:
 WiFi: Network ${cfg.wifi.name} | Password: ${cfg.wifi.password}
 Check-in: ${cfg.checkin_time} | Check-out: ${cfg.checkout_time}
 Early check-in: ${cfg.early_checkin ? "Available upon request" : "Not available"}
 Late check-out: ${cfg.late_checkout ? "Available upon request" : "Not available"}
 
-Services:
+Hotel services:
 ${svcs}
 
-Parking: ${park.type} — ${park.price}. ${park.note}
+▸ Parking
+${park}
 
 FAQ:
 ${faqs}

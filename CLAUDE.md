@@ -54,7 +54,7 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
 | `checkin.js` | Check-in / deposit / folio (bill) / check-out logic. Stay dates (`stayCheckIn`/`stayCheckOut`/`nights`) + accepted terms version live on the reservation. Deposit amount + hotel strings come from `config.js`. | Works |
 | `checkin-routes.js` | Deposit / success / cancel / balance HTML pages + payment webhook. **All pages bilingual** — `pageLang()` picks HE/EN per guest (session → Accept-Language → HE), `shellPage()` is the shared HE/EN shell. | Works |
 | `state.js` | **In-memory state** (`sessions`, `staffAlerts`, `stats`). `getSession`, `pushHistory`, `patchSession`, `logAlert`. Comment even says "swap for Redis/DB in production". | Works, NOT persistent, NOT multi-tenant |
-| `config.js` | **Single hotel** config object (`hotelConfig`): identity, dept WhatsApp numbers, times, WiFi, services, parking, FAQ, welcome messages, `deposit_amount`, and `terms` (bilingual stay terms + `version`; sample text — replace per hotel in production). `updateConfig` mutates it globally (shallow, not persisted). | Works for 1 hotel only |
+| `config.js` | **Single hotel** config: `DEFAULTS` (in code) + `overrides` (persisted in DB, table `config`) → `hotelConfig = deepMerge(DEFAULTS, overrides)`. Identity, dept numbers/emails, times, WiFi, **detailed services** (spa treatments+prices, restaurant, gym, room service, laundry, pool, bar, breakfast), parking, FAQ, welcome, `deposit_amount`, `terms`. `updateConfig` deep-merges + persists. ⚠️ All service/price/policy data is **sample data** — every hotel replaces it. | Works for 1 hotel only |
 | `i18n.js` | `detectLang` / `detectLangSignal` (Hebrew unicode heuristic), `detectLanguageRequest` + `stripLanguageRequest` (בקשת מעבר שפה), `t` helper. | Works |
 | `validate.js` | אימות קלט האורח: שם (דוחה גם *מילות פקודה* כמו "I want to check in"), מספר הזמנה, תמונת ת"ז, **תאריכי שהייה** (`validateStayDates` — פרסור חופשי HE/EN) ו**אישור תנאים** (`validateTermsConfirmation` — דורש נוסח מפורש). + `stripInternalTags`. | Works |
 | `idverify/` | שכבת אימות זהות מבודדת. `vision.js` — בדיקת Claude vision אמיתית; `MockIdProvider` — אוכף `ACCEPTED_DOC_TYPES = {id_card, passport}` **בקוד** (לא רק ב-prompt) ושומר מקומית (דמו). רישיון נהיגה נדחה במפורש. נקודת החלפה אחת: `idverify/index.js`. | Works |
@@ -95,9 +95,10 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
   vehicle plate for parking, special requests. **Check-out** still lacks: invoice/receipt,
   minibar check, luggage storage, late-checkout offer, feedback.
 - No logging/monitoring, no rate-limiting, no Twilio request validation (security).
-- ~~No tests~~ **PARTIAL** — `e2e.test.mjs` (32 tests, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
-  תגים, זהות, **מדיניות סוגי מסמכים, תאריכי שהייה, אישור תנאים, ועקביות שפה מקצה לקצה**
-  (כולל רינדור עמוד האישור). עדיין חסרות בדיקות לצ'ק אאוט ולשכבת התשלום.
+- ~~No tests~~ **PARTIAL** — `e2e.test.mjs` (43 tests, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
+  תגים, זהות, **מדיניות סוגי מסמכים, תאריכי שהייה, אישור תנאים, עקביות שפה מקצה לקצה**
+  (כולל רינדור עמוד האישור), **המידע המובנה שמגיע ל-AI (system prompt), ומיזוג/שמירת הקונפיג**
+  (כולל ריסטארט אמיתי בתהליך נפרד). עדיין חסרות בדיקות לצ'ק אאוט ולשכבת התשלום.
 
 ### ID document storage (אחסון תעודות זהות)
 `idverify/MockIdProvider` שומר את התמונה ל-`id-documents/` (ב-`.gitignore`) —
@@ -203,13 +204,17 @@ Priority order (to be decided together):
 - [ ] **P2 — Harden:** Twilio webhook signature validation, rate limiting, idempotency/dedup of
       inbound webhooks, structured logging, remove the hardcoded room "304".
       (Done: currency → ILS; hotel name / deposit / WiFi / services now read from `config.js`.)
-- [ ] **P2 — Persist `hotelConfig`.** It is still in-memory only: `updateConfig` is a *shallow*
-      merge (posting `{services:{...}}` wipes the other services) and every edit is lost on
-      restart. Needed before anyone edits terms/prices through the API.
-- [ ] **P2 — Prompt loses labels for config values.** `buildPrompt` renders services with
-      `Object.values(s).join(" | ")`, so `{hours, massage_60}` reaches the AI as
-      "09:00–21:00 | ₪350" with no key names — it would have to guess which price is which.
-      Fix (use `Object.entries`) **before** adding spa/menu prices to `config.js`.
+- [x] **P2 — Persist `hotelConfig`.** Done: `config.js` now layers `DEFAULTS` (code) under
+      `overrides` (DB table `config`, per `hotel_id`). `updateConfig` deep-merges and persists —
+      survives restart; `{services:{spa:{he:{hours}}}}` no longer wipes the other services.
+      Only the *overrides* are stored, so new fields added in code still reach edited hotels.
+      Arrays are replaced wholesale (no index merging). `resetConfig()` + `POST /api/config/reset`
+      clear overrides. `__proto__`/`constructor` keys are dropped from patches.
+- [x] **P2 — Prompt loses labels for config values.** Done: `buildPrompt` renders every config
+      value through `renderFields`/`labelFor` — each value carries its label, list items keep
+      name+duration+price on one line, and an unmapped key falls back to its own name (so a new
+      config field reaches the AI with its meaning intact, no code change). `parking.available:
+      false` is now honoured instead of ignored.
 - [ ] **P2 — Remaining check-in/out data:** guests count, ETA, email, nationality/ID number,
       vehicle plate, special requests; check-out invoice, minibar check, luggage, feedback.
 - [x] **P2 — Make `getSession` side-effect free** (Bug #2). Done: `getSession` is now pure;

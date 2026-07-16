@@ -25,6 +25,7 @@ process.env.BASE_URL             = "http://test.local";
 const sent = [];            // כל ההודעות שנשלחו בוואטסאפ
 let aiReply = "שלום!";      // מה ש-Claude "יחזיר" בקריאה הבאה
 let aiCalls = 0;
+let aiParams = null;        // הפרמטרים של הקריאה האחרונה — כולל ה-system prompt
 
 mock.module("twilio", {
   exports: {
@@ -45,8 +46,9 @@ mock.module("@anthropic-ai/sdk", {
   exports: {
     default: class Anthropic {
       messages = {
-        create: async () => {
+        create: async (params) => {
           aiCalls++;
+          aiParams = params;
           return { content: [{ type: "text", text: aiReply }] };
         },
       };
@@ -77,10 +79,19 @@ const GUEST = "whatsapp:+972500000001";
 let phoneSeq = 0;
 function freshGuest() { return `whatsapp:+9725000000${String(++phoneSeq).padStart(2, "0")}`; }
 
-beforeEach(() => { sent.length = 0; aiCalls = 0; });
+beforeEach(() => { sent.length = 0; aiCalls = 0; aiParams = null; });
 
 const lastBody  = () => sent.at(-1)?.body ?? "";
 const allBodies = () => sent.map(s => s.body).join("\n---\n");
+
+// ה-system prompt שנשלח ל-Claude בקריאה האחרונה — כאן נבדק שהמידע
+// המובנה מה-config מגיע ל-AI שלם ומתויג.
+const lastSystem = () => aiParams?.system ?? "";
+async function askConcierge(question) {
+  const p = freshGuest();
+  await bot.handleIncoming(p, question);
+  return lastSystem();
+}
 const IMG = { url: "https://api.twilio.com/media/ME1", contentType: "image/jpeg" };
 
 // תאריכי שהייה עתידיים — נגזרים מ"היום" כדי שהבדיקות לא יפוגו עם הזמן.
@@ -587,6 +598,174 @@ test("תיקון 1: עמוד האישור מרונדר באנגלית, LTR, עם
   assert.match(html, /Check-in complete/);
   assert.match(html, /Welcome,<br>John Smith!/, "השם בצורה האנגלית, לא בתעתיק עברי");
   assert.ok(!/[֐-׿]/.test(html), `עברית דלפה לעמוד האישור: ${html.match(/[֐-׿].{0,40}/)?.[0]}`);
+});
+
+// ════════════════════════════════════════════════════════
+//  מידע מובנה → AI  (התקלה: המחירים "נעלמו בדרך")
+//  הרינדור הישן היה Object.values(...).join(" | "), ולכן הספא הגיע
+//  ל-AI כ-"09:00–21:00 | ₪350 | ₪480" — מספרים בלי שם שדה. ה-AI לא
+//  יכול היה לדעת איזה מחיר שייך לאיזה טיפול, ונתן לאורח מחיר שגוי.
+// ════════════════════════════════════════════════════════
+
+test("prompt: כל שדה מגיע ל-AI עם התווית שלו — לא ערכים ערומים", async () => {
+  const sys = await askConcierge("מה יש במלון?");
+
+  assert.match(sys, /שעות פעילות: 09:00–21:00/, "השעות מגיעות מתויגות");
+  assert.match(sys, /▸ הספא/, "לכל שירות יש כותרת בשם שלו");
+  assert.match(sys, /▸ מסעדת הגן/);
+  assert.match(sys, /▸ מרכז הכושר/);
+
+  // הרגרסיה עצמה: השרשור הישן הצמיד ערכים ללא מפתחות.
+  assert.ok(
+    !/09:00–21:00 \| ₪/.test(sys),
+    "ערכים ערומים משורשרים — זו בדיוק התקלה שתוקנה",
+  );
+});
+
+test("prompt: מחיר טיפול צמוד לשם ולמשך שלו — HE + EN", async () => {
+  const he = await askConcierge("כמה עולה עיסוי?");
+  assert.match(he, /עיסוי שוודי \| משך: 60 דקות \| מחיר: ₪350/);
+  assert.match(he, /עיסוי רקמות עומק \| משך: 90 דקות \| מחיר: ₪480/);
+  assert.match(he, /טיפול פנים \| משך: 50 דקות \| מחיר: ₪280/);
+
+  const en = await askConcierge("How much is a massage?");
+  assert.match(en, /Swedish massage \| Duration: 60 min \| Price: ₪350/);
+  assert.match(en, /Deep tissue massage \| Duration: 90 min \| Price: ₪480/);
+  assert.match(en, /Signature facial \| Duration: 50 min \| Price: ₪280/);
+});
+
+test("prompt: אותו שם טיפול בשני משכים → שני מחירים נפרדים, בלי בלבול", async () => {
+  const sys = await askConcierge("כמה עולה עיסוי שוודי?");
+  // 60 ו-90 דקות של אותו טיפול — כל אחד עם המחיר שלו על שורה משלו.
+  assert.match(sys, /עיסוי שוודי \| משך: 60 דקות \| מחיר: ₪350/);
+  assert.match(sys, /עיסוי שוודי \| משך: 90 דקות \| מחיר: ₪470/);
+});
+
+test("prompt: שעות המסעדה והמידע המלא מגיעים ל-AI", async () => {
+  const he = await askConcierge("מתי המסעדה פתוחה?");
+  assert.match(he, /ארוחת בוקר 07:00–11:00 \| צהריים 12:00–16:00 \| ערב 18:00–23:00/);
+  assert.match(he, /סוג מטבח: ים תיכונית ובינלאומית/);
+  assert.match(he, /טווח מחירים:.*₪90–₪180/);
+
+  const en = await askConcierge("When is the restaurant open?");
+  assert.match(en, /Breakfast 07:00–11:00 \| Lunch 12:00–16:00 \| Dinner 18:00–23:00/);
+  assert.match(en, /Cuisine: Mediterranean & International/);
+});
+
+test("prompt: שדה חדש ב-config מגיע ל-AI לבד — בלי לגעת בקוד", async () => {
+  const { updateConfig, resetConfig } = await import("./config.js");
+  try {
+    updateConfig({ services: { spa: { he: { rooftop_cabana: "₪700 ליום" } } } });
+    const sys = await askConcierge("מה יש בספא?");
+    // אין ל-rooftop_cabana תווית ב-FIELD_LABELS — הוא נופל לשם המפתח,
+    // אבל הערך *לא* מגיע ערום.
+    assert.match(sys, /rooftop cabana: ₪700 ליום/);
+  } finally {
+    resetConfig();
+  }
+});
+
+test("prompt: חניה מרונדרת מתויגת, ו-available:false באמת מסתיר אותה", async () => {
+  const { updateConfig, resetConfig } = await import("./config.js");
+  const sys = await askConcierge("יש חניה?");
+  assert.match(sys, /▸ חניה/);
+  assert.match(sys, /מחיר: ₪65 ללילה/);
+  assert.match(sys, /טעינת רכב חשמלי: 6 עמדות — ₪0\.60 לקוט"ש/);
+
+  try {
+    updateConfig({ parking: { available: false } });
+    const off = await askConcierge("יש חניה?");
+    assert.match(off, /אין חניה במלון/);
+    assert.ok(!/₪65 ללילה/.test(off), "מלון בלי חניה לא יציג מחיר חניה");
+  } finally {
+    resetConfig();
+  }
+});
+
+// ════════════════════════════════════════════════════════
+//  קונפיג — מיזוג עמוק + שמירה ל-DB
+// ════════════════════════════════════════════════════════
+
+test("config: מיזוג עמוק — עדכון שדה בודד לא מוחק את אחיו", async () => {
+  const { hotelConfig, updateConfig, resetConfig } = await import("./config.js");
+  const servicesBefore = Object.keys(hotelConfig.services).length;
+  try {
+    updateConfig({ services: { spa: { he: { hours: "10:00–23:00" } } } });
+    const { hotelConfig: cfg } = await import("./config.js");
+
+    assert.equal(cfg.services.spa.he.hours, "10:00–23:00", "השדה עודכן");
+    assert.equal(Object.keys(cfg.services).length, servicesBefore, "שאר השירותים שרדו (המיזוג השטוח היה מוחק אותם)");
+    assert.ok(cfg.services.restaurant?.he?.name, "המסעדה עדיין קיימת");
+    assert.ok(cfg.services.spa.he.treatments.length > 0, "רשימת הטיפולים של הספא שרדה");
+    assert.equal(cfg.services.spa.en.hours, "09:00–21:00, daily (last treatment starts at 20:00)", "האנגלית לא נגעה");
+    assert.ok(cfg.wifi.name, "שדות שורש שרדו");
+  } finally {
+    resetConfig();
+  }
+});
+
+test("config: מערך מוחלף כמכלול — לא ממוזג לפי אינדקס", async () => {
+  const { updateConfig, resetConfig } = await import("./config.js");
+  try {
+    updateConfig({ services: { spa: { he: { treatments: [{ name: "עיסוי תאילנדי", duration: "60 דקות", price: "₪400" }] } } } });
+    const { hotelConfig: cfg } = await import("./config.js");
+    assert.equal(cfg.services.spa.he.treatments.length, 1, "הרשימה הוחלפה, לא מוזגה");
+    assert.equal(cfg.services.spa.he.treatments[0].name, "עיסוי תאילנדי");
+  } finally {
+    resetConfig();
+  }
+});
+
+test("config: prototype pollution דרך ה-API נחסם", async () => {
+  const { updateConfig, resetConfig } = await import("./config.js");
+  try {
+    updateConfig(JSON.parse('{"__proto__":{"polluted":"yes"},"tagline":"ok"}'));
+    const { hotelConfig: cfg } = await import("./config.js");
+    assert.equal({}.polluted, undefined, "אסור שהפרוטוטייפ הגלובלי יזוהם");
+    assert.equal(cfg.tagline, "ok", "שדה תקין באותו patch כן נשמר");
+  } finally {
+    resetConfig();
+  }
+});
+
+// הטענה המרכזית של השינוי: עריכה כבר לא נמחקת בריסטארט. אי אפשר לבדוק
+// זאת בתוך התהליך (המודול כבר טעון בזיכרון) — ולכן מריצים שני תהליכי
+// node אמיתיים מעל אותו קובץ DB: אחד כותב, השני נולד מחדש וקורא.
+test("config: עריכה שורדת ריסטארט של התהליך", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const dbPath = path.join(os.tmpdir(), `hotel-cfg-restart-${process.pid}.db`);
+  const run = (code) => execFileSync(process.execPath, ["--input-type=module", "-e", code], {
+    env: { ...process.env, DB_PATH: dbPath }, encoding: "utf8", cwd: import.meta.dirname,
+  });
+
+  try {
+    run(`import { updateConfig } from "./config.js"; updateConfig({ services: { spa: { he: { hours: "10:00–23:00" } } } });`);
+
+    // תהליך חדש לגמרי — שום דבר בזיכרון, הכול מה-DB.
+    const out = run(`import { hotelConfig as c } from "./config.js";
+      console.log(JSON.stringify({
+        hours:      c.services.spa.he.hours,
+        services:   Object.keys(c.services).length,
+        treatments: c.services.spa.he.treatments.length,
+        wifi:       c.wifi.name,
+      }));`);
+    const got = JSON.parse(out.trim());
+
+    assert.equal(got.hours, "10:00–23:00", "העריכה שרדה את הריסטארט");
+    assert.equal(got.services, 8, "כל השירותים שרדו — ה-override לא החליף snapshot מלא");
+    assert.equal(got.treatments, 12, "רשימת הטיפולים מברירת המחדל שרדה");
+    assert.equal(got.wifi, "Kempinski_Guest", "שדות שלא נערכו מגיעים מברירות המחדל שבקוד");
+  } finally {
+    for (const suffix of ["", "-wal", "-shm"]) {
+      try { fs.unlinkSync(dbPath + suffix); } catch { /* ignore */ }
+    }
+  }
+});
+
+test("config: updateConfig דוחה קלט שאינו אובייקט", async () => {
+  const { updateConfig } = await import("./config.js");
+  assert.throws(() => updateConfig("not an object"), TypeError);
+  assert.throws(() => updateConfig(null), TypeError);
 });
 
 // ניקוי קובץ ה-DB הזמני
