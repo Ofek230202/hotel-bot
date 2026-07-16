@@ -54,7 +54,8 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
 | `checkin.js` | Check-in / deposit / folio (bill) / check-out logic. Stay dates (`stayCheckIn`/`stayCheckOut`/`nights`) + accepted terms version live on the reservation. Deposit amount + hotel strings come from `config.js`. | Works |
 | `checkin-routes.js` | Deposit / success / cancel / balance HTML pages + payment webhook. **All pages bilingual** — `pageLang()` picks HE/EN per guest (session → Accept-Language → HE), `shellPage()` is the shared HE/EN shell. | Works |
 | `state.js` | **In-memory state** (`sessions`, `staffAlerts`, `stats`). `getSession`, `pushHistory`, `patchSession`, `logAlert`. Comment even says "swap for Redis/DB in production". | Works, NOT persistent, NOT multi-tenant |
-| `config.js` | **Single hotel** config: `DEFAULTS` (in code) + `overrides` (persisted in DB, table `config`) → `hotelConfig = deepMerge(DEFAULTS, overrides)`. Identity, dept numbers/emails, times, WiFi, **detailed services** (spa treatments+prices, restaurant, gym, room service, laundry, pool, bar, breakfast), parking, FAQ, welcome, `deposit_amount`, `terms`. `updateConfig` deep-merges + persists. ⚠️ All service/price/policy data is **sample data** — every hotel replaces it. | Works for 1 hotel only |
+| `config.js` | **Single hotel** config: `DEFAULTS` (in code) + `overrides` (persisted in DB, table `config`) → `hotelConfig = deepMerge(DEFAULTS, overrides)`. Identity, dept numbers/emails, times, WiFi, **detailed services** (spa treatments+prices, restaurant, gym, room service, laundry, pool, bar, breakfast), parking, **`local_area`** (concierge knowledge *outside* the hotel: nearby restaurants, attractions, tours, nightlife, shopping, transport), FAQ, welcome, `deposit_amount`, `terms`. `updateConfig` deep-merges + persists. ⚠️ All service/price/policy/area data is **sample data** — every hotel replaces it. | Works for 1 hotel only |
+| `concierge/` | שכבת בקשות הקונסיירז' המבודדת. `ConciergeProvider` — הממשק + `REQUEST_TYPES` (taxi/restaurant/spa/tour/transfer/rental/gift/other); `MockConciergeProvider` — מקצה אסמכתא (`CNG-XXXXXX`) ומחזיר `status:"received"`, **לא מזמין כלום בפועל** — הביצוע הוא של הקונסיירז' האנושי שמקבל את ההתראה. נקודת החלפה אחת: `concierge/index.js`. | Works (mock) |
 | `i18n.js` | `detectLang` / `detectLangSignal` (Hebrew unicode heuristic), `detectLanguageRequest` + `stripLanguageRequest` (בקשת מעבר שפה), `t` helper. | Works |
 | `validate.js` | אימות קלט האורח: שם (דוחה גם *מילות פקודה* כמו "I want to check in"), מספר הזמנה, תמונת ת"ז, **תאריכי שהייה** (`validateStayDates` — פרסור חופשי HE/EN) ו**אישור תנאים** (`validateTermsConfirmation` — דורש נוסח מפורש). + `stripInternalTags`. | Works |
 | `idverify/` | שכבת אימות זהות מבודדת. `vision.js` — בדיקת Claude vision אמיתית; `MockIdProvider` — אוכף `ACCEPTED_DOC_TYPES = {id_card, passport}` **בקוד** (לא רק ב-prompt) ושומר מקומית (דמו). רישיון נהיגה נדחה במפורש. נקודת החלפה אחת: `idverify/index.js`. | Works |
@@ -65,6 +66,15 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
 ### What WORKS today
 - WhatsApp in/out via Twilio.
 - Bilingual AI concierge answers (Claude `claude-sonnet-4-6`).
+- **Full concierge role** — not just a receptionist: local recommendations (restaurants,
+  attractions, tours, nightlife, shopping) sourced *only* from `config.local_area`, arranging
+  requests (taxi, table, spa, tour, rental, gifts/special requests) via
+  `[CONCIERGE:<type>|<details>]` → `concierge/` layer, and proactive luxury-hotel closing offers.
+  The prompt forbids promising a booking is *done* — the mock only passes the request to a human,
+  so the bot says "I've passed it on", never "your table is reserved".
+- **WhatsApp-clean output** — markdown tables are banned in the prompt (WhatsApp can't render
+  them; guests saw `|---|---|`). Lists render as `• *name* (duration) — price`, and a
+  conditional price (e.g. couples massage = for two people) must be spelled out in words.
 - AI-driven department routing via internal `[HK:...]` / `[MAINTENANCE:...]` / `[CONCIERGE:...]` /
   `[RECEPTION:...]` tags → `notifyStaff` sends WhatsApp to the dept + logs an alert.
 - Check-in **conversation** state machine: name → reservation → **stay dates** → ID → **terms
@@ -95,7 +105,7 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
   vehicle plate for parking, special requests. **Check-out** still lacks: invoice/receipt,
   minibar check, luggage storage, late-checkout offer, feedback.
 - No logging/monitoring, no rate-limiting, no Twilio request validation (security).
-- ~~No tests~~ **PARTIAL** — `e2e.test.mjs` (43 tests, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
+- ~~No tests~~ **PARTIAL** — `e2e.test.mjs` (54 tests, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
   תגים, זהות, **מדיניות סוגי מסמכים, תאריכי שהייה, אישור תנאים, עקביות שפה מקצה לקצה**
   (כולל רינדור עמוד האישור), **המידע המובנה שמגיע ל-AI (system prompt), ומיזוג/שמירת הקונפיג**
   (כולל ריסטארט אמיתי בתהליך נפרד). עדיין חסרות בדיקות לצ'ק אאוט ולשכבת התשלום.
@@ -217,13 +227,23 @@ Priority order (to be decided together):
       false` is now honoured instead of ignored.
 - [ ] **P2 — Remaining check-in/out data:** guests count, ETA, email, nationality/ID number,
       vehicle plate, special requests; check-out invoice, minibar check, luggage, feedback.
+- [x] **P2 — Full concierge (recommendations + arranging).** Done: `config.local_area` holds the
+      area knowledge (per-hotel, bilingual, same labelled rendering as `services` — a new category
+      reaches the AI with no code change). `concierge/` is the isolated request layer with a mock.
+      ⚠️ Sample area data — every hotel replaces it with places it actually stands behind.
+- [ ] **P2 — Real concierge integrations.** The mock only assigns a reference and hands off to a
+      human. Wire real providers (taxi API, Tabit/OpenTable, spa/PMS, florist) in **one place** —
+      `concierge/index.js` — including per-type routing. Only then may the bot tell a guest a
+      booking is *confirmed* (`status: "confirmed"`); until then it says "passed to the concierge".
 - [x] **P2 — Make `getSession` side-effect free** (Bug #2). Done: `getSession` is now pure;
       per-message counting moved to `recordActivity`, called once in `handleIncoming`.
 - [ ] **P2 — Full payment policy** (see §1): charge for the stay itself, advances/deposits
       (מקדמות) at booking, and payment at reception on a different card — all through the existing
       `payments/` abstraction. (Documented only; not built yet.)
-- [ ] **P3 — Tests** — done for check-in / input validation / language / tags / ID
-      (`e2e.test.mjs`, `npm test`). Still missing: check-out state machine + payment provider.
+- [ ] **P3 — Tests** — done for check-in / input validation / language / tags / ID /
+      **service rendering + concierge (area knowledge, request types, provider failure)**
+      (`e2e.test.mjs`, 54 tests, `npm test`). Still missing: check-out state machine + payment
+      provider.
 
 ### שפה — עקביות מקצה לקצה (ממומש)
 אורח שפתח באנגלית מקבל אנגלית ב**כל** נקודה: כל שלבי הצ'אט, עמוד הפיקדון, **עמוד האישור**

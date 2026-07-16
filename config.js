@@ -199,6 +199,10 @@ const DEFAULTS = {
         location:       "Level 3",
         booking:        "Ask me and I'll arrange it for you, or dial Ext. 205",
         booking_notice: "We recommend booking 24 hours ahead; same-day treatments are subject to availability",
+        // ⚠️ כלל שנוגע לאיך שהמחיר נקרא לאורח: מחיר טיפול הוא *לאדם אחד*,
+        //    אלא אם הפריט אומר אחרת ב-note. בלי המשפט הזה ה-AI הציג "₪680"
+        //    ליד "עיסוי זוגי" בלי הקשר, והאורח קרא את זה כמחיר לאדם.
+        price_note:     "Every price below is for one person, unless the treatment says otherwise",
         treatments: [
           { name: "Swedish massage",       duration: "60 min", price: "₪350" },
           { name: "Swedish massage",       duration: "90 min", price: "₪470" },
@@ -206,7 +210,8 @@ const DEFAULTS = {
           { name: "Deep tissue massage",   duration: "90 min", price: "₪480" },
           { name: "Aromatherapy massage",  duration: "60 min", price: "₪380" },
           { name: "Hot stone massage",     duration: "75 min", price: "₪450" },
-          { name: "Couples massage",       duration: "60 min", price: "₪680", note: "Price is for two people, in a private suite" },
+          { name: "Couples massage",       duration: "60 min", price: "₪680",
+            note: "For two people together — two therapists working side by side in our couples treatment room. ₪680 total, i.e. ₪340 per person" },
           { name: "Signature facial",      duration: "50 min", price: "₪280" },
           { name: "Anti-aging facial",     duration: "75 min", price: "₪420" },
           { name: "Body scrub & wrap",     duration: "45 min", price: "₪320" },
@@ -224,14 +229,17 @@ const DEFAULTS = {
         location:       "קומה 3",
         booking:        "אפשר לבקש ממני לתאם, או שלוחה 205",
         booking_notice: "מומלץ להזמין 24 שעות מראש; טיפולים באותו יום כפופים לזמינות",
+        // ⚠️ ראה ההערה בגרסה האנגלית — המחיר הוא לאדם אחד אלא אם נכתב אחרת.
+        price_note:     "כל המחירים למטה הם לאדם אחד, אלא אם כתוב אחרת בטיפול עצמו",
         treatments: [
           { name: "עיסוי שוודי",          duration: "60 דקות", price: "₪350" },
           { name: "עיסוי שוודי",          duration: "90 דקות", price: "₪470" },
-          { name: "עיסוי רקמות עומק",     duration: "60 דקות", price: "₪390" },
-          { name: "עיסוי רקמות עומק",     duration: "90 דקות", price: "₪480" },
+          { name: "עיסוי רקמות עמוק",     duration: "60 דקות", price: "₪390" },
+          { name: "עיסוי רקמות עמוק",     duration: "90 דקות", price: "₪480" },
           { name: "עיסוי ארומתרפי",       duration: "60 דקות", price: "₪380" },
           { name: "עיסוי אבנים חמות",     duration: "75 דקות", price: "₪450" },
-          { name: "עיסוי זוגי",           duration: "60 דקות", price: "₪680", note: "המחיר לשני אנשים, בסוויטה פרטית" },
+          { name: "עיסוי זוגי",           duration: "60 דקות", price: "₪680",
+            note: "לשני אנשים יחד — שני מטפלים במקביל, בחדר טיפולים זוגי. ₪680 סה\"כ, כלומר ₪340 לאדם" },
           { name: "טיפול פנים",           duration: "50 דקות", price: "₪280" },
           { name: "טיפול פנים אנטי-אייג'ינג", duration: "75 דקות", price: "₪420" },
           { name: "פילינג ועטיפת גוף",    duration: "45 דקות", price: "₪320" },
@@ -360,6 +368,183 @@ const DEFAULTS = {
     },
   },
 
+  // ── Local area (ידע הקונסיירז' על הסביבה) ─────────────
+  // ⚠️⚠️ נתוני דמו במלואם — מלון, מסעדות, מחירים ומרחקים בדויים ⚠️⚠️
+  //
+  // זה מקור הידע היחיד של הקונסיירז' על *מחוץ* למלון. הבוט מצטט מכאן
+  // לאורח כעובדה ("10 דקות הליכה, ₪90–₪140 לסועד") — בדיוק כמו services.
+  // מלון אמיתי חייב להחליף את כל הסעיף בהמלצות שהוא באמת עומד מאחוריהן.
+  //
+  // המבנה זהה ל-services: אובייקט שטוח של שדות + רשימות של פריטים. כל
+  // שדה מגיע ל-AI עם התווית שלו (buildPrompt → renderFields ב-bot.js),
+  // ולכן אפשר להוסיף כאן קטגוריה חדשה ("גלריות", "ספורט") בלי לגעת בקוד.
+  //
+  // 💡 `tip` הוא השדה שהופך רשימה להמלצה אישית — זה מה שקונסיירז' אנושי
+  //    היה אומר בשקט מעבר לדלפק. בלעדיו הבוט רק מקריא מדריך טלפונים.
+  local_area: {
+    en: {
+      neighbourhood:
+        "The hotel sits between the beachfront promenade and the old city centre — a five-minute walk to the sea, " +
+        "and inside a quarter full of restaurants, bars, boutiques and galleries",
+
+      restaurants: [
+        { name: "Yam", cuisine: "Seafood, contemporary Israeli", distance: "6 min walk",
+          price_range: "₪140–₪220 per diner", good_for: "A special evening, sunset over the sea",
+          tip: "Ask for a table on the upper terrace — I'll note it on the reservation" },
+        { name: "Sofia", cuisine: "Italian, wood-fired oven", distance: "10 min walk",
+          price_range: "₪90–₪140 per diner", good_for: "Families, a relaxed dinner",
+          tip: "Warm and noisy in the best way; the kids' pizza is made to order" },
+        { name: "Aleph", cuisine: "Levantine small plates", distance: "12 min walk",
+          price_range: "₪80–₪130 per diner", good_for: "Couples, a lively evening",
+          tip: "No reservations before 19:00 — go early or let me get you on the list" },
+        { name: "Nur", cuisine: "Vegetarian & vegan", distance: "8 min walk",
+          price_range: "₪70–₪110 per diner", good_for: "Lunch, plant-based dining",
+          tip: "Everything on the menu is vegan; the mushroom dish is the one to order" },
+        { name: "Beit Kaffe", cuisine: "Café, breakfast and light meals", distance: "4 min walk",
+          price_range: "₪45–₪80 per diner", good_for: "A late breakfast, a working morning",
+          tip: "Open from 07:00 and quiet before 09:00 — the best coffee in the quarter" },
+      ],
+
+      attractions: [
+        { name: "The beachfront promenade", distance: "5 min walk", hours: "Open at all hours", price: "Free",
+          good_for: "A walk, sunset, running", tip: "Most beautiful in the hour before sunset" },
+        { name: "The old port", distance: "15 min walk / 5 min by taxi", hours: "Shops 10:00–22:00", price: "Free entry",
+          good_for: "Strolling, shopping, restaurants", tip: "A farmers' market runs there every Friday morning" },
+        { name: "Museum of Art", distance: "10 min by taxi", hours: "Sun–Thu 10:00–18:00, Fri 10:00–14:00, closed Sat",
+          price: "₪50 per adult, free under 18", good_for: "A rainy day, a quiet morning" },
+        { name: "The market quarter", distance: "12 min walk", hours: "Sun–Fri 08:00–16:00, closed Sat",
+          price: "Free", good_for: "Food, atmosphere, gifts", tip: "Come hungry and go before 11:00, before the crowds" },
+        { name: "The old city walls", distance: "20 min by taxi", hours: "Open at all hours", price: "Free",
+          good_for: "History, a view, photography" },
+      ],
+
+      tours: [
+        { name: "Guided walking tour of the old city", duration: "3 hours", price: "₪180 per person",
+          note: "Departs daily at 09:00 from the hotel lobby, in English or Hebrew — book by 20:00 the evening before" },
+        { name: "Day trip to Jerusalem", duration: "Full day, 08:00–18:00", price: "₪450 per person",
+          note: "Private driver-guide, hotel pick-up and drop-off. 24 hours' notice" },
+        { name: "Dead Sea day trip", duration: "Full day, 08:00–19:00", price: "₪520 per person",
+          note: "Includes entrance to a beach and spa. 24 hours' notice" },
+        { name: "Food tour of the market", duration: "2.5 hours", price: "₪290 per person",
+          note: "Eight tastings, runs Sun–Thu at 10:00. Vegetarian option on request" },
+        { name: "Private tour, built around you", duration: "By arrangement", price: "From ₪1,400 per day for up to 4 people",
+          note: "Tell me what interests you and I'll match a guide. 48 hours' notice" },
+      ],
+
+      nightlife: [
+        { name: "Sky Bar (in the hotel)", type: "Cocktail bar, rooftop", hours: "17:00–01:00",
+          note: "Level 12 — the view is the reason to go" },
+        { name: "The Basement", type: "Live music, jazz and blues", distance: "9 min walk",
+          hours: "21:00–02:00, Wed–Sat", note: "Shows start at 22:00; I can hold a table" },
+        { name: "Port Bars", type: "Bar quarter", distance: "5 min by taxi", hours: "20:00–03:00",
+          note: "A whole strip of bars — lively, young, walkable between them" },
+        { name: "Café Levant", type: "Wine bar, quiet", distance: "7 min walk", hours: "18:00–00:00",
+          note: "For a conversation rather than a night out — small and calm" },
+      ],
+
+      shopping: [
+        { name: "The main boulevard", type: "Boutiques, Israeli designers", distance: "8 min walk",
+          hours: "Sun–Thu 10:00–20:00, Fri until 14:00, closed Sat" },
+        { name: "The shopping centre", type: "Mall — international brands", distance: "10 min by taxi",
+          hours: "Sun–Thu 09:30–21:30, Fri until 15:00, Sat from sunset" },
+        { name: "The craft market", type: "Jewellery, ceramics, art", distance: "12 min walk",
+          hours: "Tue & Fri 10:00–17:00", note: "Bring cash — not every stall takes cards" },
+        { name: "The old port shops", type: "Home, fashion, gifts", distance: "15 min walk",
+          hours: "10:00–22:00, daily" },
+      ],
+
+      transport: {
+        taxi: "Ask me and I'll order one for you — a taxi is at the entrance within 5–10 minutes. To the airport ₪180–₪250, within the city ₪25–₪60",
+        airport: "Ben Gurion Airport — 35–50 minutes by car depending on traffic. Private transfer from ₪180, book 24 hours ahead",
+        public_transport: "Bus stop 3 minutes from the hotel; the train station is 10 minutes by taxi. Note: public transport does not run from Friday afternoon to Saturday evening",
+        car_rental: "Rental desks are 10 minutes away; I can arrange delivery of a car to the hotel with 24 hours' notice",
+        bikes: "City bike share — a docking station right outside the hotel, ₪17 per day",
+        walking: "The city centre, the beach and the market are all within a 15-minute walk",
+      },
+    },
+
+    he: {
+      neighbourhood:
+        "המלון ממוקם בין טיילת החוף למרכז העיר העתיקה — חמש דקות הליכה מהים, " +
+        "בתוך רובע מלא במסעדות, ברים, בוטיקים וגלריות",
+
+      restaurants: [
+        { name: "ים", cuisine: "דגים ופירות ים, ישראלית עכשווית", distance: "6 דקות הליכה",
+          price_range: "₪140–₪220 לסועד", good_for: "ערב מיוחד, שקיעה מול הים",
+          tip: "כדאי לבקש שולחן במרפסת העליונה — אציין את זה בהזמנה" },
+        { name: "סופיה", cuisine: "איטלקית, טאבון", distance: "10 דקות הליכה",
+          price_range: "₪90–₪140 לסועד", good_for: "משפחות, ארוחת ערב רגועה",
+          tip: "חם ורועש במובן הטוב; פיצה לילדים מוכנה בהזמנה" },
+        { name: "אלף", cuisine: "מנות קטנות, מטבח לבנטיני", distance: "12 דקות הליכה",
+          price_range: "₪80–₪130 לסועד", good_for: "זוגות, ערב תוסס",
+          tip: "לא מקבלים הזמנות לפני 19:00 — או להגיע מוקדם, או שאסדר מקום ברשימה" },
+        { name: "נור", cuisine: "צמחוני וטבעוני", distance: "8 דקות הליכה",
+          price_range: "₪70–₪110 לסועד", good_for: "צהריים, אוכל מהצומח",
+          tip: "כל התפריט טבעוני; מנת הפטריות היא זו שכדאי להזמין" },
+        { name: "בית קפה", cuisine: "בית קפה, בקרים וארוחות קלות", distance: "4 דקות הליכה",
+          price_range: "₪45–₪80 לסועד", good_for: "בוקר מאוחר, בוקר עבודה",
+          tip: "פתוח מ-07:00 ושקט לפני 09:00 — הקפה הכי טוב ברובע" },
+      ],
+
+      attractions: [
+        { name: "טיילת החוף", distance: "5 דקות הליכה", hours: "פתוח בכל שעה", price: "ללא תשלום",
+          good_for: "הליכה, שקיעה, ריצה", tip: "הכי יפה בשעה שלפני השקיעה" },
+        { name: "הנמל הישן", distance: "15 דקות הליכה / 5 דקות במונית", hours: "החנויות 10:00–22:00",
+          price: "כניסה חופשית", good_for: "בילוי, קניות, מסעדות", tip: "כל יום שישי בבוקר יש שם שוק איכרים" },
+        { name: "מוזיאון לאמנות", distance: "10 דקות במונית", hours: "א'–ה' 10:00–18:00, ו' 10:00–14:00, סגור בשבת",
+          price: "₪50 למבוגר, חינם עד גיל 18", good_for: "יום גשום, בוקר שקט" },
+        { name: "רובע השוק", distance: "12 דקות הליכה", hours: "א'–ו' 08:00–16:00, סגור בשבת",
+          price: "ללא תשלום", good_for: "אוכל, אווירה, מתנות", tip: "להגיע רעבים ולפני 11:00, לפני העומס" },
+        { name: "חומות העיר העתיקה", distance: "20 דקות במונית", hours: "פתוח בכל שעה", price: "ללא תשלום",
+          good_for: "היסטוריה, נוף, צילום" },
+      ],
+
+      tours: [
+        { name: "סיור מודרך רגלי בעיר העתיקה", duration: "3 שעות", price: "₪180 לאדם",
+          note: "יוצא כל יום ב-09:00 מלובי המלון, בעברית או באנגלית — להזמין עד 20:00 בערב הקודם" },
+        { name: "טיול יום לירושלים", duration: "יום מלא, 08:00–18:00", price: "₪450 לאדם",
+          note: "נהג-מדריך פרטי, איסוף והחזרה למלון. בהתראה של 24 שעות" },
+        { name: "טיול יום לים המלח", duration: "יום מלא, 08:00–19:00", price: "₪520 לאדם",
+          note: "כולל כניסה לחוף ולספא. בהתראה של 24 שעות" },
+        { name: "סיור קולינרי בשוק", duration: "שעתיים וחצי", price: "₪290 לאדם",
+          note: "שמונה טעימות, יוצא א'–ה' ב-10:00. אפשרות צמחונית בתיאום" },
+        { name: "סיור פרטי בהתאמה אישית", duration: "בתיאום", price: "החל מ-₪1,400 ליום עד 4 אנשים",
+          note: "ספר/י לי מה מעניין אותך ואתאים מדריך. בהתראה של 48 שעות" },
+      ],
+
+      nightlife: [
+        { name: "סקיי בר (במלון)", type: "בר קוקטיילים, על הגג", hours: "17:00–01:00",
+          note: "קומה 12 — הנוף הוא הסיבה לעלות" },
+        { name: "המרתף", type: "מוזיקה חיה, ג'אז ובלוז", distance: "9 דקות הליכה",
+          hours: "21:00–02:00, ד'–ש'", note: "ההופעות מתחילות ב-22:00; אוכל לשריין שולחן" },
+        { name: "ברי הנמל", type: "רובע ברים", distance: "5 דקות במונית", hours: "20:00–03:00",
+          note: "רצועה שלמה של ברים — תוססת, צעירה, אפשר לעבור ביניהם ברגל" },
+        { name: "קפה לבנט", type: "בר יין, שקט", distance: "7 דקות הליכה", hours: "18:00–00:00",
+          note: "לשיחה ולא ליציאה — קטן ורגוע" },
+      ],
+
+      shopping: [
+        { name: "השדרה הראשית", type: "בוטיקים, מעצבים ישראלים", distance: "8 דקות הליכה",
+          hours: "א'–ה' 10:00–20:00, ו' עד 14:00, סגור בשבת" },
+        { name: "הקניון", type: "קניון — מותגים בינלאומיים", distance: "10 דקות במונית",
+          hours: "א'–ה' 09:30–21:30, ו' עד 15:00, שבת מצאת השבת" },
+        { name: "שוק האומנים", type: "תכשיטים, קרמיקה, אמנות", distance: "12 דקות הליכה",
+          hours: "ג' ו-ו' 10:00–17:00", note: "כדאי מזומן — לא בכל דוכן יש אשראי" },
+        { name: "חנויות הנמל הישן", type: "בית, אופנה, מתנות", distance: "15 דקות הליכה",
+          hours: "10:00–22:00, כל יום" },
+      ],
+
+      transport: {
+        taxi: "אפשר לבקש ממני להזמין — המונית מגיעה לכניסה תוך 5–10 דקות. לנתב\"ג ₪180–₪250, בתוך העיר ₪25–₪60",
+        airport: "נתב\"ג — 35–50 דקות ברכב, תלוי בעומס. הסעה פרטית החל מ-₪180, בהזמנה 24 שעות מראש",
+        public_transport: "תחנת אוטובוס 3 דקות מהמלון; תחנת הרכבת 10 דקות במונית. לתשומת לב: אין תחבורה ציבורית מיום שישי בצהריים ועד מוצאי שבת",
+        car_rental: "משרדי השכרת רכב במרחק 10 דקות; אפשר לתאם הגעת רכב למלון בהתראה של 24 שעות",
+        bikes: "אופניים שיתופיים — עמדה ממש מחוץ למלון, ₪17 ליום",
+        walking: "מרכז העיר, החוף והשוק — כולם בטווח של עד 15 דקות הליכה",
+      },
+    },
+  },
+
   // ── FAQ ───────────────────────────────────────────────
   // ⚠️ נתוני דוגמה — להחלפה במדיניות האמיתית של המלון.
   faq: [
@@ -397,29 +582,31 @@ const DEFAULTS = {
   welcome: {
     en: `Welcome to *Kempinski Hotel* ✨
 
-I'm your personal AI concierge, available 24/7.
+I'm your personal concierge, here around the clock.
 
-I can help you with:
-🏨 Check-in & Check-out
-🍳 Dining & reservations
-🏊 Pool, Spa & Gym
-🅿️ Parking
-🛎️ Housekeeping requests
-💡 Any question about your stay
+I'm happy to help with:
+🏨 Check-in & check-out
+🍳 Dining, and a table booked for you anywhere
+🗺️ Recommendations — restaurants, attractions, tours, nightlife, shopping
+🚕 A taxi, a transfer, a spa treatment, a special request
+🏊 Pool, spa & gym
+🛎️ Housekeeping & maintenance
+💡 Anything at all about your stay
 
 How may I assist you today?`,
 
     he: `ברוכים הבאים ל*מלון קמפינסקי* ✨
 
-אני הקונסיירז' הדיגיטלי שלכם, זמין 24/7.
+אני הקונסיירז' האישי שלכם, כאן מסביב לשעון.
 
-אוכל לעזור לכם ב:
+אשמח לעזור ב:
 🏨 צ'ק אין וצ'ק אאוט
-🍳 מסעדה והזמנות
+🍳 מסעדה, והזמנת שולחן עבורכם בכל מקום
+🗺️ המלצות — מסעדות, אטרקציות, טיולים, חיי לילה, קניות
+🚕 מונית, הסעה, טיפול בספא, בקשה מיוחדת
 🏊 בריכה, ספא וחדר כושר
-🅿️ חניה
-🛎️ בקשות ניקיון ואחזקה
-💡 כל שאלה על שהייתכם
+🛎️ ניקיון ואחזקה
+💡 כל שאלה על השהייה שלכם
 
 במה אוכל לעזור?`,
   },
