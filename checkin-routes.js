@@ -214,11 +214,11 @@ function successPage(reservation, roomNumber, lang = "he") {
 // ── עמוד שגיאה — דו-לשוני ──────────────────────────────
 const ERRORS = {
   no_reservation: {
-    he: { title: "לא נמצאה הזמנה", body: "לא הצלחנו לאתר את ההזמנה. אנא פנה/י לקבלה ונשמח לסייע." },
+    he: { title: "לא נמצאה הזמנה", body: "לא הצלחנו לאתר את ההזמנה. אפשר לפנות לקבלה ונשמח לסייע." },
     en: { title: "Reservation not found", body: "We couldn't locate this reservation. Please contact reception and we'll be glad to help." },
   },
   no_balance: {
-    he: { title: "אין יתרה לתשלום", body: "לא נמצאה יתרה פתוחה. אנא פנה/י לקבלה לכל בירור." },
+    he: { title: "אין יתרה לתשלום", body: "לא נמצאה יתרה פתוחה. אפשר לפנות לקבלה לכל בירור." },
     en: { title: "No balance due", body: "No open balance was found. Please contact reception with any question." },
   },
 };
@@ -609,7 +609,7 @@ function cancelPage(lang = "he") {
     title: he ? "אישור הפיקדון בוטל" : "Deposit cancelled",
     body: `<h1>${he ? "אישור הפיקדון בוטל" : "Deposit confirmation cancelled"}</h1>
   <p class="welcome">${he
-      ? "לא בוצעה הקפאת פיקדון ולא בוצע חיוב.<br>חזור/חזרי לוואטסאפ כדי לנסות שוב, או פנה/פני לקבלה."
+      ? "לא בוצעה הקפאת פיקדון ולא בוצע חיוב.<br>אפשר לחזור לוואטסאפ ולנסות שוב, או לפנות לקבלה."
       : "No deposit hold was placed and nothing was charged.<br>Head back to WhatsApp to try again, or contact reception."}</p>
   <a href="https://wa.me/14155238886" class="back-btn">${he ? "💬 חזור לצ'אט" : "💬 Back to chat"}</a>`,
   });

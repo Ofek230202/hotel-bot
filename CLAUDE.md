@@ -57,7 +57,7 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
 | `config.js` | **Single hotel** config: `DEFAULTS` (in code) + `overrides` (persisted in DB, table `config`) → `hotelConfig = deepMerge(DEFAULTS, overrides)`. Identity, dept numbers/emails, times, WiFi, **detailed services** (spa treatments+prices, restaurant, gym, room service, laundry, pool, bar, breakfast), parking, **`local_area`** (concierge knowledge *outside* the hotel: nearby restaurants, attractions, tours, nightlife, shopping, transport), FAQ, welcome, `deposit_amount`, `terms`. `updateConfig` deep-merges + persists. ⚠️ All service/price/policy/area data is **sample data** — every hotel replaces it. | Works for 1 hotel only |
 | `concierge/` | שכבת בקשות הקונסיירז' המבודדת. `ConciergeProvider` — הממשק + `REQUEST_TYPES` (taxi/restaurant/spa/tour/transfer/rental/gift/other); `MockConciergeProvider` — מקצה אסמכתא (`CNG-XXXXXX`) ומחזיר `status:"received"`, **לא מזמין כלום בפועל** — הביצוע הוא של הקונסיירז' האנושי שמקבל את ההתראה. נקודת החלפה אחת: `concierge/index.js`. | Works (mock) |
 | `i18n.js` | `detectLang` / `detectLangSignal` (Hebrew unicode heuristic), `detectLanguageRequest` + `stripLanguageRequest` (בקשת מעבר שפה), `t` helper. | Works |
-| `validate.js` | אימות קלט האורח: שם (דוחה גם *מילות פקודה* כמו "I want to check in"), מספר הזמנה, תמונת ת"ז, **תאריכי שהייה** (`validateStayDates` — פרסור חופשי HE/EN) ו**אישור תנאים** (`validateTermsConfirmation` — דורש נוסח מפורש). + `stripInternalTags`. | Works |
+| `validate.js` | אימות קלט האורח: שם (דוחה גם *מילות פקודה* כמו "I want to check in"), מספר הזמנה, תמונת ת"ז, **תאריכי שהייה** (`validateStayDates` — פרסור חופשי HE/EN **מבוסס-תפקיד**: "עד"/"until" לפני תאריך = עזיבה) ו**אישור תנאים** (`validateTermsConfirmation` — דורש נוסח מפורש). + `stripInternalTags` (כולל תג **קטוע**). | Works |
 | `idverify/` | שכבת אימות זהות מבודדת. `vision.js` — בדיקת Claude vision אמיתית; `MockIdProvider` — אוכף `ACCEPTED_DOC_TYPES = {id_card, passport}` **בקוד** (לא רק ב-prompt) ושומר מקומית (דמו). רישיון נהיגה נדחה במפורש. נקודת החלפה אחת: `idverify/index.js`. | Works |
 | `e2e.test.mjs` | בדיקות end-to-end לזרימת הצ'ק אין, השפה, התגים והזהות (`npm test`). | Works |
 | `index.html` (50KB) | Standalone dashboard/landing UI. | Present, not wired into the server flow as a tracked file |
@@ -77,9 +77,16 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
   conditional price (e.g. couples massage = for two people) must be spelled out in words.
 - AI-driven department routing via internal `[HK:...]` / `[MAINTENANCE:...]` / `[CONCIERGE:...]` /
   `[RECEPTION:...]` tags → `notifyStaff` sends WhatsApp to the dept + logs an alert.
-- Check-in **conversation** state machine: name → reservation → **stay dates** → ID → **terms
-  acceptance** → deposit. Every stage has exactly one phrasing source (`promptStage`), so a
-  mid-flow language switch re-sends the *current* stage in the new language.
+- Check-in **conversation** state machine: name → reservation → **stay dates** → **date
+  confirmation** → ID → **terms acceptance** → deposit. Every stage has exactly one phrasing
+  source (`promptStage`), so a mid-flow language switch re-sends the *current* stage in the new
+  language.
+- **Stay dates are role-based, never positional, and always confirmed.** "4 לילות עד ה-21/7"
+  means check-*out* on 21/7 and check-*in* on 17/7 — the word before the date ("עד"/"until"/
+  "מ-"/"from") decides the role; position is only the fallback ("20/7 - 23/7"). Ambiguous or
+  self-contradicting input (`ambiguous` / `conflict`) is re-asked, never guessed. The parsed
+  stay is then read back to the guest in full words for an explicit yes/no before it locks in
+  (`waiting_dates_confirm`) — a wrong date means a key card valid for the wrong days.
 - Folio/billing math + check-out summary logic (capture ≤ deposit, balance link if over).
 - Dashboard API + session reset endpoints.
 
@@ -199,6 +206,9 @@ Priority order (to be decided together):
       "tomorrow until 23/07"). Stored on the reservation; drives room-key validity and the
       no-show moment (`israelDateTime` → checkout time in Israel, DST-aware). Replaces the
       `NIGHTS = 3` constant that gave every guest a 3-night stay.
+      **Parsing is role-based + confirmed** (fixed after a live test read "4 לילות עד ה-21/7"
+      as arrival 21/7 / departure 25/7 — the exact inverse of what the guest said). See §6
+      "הגנות רוחב" and the `waiting_dates_confirm` stage.
 - [x] **P1 — Stay terms gate.** Done: mandatory acceptance step before the deposit. Terms live
       in `config.js` (`terms.he`/`terms.en` + `version`, `{hotel}`/`{checkout_time}`/`{deposit}`
       placeholders). Requires explicit "אני מאשר" / "I confirm" — "כן"/"yes" is not accepted.
@@ -241,8 +251,10 @@ Priority order (to be decided together):
       (מקדמות) at booking, and payment at reception on a different card — all through the existing
       `payments/` abstraction. (Documented only; not built yet.)
 - [ ] **P3 — Tests** — done for check-in / input validation / language / tags / ID /
-      **service rendering + concierge (area knowledge, request types, provider failure)**
-      (`e2e.test.mjs`, 54 tests, `npm test`). Still missing: check-out state machine + payment
+      **service rendering + concierge (area knowledge, request types, provider failure)** /
+      **stay-date parsing (every HE/EN phrasing + the ambiguous cases) + date confirmation +
+      truncated-tag leak + deposit wording**
+      (`e2e.test.mjs`, 65 tests, `npm test`). Still missing: check-out state machine + payment
       provider.
 
 ### שפה — עקביות מקצה לקצה (ממומש)
@@ -256,6 +268,11 @@ Priority order (to be decided together):
 ### הגנות רוחב (מהבדיקה החיה — כולן ממומשות)
 - **תג פנימי לעולם לא לאורח:** כל ענף של `[CHECKIN]`/`[CHECKOUT]` מסתיים בפעולה + `return`,
   ו-`wa()` מסנן גנרית כל `[TAG]`/`[TAG:...]` כרשת ביטחון אחרונה.
+- **תג קטוע (`[CONCIERGE:restaurant|` בלי סוגר):** נצפה בשטח. השורש — `max_tokens` נגמר באמצע
+  כתיבת התג, ולכן הרגקסים שדרשו `]` לא התאימו: התג *גם* לא סונן (ודלף לאורח) *וגם* לא עובד
+  (הבקשה נעלמה). מטופל בשלוש שכבות: `max_tokens` הוכפל ל-1000; `runActions` תופס תג בלי סוגר
+  (`(\]|$)`), מעביר את הבקשה לאדם בעדיפות גבוהה ומסמן אותה כחלקית; `stripInternalTags` מסיר
+  תג קטוע בסוף מחרוזת. `[CHECKIN`/`[CHECKOUT` קטועים מנותבים גם הם.
 - **אף פעם לא שקט:** `handleIncoming` עוטף הכול ב-try/catch → הודעת גיבוי לאורח + הסלמה
   לקבלה. `wa()` לעולם לא שולח body ריק (טוויליו זורק על כך ומשתיק את הבוט).
 - **קלט:** מאומת בכל שלב (`validate.js`); קלט לא תקין → בקשה חוזרת מנומסת *באותו שלב*.
@@ -264,6 +281,18 @@ Priority order (to be decided together):
 - **טקסט האורח לא נכנס להודעות המערכת:** הודעת כל שלב היא משפט שלם ועצמאי; פנייה בשם עוברת
   כ-`prefix` בשורה נפרדת. כך נולד בעבר "I want to check in, please enter your reservation
   number" — קלט האורח התקבל כשם והודבק לתחילת המשפט הבא. `validateFullName` דוחה מילות פקודה.
+- **ניסוח:** אותה מחלה בדיוק פגעה גם ב-AI — "אגיד לי לאיזה יום ושעה" נולד מהדבקת פריט מרשימת
+  ההוראות לתוך משפט. לכן רשימות הפרטים ב-prompt מנוסחות כ**שמות עצם** ("היעד · שעת האיסוף"),
+  ויש כלל מפורש: הרשימות אומרות *מה* לדעת, לא *איך* לנסח. בנוסף — אין צורות עם לוכסן
+  ("אנא הקלד/י") בהודעות לאורח; מנסחים ניטרלית ("מה שמך המלא?", "נא להשיב *כן*").
+- **הקונסיירז' לא ממציא ולא מבטיח:** אסור לנקוב בשם עסק שאינו ב-`config.local_area`, ואסור
+  להמציא כתובת/שעה/מחיר. אין המלצה מתאימה → "אשמח לבדוק ולחזור אליך" + `[RECEPTION:...]`
+  ("אני לא יודע" בלי המשך היא תשובה פסולה). בקשה = *העברה* ("אעביר את בקשתך ואחזור עם
+  אישור"), לעולם לא ביצוע ("הזמנתי לך מונית"). רק כשספק אמיתי יחזיר `status:"confirmed"`
+  (`concierge/index.js`) מותר יהיה לומר שההזמנה בוצעה.
+- **הפיקדון לא מבטיח החזר שלא בטוח:** כל ניסוח (הסבר, תנאי שהייה, עמודי התשלום) מפרט את
+  שלושת המקרים — אין חיובים / חיובים ≤ פיקדון / חיובים > פיקדון (אין יתרה, ההפרש מחויב).
+  מקור אמת אחד: `depositExplainer` ב-`checkin.js`; התנאים ב-`config.js` תואמים לו.
 
 ---
 

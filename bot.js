@@ -303,6 +303,19 @@ function buildPrompt(session, lang) {
   לתקשר באנגלית כדי להבטיח שירות מיטבי" — זו התנהגות פסולה. פשוט עבור לשפה
   שהאורח ביקש והמשך משם.
 
+✍️ עברית תקנית — חוק, לא המלצה:
+כל הודעה נקראת על ידי אורח במלון 5 כוכבים. משפט שבור שורף את הרושם מיד.
+- כל משפט חייב להיות *שלם ודקדוקי*: נושא, נשוא, התאמה במין ובמספר.
+  לפני שאתה שולח — קרא את המשפט. אם הוא לא נשמע כמו משהו שאדם היה אומר
+  בקול, כתוב אותו מחדש.
+- ⛔ אל תעתיק ניסוחים מההוראות האלה. הרשימות כאן אומרות לך *מה* לדעת ומה
+  לעשות — לא *איך* לנסח. נסח כל משפט מחדש, במילים שלך, כמשפט מלא.
+  כך נולד המשפט השבור "אגיד לי לאיזה יום ושעה": פריט מרשימה הודבק כמו
+  שהוא לתוך משפט. הצורות הנכונות: "תוכל לומר לי לאיזה יום ושעה?",
+  "לאיזו שעה נוח לך?".
+- פנייה לאורח: בגוף שני, בנימוס טבעי. אל תמציא צורות פועל.
+- אל תדביק את מה שהאורח כתב לתוך משפט שלך. הפנייה בשם היא משפט נפרד.
+
 🚨 חירום — עדיפות עליונה, לפני כל דבר אחר:
 אם האורח מתאר פציעה, מצב רפואי, אש, ריח/דליפת גז, או סכנה מיידית — זהה זאת מיד (לפי המשמעות, לא לפי מילה מסוימת):
 1. הגב מיד ובקצרה. אל תשאל שאלות מיותרות ואל תנהל סמול-טוק.
@@ -326,27 +339,48 @@ function buildPrompt(session, lang) {
   והמלץ. אף פעם לא יותר משאלה אחת ברצף, ולעולם אל תשאל מה שכבר נאמר לך.
 - זכור מה האורח סיפר קודם בשיחה (משפחה עם ילדים, יום נישואים, טבעוני) והתאם.
 
+⛔⛔ אסור להמציא מקומות — החוק החשוב ביותר בהמלצות:
+- מותר להמליץ *אך ורק* על מקומות שכתובים בנתונים למטה (שירותי המלון + הסביבה).
+  אלה המקומות שהמלון בדק ועומד מאחוריהם.
+- ⛔ אל תנקוב בשם של מסעדה, בר, חנות, מועדון, ספק או עסק שאינו ברשימה — גם אם
+  אתה "מכיר" אותו, גם אם הוא מפורסם, וגם אם האורח מפציר. שם שהמצאת עלול להיות
+  מקום שנסגר, שלא קיים, או שהמלון לא היה שולח אליו אורח. אורח שמגיע למקום
+  שהמצאת — זה כישלון של המלון, לא שלך.
+- ⛔ אל תמציא כתובת, מספר טלפון, שעות פתיחה, מחיר או מרחק. אם זה לא כתוב למטה,
+  אתה לא יודע את זה.
+- אין באזור מה שהאורח מחפש (סושי, מקום כשר, מועדון ספציפי)? אל תמציא ואל תגיד
+  רק "אני לא יודע" ותשאיר אותו תלוי באוויר. זה הניסוח הנכון:
+  *"אין לי כרגע המלצה שאני עומד מאחוריה בשבילך — אשמח לבדוק ולחזור אליך."*
+  והוסף [RECEPTION:<מה האורח מחפש>] כדי שאדם יברר ויחזור. זו תשובה מצוינת.
+  "אני לא יודע" בלי המשך היא תשובה פסולה.
+
 *סידור ותיאום* — אתה מסדר, לא מפנה:
 - מונית, הסעה לשדה התעופה, הזמנת שולחן, טיפול בספא, סיור/טיול, השכרת רכב או
   ציוד, ובקשות מיוחדות (זר פרחים, עוגת יום הולדת, בקבוק יין בחדר, הפתעה).
 - ⛔ אל תשלח אורח להתקשר בעצמו למשהו שאתה יכול לסדר לו. "אפשר לחייג ל..." הוא
   כישלון של קונסיירז'. הניסוח הנכון: *"אשמח לסדר לך"*.
-- לפני שאתה מעביר בקשה — ודא שיש לך את הפרטים ההכרחיים, ובקש רק את מה שחסר:
-  • מונית / הסעה: לאן, לאיזו שעה, כמה נוסעים
-  • שולחן במסעדה: איזו מסעדה, לאיזה יום ושעה, כמה סועדים, בקשות מיוחדות
-  • ספא: איזה טיפול, לאיזה יום ושעה, לכמה אנשים
-  • טיול / סיור: איזה, לאיזה תאריך, כמה משתתפים, באיזו שפה
-  • בקשה מיוחדת: מה בדיוק, למתי, לאן להביא
+- לפני שאתה מעביר בקשה — ודא שיש בידך את הפרטים ההכרחיים, ובקש רק את מה שחסר.
+  זו רשימת הפרטים שצריך לאסוף (⚠️ רשימת *תוכן*, לא ניסוחים להעתקה — נסח
+  את השאלה שלך במשפט מלא ובמילים שלך):
+  • מונית / הסעה: היעד · שעת האיסוף · מספר הנוסעים
+  • שולחן במסעדה: שם המסעדה · היום והשעה · מספר הסועדים · בקשות מיוחדות
+  • ספא: סוג הטיפול · היום והשעה · מספר המטופלים
+  • טיול / סיור: איזה סיור · התאריך · מספר המשתתפים · שפת ההדרכה
+  • בקשה מיוחדת: מה בדיוק · למתי · לאן להביא
 - כשיש לך את הפרטים — הוסף את התג [CONCIERGE:<סוג>|<כל הפרטים>] והודע לאורח.
 
-⚠️ מה מותר להבטיח (חשוב מאוד — אמינות):
-המערכת *מעבירה* את הבקשה לקונסיירז' האנושי, שמבצע אותה בפועל. לכן:
-- ✅ מותר: "העברתי את הבקשה לקונסיירז' שלנו, והם מסדרים את זה עכשיו — אעדכן
-  אותך ברגע שיש אישור."
-- ⛔ אסור: "הזמנתי לך מונית ל-20:00", "השולחן שלך שמור". אל תאשר הזמנה
-  שעדיין לא אושרה, ואל תמציא שעה, מספר אסמכתא או שם של מי שמטפל.
-- אל תתנצל על כך ואל תסביר לאורח איך המערכת עובדת מבפנים — פשוט תגיד בביטחון
-  מה קורה עכשיו ומתי הוא יקבל תשובה.
+⚠️⚠️ מה מותר להבטיח — חוק ברזל של אמינות:
+אתה *מעביר* את הבקשה לקונסיירז' האנושי, והוא זה שמבצע אותה מול המסעדה/חברת
+המוניות. בזמן שאתה כותב לאורח, שום דבר עדיין לא בוצע ושום דבר עדיין לא אושר.
+לכן, בלי יוצא מן הכלל:
+- ✅ הניסוח הנכון: *"אעביר את בקשתך לקונסיירז' שלנו ואחזור אליך עם אישור"* /
+  "העברתי את הבקשה, ואעדכן אותך ברגע שהיא מאושרת".
+- ⛔ אסור בהחלט: "הזמנתי לך מונית ל-20:00", "השולחן שלך שמור", "סידרתי לך",
+  "זה מטופל, המונית בדרך". אלה הבטחות שאתה לא יכול לקיים — ואורח שיורד ללובי
+  ומגלה שאין מונית הוא כישלון חמור.
+- ⛔ אל תמציא אישור, שעה שסוכמה, מספר אסמכתא, שם נהג או שם של מי שמטפל בבקשה.
+- אל תתנצל על כך ואל תסביר לאורח איך המערכת עובדת מבפנים — אמור בביטחון ובחום
+  מה קורה עכשיו ומתי הוא יקבל תשובה. זה מה שקונסיירז' אנושי אומר.
 
 *פרואקטיביות* — החום של מלון יוקרה:
 - סיים כמעט כל תשובה בהצעה קונקרטית אחת, לא ב-"יש עוד משהו?" הכללי והריק.
@@ -452,6 +486,15 @@ Current time in Israel: ${nowFull}
   ensure the highest level of service" — that is unacceptable. Just switch to the language the guest asked
   for and continue from there.
 
+✍️ WRITING QUALITY — a rule, not a suggestion:
+Every message is read by a guest in a 5-star hotel. One broken sentence undoes the impression.
+- Every sentence must be complete and grammatical. Read it back before sending; if it isn't
+  something a person would say out loud, rewrite it.
+- ⛔ Never copy phrasings out of these instructions. The lists here tell you *what* to know and
+  do — never *how* to word it. Rewrite every sentence in your own words, as a full sentence.
+- Never paste the guest's own words into the middle of your sentence. Address them in a
+  separate sentence of its own.
+
 🚨 EMERGENCY — highest priority, before anything else:
 If the guest describes an injury, a medical event, fire, a gas smell/leak, or immediate danger — recognize it instantly (by meaning, not by a specific keyword):
 1. Respond immediately and briefly. Do not ask unnecessary questions or make small talk.
@@ -479,29 +522,52 @@ system returning records.
 - Remember what the guest mentioned earlier in the conversation (family with children,
   an anniversary, vegan) and tailor to it.
 
+⛔⛔ NEVER INVENT A PLACE — the most important rule in recommendations:
+- You may recommend *only* places written in the data below (hotel services + the area).
+  Those are the places the hotel has vetted and stands behind.
+- ⛔ Never name a restaurant, bar, shop, club, supplier or business that isn't on that
+  list — not even if you "know" it, not even if it's famous, not even if the guest
+  presses you. A name you invented may be somewhere that has closed, that doesn't
+  exist, or that the hotel would never send a guest to. A guest arriving at a place
+  you made up is the hotel's failure, not yours.
+- ⛔ Never invent an address, a phone number, opening hours, a price or a distance.
+  If it isn't written below, you don't know it.
+- The area doesn't have what the guest wants (sushi, a kosher place, a specific club)?
+  Don't invent, and don't just say "I don't know" and leave them hanging. Say this:
+  *"I don't have a recommendation I'd stand behind for that just yet — let me look
+  into it and come back to you."*
+  Then append [RECEPTION:<what the guest is looking for>] so a person finds out and
+  follows up. That is an excellent answer. A bare "I don't know" is not acceptable.
+
 *Arranging things* — you arrange, you don't redirect:
 - A taxi, an airport transfer, a table, a spa treatment, a tour, a car or equipment
   rental, and special requests (flowers, a birthday cake, wine in the room, a surprise).
 - ⛔ Never send a guest off to call something you could arrange for them. "You can dial…"
   is a concierge's failure. The right phrasing is *"I'd be delighted to arrange that."*
 - Before passing a request on, make sure you have the essentials, and ask only for
-  what's missing:
-  • Taxi / transfer: where to, what time, how many passengers
-  • Restaurant table: which restaurant, what day and time, how many diners, any requests
-  • Spa: which treatment, what day and time, for how many people
-  • Tour: which one, what date, how many people, in which language
-  • Special request: what exactly, by when, delivered where
+  what's missing. This is the list of details to collect (⚠️ a list of *content*, not
+  wording to copy — ask in your own words, in a full sentence):
+  • Taxi / transfer: the destination · the pick-up time · the number of passengers
+  • Restaurant table: which restaurant · the day and time · the number of diners · any requests
+  • Spa: which treatment · the day and time · how many people
+  • Tour: which tour · the date · how many people · the language
+  • Special request: what exactly · by when · where to deliver it
 - Once you have the details — append [CONCIERGE:<type>|<all the details>] and tell the guest.
 
-⚠️ WHAT YOU MAY PROMISE (critical — this is about honesty):
-The system *passes* the request to our human concierge, who actually carries it out. So:
-- ✅ Allowed: "I've passed this to our concierge team and they're arranging it now —
-  I'll update you the moment it's confirmed."
-- ⛔ Not allowed: "I've booked you a taxi for 20:00", "Your table is reserved." Never
-  confirm a booking that isn't confirmed, and never invent a time, a reference number,
-  or the name of whoever is handling it.
-- Don't apologise for this and don't explain the internals to the guest — simply say,
-  with confidence, what is happening now and when they'll hear back.
+⚠️⚠️ WHAT YOU MAY PROMISE — an iron rule of honesty:
+You *pass* the request to our human concierge, and they are the one who carries it out with
+the restaurant or the taxi company. At the moment you write to the guest, nothing has been
+done yet and nothing has been confirmed yet. Therefore, without exception:
+- ✅ The right phrasing: *"I'll pass your request to our concierge and come back to you with
+  a confirmation"* / "I've passed it on and I'll update you the moment it's confirmed."
+- ⛔ Never: "I've booked you a taxi for 20:00", "Your table is reserved", "It's all sorted,
+  the car is on its way." Those are promises you cannot keep — and a guest who goes down to
+  the lobby to find no taxi is a serious failure.
+- ⛔ Never invent a confirmation, an agreed time, a reference number, a driver's name, or
+  the name of whoever is handling the request.
+- Don't apologise for this and don't explain the internals to the guest — say, warmly and
+  with confidence, what is happening now and when they'll hear back. That's what a human
+  concierge does.
 
 *Being proactive* — the warmth of a luxury hotel:
 - End almost every reply with one concrete offer, not a hollow "anything else?".
@@ -659,17 +725,36 @@ async function submitConciergeRequest(payload, session, phone) {
          (result?.reference ? `\n🔖 אסמכתא: ${result.reference}` : "");
 }
 
+// ── תגי פעולה — כולל תג *קטוע* ─────────────────────────
+// `(\]|$)` הוא מה שמציל בקשה שנקטעה: כשה-AI נעצר באמצע כתיבת התג
+// (max_tokens), אין "]" סוגר. הרגקס הישן, שדרש סוגר, פשוט לא התאים —
+// ולכן קרו *שני* דברים רעים בבת אחת: הבקשה של האורח לא הועברה לאף
+// אחד, והטקסט "[CONCIERGE:restaurant|" נשלח אליו כהודעה.
+// עכשיו התג נתפס, הבקשה עוברת לאדם (מסומנת כחלקית), והטקסט מוסר.
+const ACTION_TAG_RE = /\[(HK|HK_URGENT|MAINTENANCE|CONCIERGE|RECEPTION|EMERGENCY):([^\]]*?)(\]|$)/g;
+
 async function runActions(raw, session, phone) {
-  const re = /\[(HK|HK_URGENT|MAINTENANCE|CONCIERGE|RECEPTION|EMERGENCY):([^\]]*)\]/g;
+  const re = new RegExp(ACTION_TAG_RE.source, "g");
   let m;
   while ((m = re.exec(raw)) !== null) {
-    const [, type, payload] = m;
+    const [, type, payloadRaw, closer] = m;
+    // תג בלי סוגר = התשובה נקטעה באמצע. הפרטים שנאספו חלקיים, ולכן
+    // הבקשה עוברת לאדם בעדיפות גבוהה עם סימון מפורש — עדיף טלפון חוזר
+    // לאורח מאשר בקשה שנעלמה בשקט.
+    const truncated = closer !== "]";
+    const payload   = truncated
+      ? `${payloadRaw.trim()}\n⚠️ *הבקשה נקטעה באמצע ולא נקלטה במלואה — נא ליצור קשר עם האורח להשלמת הפרטים.*`
+      : payloadRaw;
+    if (truncated) {
+      console.error(`🚨 תג ${type} נקטע באמצע (${phone.slice(-8)}) — הועבר לצוות כבקשה חלקית: ${payloadRaw.slice(0, 80)}`);
+    }
     const dept = {
       HK: "housekeeping", HK_URGENT: "housekeeping",
       MAINTENANCE: "maintenance", CONCIERGE: "concierge", RECEPTION: "reception",
       EMERGENCY: "security",
     }[type];
-    const priority = type.includes("URGENT") || type === "RECEPTION" || type === "EMERGENCY"
+    // בקשה קטועה = פרטים חסרים = חייבת עין אנושית, יהיה הסוג אשר יהיה.
+    const priority = truncated || type.includes("URGENT") || type === "RECEPTION" || type === "EMERGENCY"
       ? "high" : "normal";
 
     // ── חירום: תיעוד מובנה של האירוע לפני ההסלמה ────────
@@ -726,17 +811,26 @@ const INPUT_HINTS = {
     empty:      { he: "לא קיבלתי תאריכים.", en: "I didn't catch any dates." },
     no_dates:   { he: "לא זיהיתי תאריכים בהודעה.", en: "I couldn't find any dates in that message." },
     no_arrival: { he: "קיבלתי את מספר הלילות — אשמח גם לתאריך ההגעה.", en: "I have the number of nights — I just need the arrival date too." },
-    one_date:   { he: "קיבלתי תאריך אחד בלבד.", en: "I only caught one date." },
-    bad_date:   { he: "אחד התאריכים אינו תאריך קיים.", en: "One of those dates doesn't exist on the calendar." },
+    one_date:   { he: "קיבלתי תאריך אחד בלבד, ובלי מספר הלילות אין לי את השני.", en: "I only caught one date, and without the number of nights I can't work out the other." },
+    bad_date:   { he: "אחד התאריכים אינו תאריך קיים בלוח השנה.", en: "One of those dates doesn't exist on the calendar." },
     not_after:  { he: "תאריך העזיבה חייב להיות אחרי תאריך ההגעה.", en: "The departure date must be after the arrival date." },
-    past:       { he: "תאריך ההגעה כבר עבר.", en: "That arrival date has already passed." },
+    past:       { he: "לפי מה שקיבלתי, ההגעה יוצאת בתאריך שכבר עבר.", en: "From what I have, the arrival works out to a date that has already passed." },
     too_long:   { he: "שהייה ארוכה מ-60 לילות מתואמת ישירות מול הקבלה.", en: "Stays longer than 60 nights are arranged directly with reception." },
     unclear:    { he: "לא הצלחתי לקרוא את התאריכים.", en: "I couldn't read those dates." },
+    // שתי הסיבות האלה נוספו יחד עם הפרסור מבוסס-התפקיד: עדיף לשאול שוב
+    // מאשר לנחש איזה תאריך הוא ההגעה ואיזה העזיבה.
+    ambiguous:  { he: "לא הצלחתי לזהות בוודאות איזה תאריך הוא ההגעה ואיזה העזיבה.", en: "I couldn't tell for certain which date is the arrival and which is the departure." },
+    conflict:   { he: "מספר הלילות שציינת לא מסתדר עם התאריכים.", en: "The number of nights you mentioned doesn't match the dates." },
   },
   terms: {
     empty:        { he: "לא קיבלתי אישור.", en: "I didn't receive a confirmation." },
-    not_explicit: { he: "כדי לאשר את התנאים אני זקוק לנוסח המלא.", en: "To accept the terms I need the exact wording." },
+    not_explicit: { he: "כדי לאשר את התנאים אני צריך את הנוסח המדויק.", en: "To accept the terms I need the exact wording." },
     unclear:      { he: "לא הצלחתי לזהות אישור.", en: "I couldn't recognise that as a confirmation." },
+  },
+  // אישור התאריכים — כן/לא, או תאריכים חדשים שמחליפים את מה שהבנו.
+  dates_confirm: {
+    empty:   { he: "לא קיבלתי תשובה.", en: "I didn't catch an answer." },
+    unclear: { he: "לא הצלחתי לזהות אם זה אישור או תיקון.", en: "I couldn't tell whether that was a yes or a no." },
   },
   reservation: {
     empty:       { he: "לא קיבלתי מספר הזמנה.", en: "I didn't catch a reservation number." },
@@ -789,43 +883,66 @@ async function promptStage(phone, stage, lang, { prefix = "", brief = false } = 
 
   if (stage === "waiting_name") {
     return wa(phone, p + (he
-      ? `אנא הקלד/י את *שמך המלא* (שם פרטי ושם משפחה):`
-      : `Please enter your *full name* (first and last):`), { lang });
+      ? `מה *שמך המלא*? (שם פרטי ושם משפחה)`
+      : `What is your *full name*? (first and last)`), { lang });
   }
 
   if (stage === "waiting_reservation") {
     return wa(phone, p + (he
-      ? `אנא הקלד/י את *מספר ההזמנה* שלך (ספרות בלבד):`
-      : `Please enter your *reservation number* (digits only):`), { lang });
+      ? `ומה *מספר ההזמנה* שלך? (ספרות בלבד)`
+      : `And what is your *reservation number*? (digits only)`), { lang });
   }
 
   if (stage === "waiting_dates") {
+    // ⚠️ הדוגמאות חייבות להיות מסומנות *במפורש* כדוגמאות. קודם הן הוצגו
+    // כשורה מודגשת בלי הסבר, ואורחים הבינו ש-20/07/2026 הוא תאריך אמיתי
+    // שהמלון כבר יודע עליו. תאריך לדוגמה שנקרא כתאריך אמיתי = שהייה שגויה.
     return wa(phone, p + (he
       ? `📅 מהם *תאריכי השהייה* שלך?\n\n` +
-        `אפשר לכתוב תאריך הגעה ותאריך עזיבה:\n*20/07/2026 - 23/07/2026*\n\n` +
-        `או תאריך הגעה ומספר לילות:\n*20/07/2026, 3 לילות*`
+        `אפשר לשלוח תאריך הגעה ותאריך עזיבה, או תאריך הגעה ומספר לילות.\n\n` +
+        `_כך נראה הפורמט — אלה דוגמאות בלבד, לא התאריכים שלך:_\n` +
+        `_«11/11/2026 - 14/11/2026»_\n` +
+        `_«11/11/2026, 3 לילות»_`
       : `📅 What are your *stay dates*?\n\n` +
-        `You can send an arrival and a departure date:\n*20/07/2026 - 23/07/2026*\n\n` +
-        `or an arrival date and the number of nights:\n*20/07/2026, 3 nights*`), { lang });
+        `You can send an arrival and a departure date, or an arrival date and the number of nights.\n\n` +
+        `_This is what the format looks like — these are examples only, not your dates:_\n` +
+        `_«11/11/2026 - 14/11/2026»_\n` +
+        `_«11/11/2026, 3 nights»_`), { lang });
+  }
+
+  // ── אישור התאריכים — לפני שממשיכים הלאה ───────────────
+  // תאריך שהובן לא נכון = כרטיס חדר מתוקף לימים הלא נכונים וחיוב שגוי.
+  // לכן אף פעם לא ממשיכים על סמך הפרסור בלבד: מציגים לאורח בדיוק מה
+  // הבנו, במילים מלאות, ומבקשים אישור מפורש.
+  if (stage === "waiting_dates_confirm") {
+    const stay = getSession(phone).pendingStay;
+    if (!stay) {
+      // אין מה לאשר (מצב שלא אמור לקרות) — חוזרים לשאלה במקום להיתקע.
+      patchSession(phone, { checkinStage: "waiting_dates" });
+      return promptStage(phone, "waiting_dates", lang, { prefix });
+    }
+    return wa(phone, p + (he
+      ? `רק לוודא שהבנתי נכון:\n\n${formatStayDates(stay, "he")}\n\nהאם זה נכון? נא להשיב *כן* לאישור, או *לא* אם צריך לתקן.`
+      : `Just to make sure I've understood correctly:\n\n${formatStayDates(stay, "en")}\n\nIs that right? Please reply *yes* to confirm, or *no* if it needs correcting.`), { lang });
   }
 
   if (stage === "waiting_id") {
     return wa(phone, p + (he
-      ? `🪪 כדי להשלים את הצ'ק אין נדרש *אימות זהות*.\n\nאנא צלם/י ושלח/י כאן *כתמונה* את תעודת הזהות או הדרכון שלך — כך שכל הפרטים יהיו ברורים וקריאים.`
-      : `🪪 To complete your check-in we need to *verify your identity*.\n\nPlease take a photo of your *ID card or passport* and send it here *as an image* — with all the details clear and readable.`), { lang });
+      ? `🪪 כדי להשלים את הצ'ק אין נדרש *אימות זהות*.\n\nאשמח לתמונה של *תעודת הזהות או הדרכון* — צילום ברור שבו כל הפרטים קריאים.`
+      : `🪪 To complete your check-in we need to *verify your identity*.\n\nPlease send a photo of your *ID card or passport* — a clear shot with all the details readable.`), { lang });
   }
 
   if (stage === "waiting_terms") {
     // brief — האורח כבר ראה את התנאים ורק הניסוח שלו לא היה מפורש.
     // אין טעם להציף אותו שוב בכל הסעיפים; מבקשים רק את נוסח האישור.
     const ask = he
-      ? `לאישור, אנא כתוב/כתבי: *אני מאשר*`
+      ? `לאישור, נא לכתוב: *אני מאשר*`
       : `To accept, please type: *I confirm*`;
     if (brief) return wa(phone, p + ask, { lang });
 
     return wa(phone, p + (he
-      ? `📜 *תנאי השהייה*\n\nלפני קבלת החדר, אנא קרא/י ואשר/י:\n\n${renderTerms("he")}\n\n${ask}`
-      : `📜 *Stay Terms*\n\nBefore we hand over the room, please read and accept:\n\n${renderTerms("en")}\n\n${ask}`), { lang });
+      ? `📜 *תנאי השהייה*\n\nלפני קבלת החדר, אלה התנאים לקריאה ולאישור:\n\n${renderTerms("he")}\n\n${ask}`
+      : `📜 *Stay Terms*\n\nBefore we hand over the room, here are the terms to read and accept:\n\n${renderTerms("en")}\n\n${ask}`), { lang });
   }
 
   if (stage === "waiting_payment") {
@@ -835,13 +952,13 @@ async function promptStage(phone, stage, lang, { prefix = "", brief = false } = 
     const url = await ensureDepositLink(phone, lang);
     if (!url) {
       return wa(phone, p + (he
-        ? `⏳ אנחנו משלימים את שלב הפיקדון עבורך — נציג מהקבלה יחזור אליך מיד.\n\nלכל שאלה: קבלה, שלוחה 0.`
-        : `⏳ We're finalising the deposit step for you — a receptionist will get back to you shortly.\n\nAny questions: reception, Ext. 0.`), { lang });
+        ? `⏳ אנחנו משלימים עבורך את שלב הפיקדון — מהקבלה יחזרו אליך מיד.\n\nלכל שאלה: קבלה, שלוחה 0.`
+        : `⏳ We're finalising the deposit step for you — reception will get back to you shortly.\n\nAny questions: reception, Ext. 0.`), { lang });
     }
     // ההודעה כאן מדברת *רק* על הפיקדון. הסטטוס של אימות הזהות מגיע
     // כ-prefix מהקורא — כדי שלא נכריז "אומת" כשהאימות עדיין ידני.
     return wa(phone, p + (he
-      ? `שלב אחרון — *פיקדון שהייה*.\n\n${depositExplainer("he")}\n\nלחץ/י על הקישור להקפאת הפיקדון:\n👉 ${url}`
+      ? `שלב אחרון — *פיקדון שהייה*.\n\n${depositExplainer("he")}\n\nלהקפאת הפיקדון, בקישור הזה:\n👉 ${url}`
       : `One last step — a *security deposit*.\n\n${depositExplainer("en")}\n\nTap the link to place the deposit hold:\n👉 ${url}`), { lang });
   }
 }
@@ -957,10 +1074,45 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
       await promptStage(phone, "waiting_dates", lang, { prefix: hint("dates", v.reason, lang) });
       return;
     }
-    patchSession(phone, { checkinStage: "waiting_id", pendingStay: v.value, idAttempts: 0 });
-    await promptStage(phone, "waiting_id", lang, {
-      prefix: (lang === "he" ? `✅ *תאריכי השהייה נקלטו:*\n` : `✅ *Your stay dates are set:*\n`)
-        + formatStayDates(v.value, lang),
+    // לא ממשיכים ישר לשלב הבא — קודם מאשרים מול האורח מה הבנו.
+    patchSession(phone, { checkinStage: "waiting_dates_confirm", pendingStay: v.value });
+    await promptStage(phone, "waiting_dates_confirm", lang);
+    return;
+  }
+
+  // ── אישור תאריכי השהייה ──────────────────────────────
+  // שער אחרון לפני שהתאריכים "ננעלים" על ההזמנה ומתקפים כרטיס חדר.
+  if (stage === "waiting_dates_confirm") {
+    // האורח שלח תאריכים חדשים במקום כן/לא ("לא, 20/7 עד 23/7") —
+    // מאמצים אותם ומאשרים מחדש, בלי להחזיר אותו שלב אחורה.
+    const redo = validateStayDates(input);
+    if (redo.ok) {
+      patchSession(phone, { pendingStay: redo.value });
+      await promptStage(phone, "waiting_dates_confirm", lang, {
+        prefix: lang === "he" ? "תודה על התיקון 🙏" : "Thank you for the correction 🙏",
+      });
+      return;
+    }
+
+    if (isNegative(input)) {
+      patchSession(phone, { checkinStage: "waiting_dates", pendingStay: null });
+      await promptStage(phone, "waiting_dates", lang, {
+        prefix: lang === "he" ? "אין בעיה, בוא נתקן את זה." : "No problem, let's put that right.",
+      });
+      return;
+    }
+
+    if (isAffirmative(input)) {
+      patchSession(phone, { checkinStage: "waiting_id", idAttempts: 0 });
+      await promptStage(phone, "waiting_id", lang, {
+        prefix: (lang === "he" ? `✅ *תאריכי השהייה נקלטו:*\n` : `✅ *Your stay dates are set:*\n`)
+          + formatStayDates(session.pendingStay, lang),
+      });
+      return;
+    }
+
+    await promptStage(phone, "waiting_dates_confirm", lang, {
+      prefix: hint("dates_confirm", input ? "unclear" : "empty", lang),
     });
     return;
   }
@@ -1028,12 +1180,12 @@ async function handleTermsDeclined(phone, lang) {
   });
 
   await wa(phone, he
-    ? `אני מבין, ותודה שאמרת 🙏\n\nבלי אישור תנאי השהייה איני יכול להשלים את הצ'ק אין הדיגיטלי — ` +
-      `אבל זו ממש לא בעיה: נציג/ה מהקבלה יצור/תיצור איתך קשר בהקדם, ויענה/תענה על כל שאלה לגבי התנאים.\n\n` +
-      `אם תרצה/י להמשיך כאן בכל שלב, פשוט כתוב/כתבי *אני מאשר*.`
+    ? `אני מבין, ותודה על הכנות 🙏\n\nבלי אישור תנאי השהייה איני יכול להשלים את הצ'ק אין הדיגיטלי — ` +
+      `אבל זו ממש לא בעיה: מהקבלה יחזרו אליך בהקדם ויענו על כל שאלה לגבי התנאים.\n\n` +
+      `אפשר לחזור לכאן בכל שלב ולכתוב *אני מאשר* — ונמשיך מהנקודה הזו.`
     : `I understand, and thank you for telling me 🙏\n\nWithout accepting the stay terms I can't complete the digital check-in — ` +
-      `but that's absolutely fine: a receptionist will contact you shortly and answer any question you have about the terms.\n\n` +
-      `If you'd like to continue here at any point, just type *I confirm*.`, { lang });
+      `but that's absolutely fine: reception will be in touch shortly and will answer any question you have about the terms.\n\n` +
+      `You can come back here at any point and type *I confirm* — we'll pick up right where we left off.`, { lang });
 }
 
 // שלב תעודת הזהות — הופרד כי הוא הכי עשיר: אימות אמיתי מול ה-AI,
@@ -1055,8 +1207,8 @@ async function handleIdStage(phone, media, lang) {
   const reservationNumber = s.pendingReservation || "";
 
   await wa(phone, he
-    ? "🔎 בודק/ת את המסמך, רגע אחד…"
-    : "🔎 Checking your document, one moment…", { lang });
+    ? "🔎 רגע אחד, בודק את המסמך…"
+    : "🔎 One moment, I'm checking your document…", { lang });
 
   // 2. אימות אמיתי דרך שכבת idverify המבודדת (Claude vision).
   //    לא זורק בזרימה רגילה — תקלה טכנית חוזרת כ-"manual_review".
@@ -1109,8 +1261,8 @@ async function handleIdStage(phone, media, lang) {
         priority: "high",
       });
       await wa(phone, he
-        ? `${why}\n\nאין בעיה — נציג/ה מהקבלה יצור/תיצור איתך קשר לסייע באימות. 🌟\nבינתיים אפשר לנסות לשלוח צילום נוסף, ברור ומלא.`
-        : `${why}\n\nNo problem — a receptionist will contact you to help with the verification. 🌟\nIn the meantime, feel free to send another clear, full photo.`, { lang });
+        ? `${why}\n\nאין בעיה — מהקבלה יחזרו אליך ויסייעו באימות. 🌟\nבינתיים אפשר לנסות לשלוח צילום נוסף, ברור ומלא.`
+        : `${why}\n\nNo problem — reception will be in touch to help with the verification. 🌟\nIn the meantime, feel free to send another clear, full photo.`, { lang });
       return;
     }
 
@@ -1172,8 +1324,8 @@ async function startCheckout(phone, lang) {
   const res = getActiveReservation(phone);
   if (!res) {
     await wa(phone, lang === "he"
-      ? "לא מצאתי הזמנה פעילה על שמך. אנא פנה לקבלה בשלוחה 0."
-      : "No active reservation found. Please contact reception at Ext. 0.", { lang });
+      ? "לא מצאתי הזמנה פעילה על שמך. אפשר לפנות לקבלה בשלוחה 0 ונשמח לסייע."
+      : "I couldn't find an active reservation in your name. Reception is available at Ext. 0 and will be glad to help.", { lang });
     return;
   }
   patchSession(phone, { checkoutStage: "awaiting_confirmation" });
@@ -1182,8 +1334,8 @@ async function startCheckout(phone, lang) {
     ? `🚪 *בקשת צ'ק אאוט*\n\nלהלן סיכום מלא של החיובים שלך:\n\n`
     : `🚪 *Check-out request*\n\nHere is a full summary of your charges:\n\n`;
   const footer = lang === "he"
-    ? `\n\nלאישור הצ'ק אאוט (כולל חיוב מהפיקדון במידת הצורך), השב *כן*.\nלביטול, השב *לא*.`
-    : `\n\nReply *yes* to confirm check-out (deposit will be charged if needed).\nReply *no* to cancel.`;
+    ? `\n\nנא להשיב *כן* לאישור הצ'ק אאוט (החיובים ינוכו מהפיקדון במידת הצורך), או *לא* לביטול.`
+    : `\n\nPlease reply *yes* to confirm check-out (any charges will be deducted from the deposit), or *no* to cancel.`;
   await wa(phone, header + bill + footer, { lang });
 }
 
@@ -1196,8 +1348,8 @@ async function confirmCheckout(phone, session, lang) {
     console.error("Checkout error:", e.message);
     patchSession(phone, { checkoutStage: null });
     await wa(phone, lang === "he"
-      ? "לא מצאתי הזמנה פעילה על שמך. אנא פנה לקבלה בשלוחה 0."
-      : "No active reservation found. Please contact reception at Ext. 0.", { lang });
+      ? "לא מצאתי הזמנה פעילה על שמך. אפשר לפנות לקבלה בשלוחה 0 ונשמח לסייע."
+      : "I couldn't find an active reservation in your name. Reception is available at Ext. 0 and will be glad to help.", { lang });
   }
 }
 
@@ -1299,14 +1451,14 @@ async function processIncoming(phone, text, media = null) {
     if (isNegative(body)) {
       patchSession(phone, { checkoutStage: null });
       await wa(phone, lang === "he"
-        ? "הצ'ק אאוט בוטל. אנחנו כאן אם תצטרך משהו נוסף 😊"
-        : "Check-out cancelled. We're here if you need anything else 😊", { lang });
+        ? "הצ'ק אאוט בוטל. אנחנו כאן לכל דבר נוסף 😊"
+        : "Check-out cancelled. We're here for anything else you need 😊", { lang });
     } else if (isAffirmative(body)) {
       await confirmCheckout(phone, session, lang);
     } else {
       await wa(phone, lang === "he"
-        ? "לאישור הצ'ק אאוט השב *כן*, או *לא* לביטול."
-        : "Reply *yes* to confirm check-out, or *no* to cancel.", { lang });
+        ? "לא הצלחתי לזהות אם זה אישור. נא להשיב *כן* לאישור הצ'ק אאוט, או *לא* לביטול."
+        : "I couldn't tell whether that was a yes. Please reply *yes* to confirm check-out, or *no* to cancel.", { lang });
     }
     return;
   }
@@ -1348,7 +1500,12 @@ async function processIncoming(phone, text, media = null) {
   try {
     const r = await createMessageWithRetry({
       model: AI_MODEL,
-      max_tokens: 500,
+      // ⚠️ היה 500 — וזו הייתה הסיבה לדליפת "[CONCIERGE:restaurant|":
+      // תשובה עם רשימת המלצות + תג בסופה חרגה מהתקציב, ה-AI נקטע באמצע
+      // כתיבת התג, והשארית נשלחה לאורח. התקציב הוכפל כדי שתשובה רגילה
+      // *עם* תג תיכנס בנוחות. (הקטיעה עדיין מטופלת בכל השכבות למטה —
+      // תקציב גדול יותר מקטין את הסיכוי, לא מחליף את ההגנה.)
+      max_tokens: 1000,
       system: buildPrompt(sessions[phone] || session, lang),
       messages: (sessions[phone] || session).history,
     });
@@ -1359,11 +1516,16 @@ async function processIncoming(phone, text, media = null) {
       .join("")
       .trim();
     if (!raw) throw new Error("empty AI response");
+    // תשובה שנקטעה בגלל התקציב — נרשמת ללוג כדי שנדע. הטיפול עצמו
+    // (תג קטוע → פעולה + סינון) קורה בהמשך ואינו תלוי בבדיקה הזו.
+    if (r.stop_reason === "max_tokens") {
+      console.error(`⚠️ תשובת ה-AI נקטעה (max_tokens) עבור ${phone.slice(-8)} — סוף התשובה: …${raw.slice(-80)}`);
+    }
   } catch (e) {
     console.error("AI error (all retries failed):", e?.message || e);
     raw = lang === "he"
-      ? "מצטערים, אירעה שגיאה זמנית. אנא נסה שוב בעוד רגע, או פנה לקבלה בשלוחה 0."
-      : "Sorry, a temporary error occurred. Please try again in a moment, or contact reception at Ext. 0.";
+      ? "מצטערים, אירעה תקלה זמנית אצלנו. אפשר לנסות שוב בעוד רגע, ולכל דבר דחוף הקבלה זמינה בשלוחה 0."
+      : "Apologies, we hit a temporary glitch. Please try again in a moment — and for anything urgent, reception is available at Ext. 0.";
   }
 
   // ── גיבוי זיהוי כוונה מבוסס-AI ─────────────────────────
@@ -1375,10 +1537,12 @@ async function processIncoming(phone, text, media = null) {
   // מסוימים (למשל אורח בשלב הפיקדון), התג לא נתפס — ונשלח לאורח כטקסט
   // גולמי: "[CHECKIN]". עכשיו כל ענף מסתיים בפעולה + return, ותג פנימי
   // לעולם לא ממשיך לנתיב השליחה. (ו-wa() מסנן כרשת ביטחון אחרונה.)
-  if (/\[CHECKIN\]/i.test(raw)) {
+  // `(?:\]|\s|$)` — גם תג שנקטע ללא סוגר ("[CHECKIN") מזוהה ומנותב,
+  // במקום ליפול הלאה ולהישלח לאורח כטקסט.
+  if (/\[CHECKIN(?:\]|\s|$)/i.test(raw)) {
     if (session.stage === "checked_in") {
       await wa(phone, lang === "he"
-        ? `אתה כבר רשום אצלנו — חדר *${session.roomNumber || "—"}* 🌟\nאיך אוכל לעזור?`
+        ? `הצ'ק אין שלך כבר הושלם — חדר *${session.roomNumber || "—"}* 🌟\nבמה אוכל לעזור?`
         : `You're already checked in — room *${session.roomNumber || "—"}* 🌟\nHow can I help?`, { lang });
     } else if (session.checkinStage) {
       // כבר באמצע צ'ק אין → ממשיכים מהשלב הנוכחי, לא מתחילים מהתחלה.
@@ -1389,13 +1553,13 @@ async function processIncoming(phone, text, media = null) {
     }
     return;
   }
-  if (/\[CHECKOUT\]/i.test(raw)) {
+  if (/\[CHECKOUT(?:\]|\s|$)/i.test(raw)) {
     if (session.stage === "checked_in" || getActiveReservation(phone)) {
       await startCheckout(phone, lang);
     } else {
       await wa(phone, lang === "he"
-        ? "לא מצאתי הזמנה פעילה על שמך לצ'ק אאוט. אם כבר ביצעת צ'ק אין, פנה לקבלה בשלוחה 0."
-        : "I couldn't find an active reservation to check out. If you've already checked in, please contact reception at Ext. 0.", { lang });
+        ? "לא מצאתי הזמנה פעילה על שמך לצ'ק אאוט. אם כבר ביצעת צ'ק אין, אפשר לפנות לקבלה בשלוחה 0 ונשלים זאת מיד."
+        : "I couldn't find an active reservation to check out. If you've already checked in, reception at Ext. 0 will sort it out right away.", { lang });
     }
     return;
   }

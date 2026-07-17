@@ -79,14 +79,23 @@ const DEFAULTS = {
   //
   //    placeholders שמוחלפים בזמן השליחה: {hotel} {checkout_time} {deposit}
   terms: {
-    version: "demo-2026-01",
+    // ⚠️ כל שינוי בנוסח מחייב version חדש — ה-version נשמר על ההזמנה
+    //    יחד עם רגע האישור, וזו הראיה היחידה ל*מה* האורח אישר בפועל.
+    //    demo-2026-02: תוקן סעיף הפיקדון, שהבטיח "היתרה תשוחרר" גם
+    //    כשאין יתרה (חיובים מעל הפיקדון). ראה ההערה בסעיף עצמו.
+    version: "demo-2026-02",
     he: [
       { title: "אחריות לנזקים",
         body: "האורח אחראי לכל נזק שייגרם לחדר, לתכולתו או לרכוש {hotel} במהלך שהייתו, ויחויב בעלות התיקון או ההחלפה." },
       { title: "שעת צ'ק אאוט",
         body: "יש לפנות את החדר עד השעה {checkout_time} ביום העזיבה. צ'ק אאוט מאוחר כפוף לזמינות ועשוי להיות כרוך בתשלום נוסף." },
+      // ⚠️ הנוסח הקודם הבטיח "ינוכו החיובים והיתרה תשוחרר" — כאילו תמיד
+      //    נשארת יתרה. כשהחיובים גבוהים מהפיקדון אין שום יתרה, ולהפך:
+      //    המלון מחייב את ההפרש. תנאי שהייה שסותרים את מה שהמערכת עושה
+      //    בפועל הם הבטחה שגויה לאורח. שלושת המקרים כתובים כאן במפורש,
+      //    בדיוק כמו ב-depositExplainer (checkin.js) — אותו מידע, אותו נוסח.
       { title: "פיקדון ומדיניות ביטול",
-        body: "פיקדון בסך {deposit} מוקפא בכרטיס האשראי להבטחת השהייה — הקפאה בלבד, לא חיוב. בצ'ק אאוט ינוכו החיובים שנצברו, והיתרה תשוחרר על ידי חברת האשראי תוך 3-5 ימי עסקים. ביטול עד 24 שעות לפני מועד ההגעה — ללא חיוב." },
+        body: "פיקדון בסך {deposit} מוקפא בכרטיס האשראי להבטחת השהייה — הקפאה בלבד, לא חיוב. בצ'ק אאוט: אם לא נצברו חיובים — לא יבוצע חיוב, וההקפאה תשוחרר על ידי חברת האשראי תוך 3-5 ימי עסקים. אם נצברו חיובים — הם ינוכו מהפיקדון, ויתרת הפיקדון (אם נותרה) תשוחרר באותו אופן. אם החיובים גבוהים מהפיקדון — הפיקדון ינוכה במלואו, וההפרש יחויב בנפרד מאותו כרטיס אשראי. ביטול עד 24 שעות לפני מועד ההגעה — ללא חיוב." },
       { title: "מלון ללא עישון",
         body: "העישון אסור בכל שטחי המלון, לרבות החדרים והמרפסות. הפרה תחויב בדמי ניקוי בסך ₪1,500." },
       { title: "נכונות הפרטים",
@@ -97,8 +106,10 @@ const DEFAULTS = {
         body: "The guest is responsible for any damage caused to the room, its contents or the property of {hotel} during the stay, and will be charged the cost of repair or replacement." },
       { title: "Check-out time",
         body: "The room must be vacated by {checkout_time} on the day of departure. Late check-out is subject to availability and may incur an additional charge." },
+      // ⚠️ See the note on the Hebrew clause above — all three outcomes must
+      //    be stated, including the one where charges exceed the deposit.
       { title: "Deposit & cancellation policy",
-        body: "A {deposit} deposit is held on your credit card to secure the stay — a hold only, not a charge. At check-out any accrued charges are deducted, and the remainder is released by your card issuer within 3–5 business days. Cancellation up to 24 hours before arrival is free of charge." },
+        body: "A {deposit} deposit is held on your credit card to secure the stay — a hold only, not a charge. At check-out: if no charges were accrued, nothing is charged and the hold is released by your card issuer within 3–5 business days. If charges were accrued, they are deducted from the deposit, and any remaining balance is released the same way. If the charges exceed the deposit, the deposit is deducted in full and the difference is charged separately to the same card. Cancellation up to 24 hours before arrival is free of charge." },
       { title: "Non-smoking hotel",
         body: "Smoking is prohibited throughout the hotel, including guest rooms and balconies. A cleaning fee of ₪1,500 applies to any breach." },
       { title: "Accuracy of details",
@@ -314,7 +325,7 @@ const DEFAULTS = {
         name:           "שירות חדרים",
         hours:          "24/7",
         dial:           "שלוחה 0",
-        how_to_order:   "שלוחה 0, או פשוט תגיד/י לי מה בא לך ואעביר הלאה",
+        how_to_order:   "שלוחה 0, או פשוט לספר לי מה בא לך ואעביר את ההזמנה",
         delivery_time:  "30–45 דקות למנות חמות, 15–20 דקות למשקאות ונשנושים",
         price_range:    "ארוחת בוקר ₪120 | כריכים וסלטים ₪60–₪95 | מנות עיקריות חמות ₪95–₪160 | קינוחים ₪45",
         service_charge: "דמי מגש ₪25 להזמנה, מתווספים לחשבון החדר",
@@ -364,7 +375,7 @@ const DEFAULTS = {
       location:     "קומות -1 ו--2, גישה ישירה במעלית לכל הקומות",
       ev_charging:  "6 עמדות — ₪0.60 לקוט\"ש, כל הקודם זוכה",
       height_limit: "גובה רכב מרבי 2.1 מ'",
-      note:         "אנא הודע/י לקבלה עם הגעתך ומסור/י את מספר הרכב",
+      note:         "נא להודיע לקבלה עם ההגעה ולמסור את מספר הרכב",
     },
   },
 
@@ -509,7 +520,7 @@ const DEFAULTS = {
         { name: "סיור קולינרי בשוק", duration: "שעתיים וחצי", price: "₪290 לאדם",
           note: "שמונה טעימות, יוצא א'–ה' ב-10:00. אפשרות צמחונית בתיאום" },
         { name: "סיור פרטי בהתאמה אישית", duration: "בתיאום", price: "החל מ-₪1,400 ליום עד 4 אנשים",
-          note: "ספר/י לי מה מעניין אותך ואתאים מדריך. בהתראה של 48 שעות" },
+          note: "אשמח לשמוע מה מעניין אותך ולהתאים מדריך. בהתראה של 48 שעות" },
       ],
 
       nightlife: [

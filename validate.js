@@ -14,16 +14,30 @@
 // כל תג בצורה [TAG] או [TAG:payload] באותיות גדולות הוא *פנימי* לפי
 // הגדרה — אף הודעה לאורח לא אמורה להכיל כזה. מסננים גנרית (ולא רק
 // רשימה סגורה) כדי שגם תג עתידי/מומצא ע"י ה-AI לא ידלוף.
-const INTERNAL_TAG_RE = /\[[A-Z][A-Z0-9_]{1,24}(?::[^\]\n]{0,500})?\]/g;
+//
+// ⚠️ ה-payload מורשה להכיל שורות חדשות (`[^\]]` ולא `[^\]\n]`). ה-AI
+// כותב לפעמים תג רב-שורתי, וגרסה שדרשה שורה אחת פשוט לא התאימה לו —
+// כלומר התג *לא* סונן ונשלח לאורח כטקסט.
+const INTERNAL_TAG_RE = /\[[A-Z][A-Z0-9_]{1,24}(?::[^\]]{0,600})?\]/g;
+
+// ── תג *קטוע* בסוף הטקסט ───────────────────────────────
+// זה שורש הדליפה שנצפתה: האורח קיבל "[CONCIERGE:restaurant|".
+// ה-AI נעצר באמצע כתיבת התג (max_tokens), ולכן לא נכתב "]" סוגר —
+// והרגקס שלמעלה, שדורש סוגר, לא התאים לו כלל. תג בלי סוגר בסוף
+// המחרוזת הוא *תמיד* תג קטוע: אין שום סיבה לגיטימית שתשובה לאורח
+// תסתיים בסוגר מרובע פתוח.
+const TRUNCATED_TAG_RE = /\[[A-Z0-9_]{0,25}(?::[^\]]{0,600})?$/;
 
 export function hasInternalTag(text) {
+  const s = String(text ?? "");
   INTERNAL_TAG_RE.lastIndex = 0;
-  return INTERNAL_TAG_RE.test(String(text ?? ""));
+  return INTERNAL_TAG_RE.test(s) || TRUNCATED_TAG_RE.test(s);
 }
 
 export function stripInternalTags(text) {
   return String(text ?? "")
     .replace(INTERNAL_TAG_RE, " ")
+    .replace(TRUNCATED_TAG_RE, " ")
     .replace(/[ \t]{2,}/g, " ")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
@@ -112,9 +126,22 @@ export function validateReservationNumber(raw) {
 
 // ── תאריכי שהייה ───────────────────────────────────────
 // מקבל ניסוח חופשי של אורח ומחזיר { checkIn, checkOut, nights } מנורמל.
-// נתמך: "20/07/2026 - 23/07/2026", "20.7 עד 23.7", "20/07/2026, 3 לילות",
+//
+// 🔴 הבאג הקריטי שהקוד הזה מתקן:
+// "4 לילות עד ה-21/7" נקרא בעבר כ*הגעה* ב-21/7 ועזיבה ב-25/7 — כי כל
+// תאריך ראשון בטקסט נחשב אוטומטית להגעה. המשמעות האמיתית הפוכה בדיוק:
+// 21/7 הוא יום ה*עזיבה*, וההגעה היא ארבעה לילות לפניו — 17/7.
+// תאריך שגוי כאן = כרטיס חדר מתוקף לימים הלא נכונים, חיוב על תקופה
+// שגויה, ואורח שעומד מול דלת נעולה. זה חייב להיות נכון.
+//
+// לכן הפרסור מבוסס *תפקיד* ולא *מיקום*: המילה שלפני התאריך ("עד",
+// "until", "מ-", "from") היא שקובעת אם הוא הגעה או עזיבה. רק כשאין שום
+// סימן — נופלים למיקום (ראשון = הגעה, שני = עזיבה), כי זו אכן המשמעות
+// של "20/7 - 23/7". קלט שלא ניתן להכריע בו נדחה עם סיבה, ונשאל שוב.
+//
+// נתמך: "20/07/2026 - 23/07/2026", "20.7 עד 23.7", "מ-20/7 ל-23/7",
+// "20/07/2026, 3 לילות", "4 לילות עד ה-21/7", "3 nights until 21/7",
 // "היום, 2 לילות", "tomorrow until 23/07", "20-07-2026 to 23-07-2026".
-// אין ניחושים: קלט לא חד-משמעי נדחה עם סיבה, והשלב פשוט נשאל שוב.
 const MAX_NIGHTS = 60;
 const DAY_MS = 86_400_000;
 
@@ -175,47 +202,132 @@ function resolveToken(tok, ref, kind) {
   return rolls ? buildDate(tok.day, tok.month, base + 1) : d;
 }
 
+// ── תפקיד התאריך נקבע לפי המילה שלפניו ─────────────────
+// "עד ה-21/7" → עזיבה. "מ-20/7" → הגעה. זה כל ההבדל בין שהייה נכונה
+// לשהייה הפוכה, ולכן זו רשימה מפורשת ולא ניחוש.
+const ARRIVAL_MARKERS = new Set([
+  // עברית
+  "מ", "מה", "מיום", "מתאריך", "מהתאריך", "החל", "הגעה", "הגעתי",
+  "מגיע", "מגיעה", "מגיעים", "נכנס", "נכנסת", "נכנסים", "כניסה",
+  // אנגלית
+  "from", "since", "starting", "start", "arriving", "arrive", "arrival",
+  "checkin", "in",
+]);
+const DEPARTURE_MARKERS = new Set([
+  // עברית
+  "עד", "ועד", "ל", "לה", "ליום", "לתאריך", "עזיבה", "יציאה",
+  "עוזב", "עוזבת", "עוזבים", "יוצא", "יוצאת", "יוצאים", "אאוט", "מפנה",
+  // אנגלית
+  "until", "till", "to", "thru", "through", "by",
+  "departure", "departing", "depart", "leaving", "leave", "checkout", "out",
+]);
+
+// מילים "שקופות" שאינן מסגירות תפקיד — נזרקות מסוף החלון כדי שנגיע
+// למילה שכן מסגירה. בלעדיהן "עד יום 21/7" היה נראה חסר סימן ("יום"),
+// ונקרא בטעות כהגעה.
+const NEUTRAL_WORDS = new Set([
+  "ה", "ב", "בה", "יום", "ביום", "תאריך", "בתאריך", "התאריך", "בערך", "בסביבות",
+  "the", "on", "at", "of", "day", "date", "around", "about",
+]);
+
+// המילה המשמעותית האחרונה שלפני התאריך. הספרות עצמן אינן אותיות ולכן
+// נופלות מהפיצול — כך שגם ב-"מ-20/7 ל-23/7" המילה שלפני התאריך השני
+// היא "ל" ולא "20/7". החלון מוגבל ל-40 תווים: מילה רחוקה יותר אינה
+// מתארת את התאריך הזה, ואסור לה להשפיע עליו.
+function markerBefore(prefix) {
+  const words = String(prefix).slice(-40).split(/[^A-Za-z֐-׿]+/).filter(Boolean);
+  while (words.length && NEUTRAL_WORDS.has(words[words.length - 1].toLowerCase())) words.pop();
+  const last = (words[words.length - 1] || "").toLowerCase();
+  if (ARRIVAL_MARKERS.has(last))   return "arrival";
+  if (DEPARTURE_MARKERS.has(last)) return "departure";
+  return null;
+}
+
+// "היום" / "מחר" / today / tomorrow — עם המיקום שלהם, כדי שגם להם
+// ייקבע תפקיד לפי מה שכתוב לפניהם ("עד מחר" = עזיבה).
+// ⚠️ \b לא עובד על עברית: הוא מוגדר לפי [A-Za-z0-9_], ואות עברית היא
+// "לא-מילה" — כך ש-/\bהיום\b/ לעולם לא מתאים בתחילת מחרוזת. לכן גבולות
+// מפורשים לעברית, ו-\b רק לאנגלית. התחילית האופציונלית מכסה צורות
+// כמו "מהיום" / "למחר" שנדבקות למילה בעברית.
+function findRelToken(text) {
+  const he = /(?:^|[\s,])[מבלו]?(היום|מחר)(?=$|[\s,.!?])/.exec(text);
+  if (he) return { index: he.index, days: he[1] === "היום" ? 0 : 1 };
+  const en = /\b(today|tomorrow)\b/i.exec(text);
+  if (en) return { index: en.index, days: en[1].toLowerCase() === "today" ? 0 : 1 };
+  return null;
+}
+
 export function validateStayDates(raw, now = new Date()) {
   const text = String(raw ?? "").trim();
   if (!text) return { ok: false, reason: "empty" };
   if (text.length > 120) return { ok: false, reason: "unclear" };
 
   const today = israelToday(now);
+  const toks  = findDateTokens(text);
 
-  const nightsM = text.match(/(\d{1,3})\s*(?:לילות|לילה|nights?)/i);
+  // ממסכים את התאריכים לפני חיפוש "לילות"/"היום" — אחרת הספרות שבתוך
+  // התאריך נשאבות לחיפושים האחרים: "21/7 לילה" היה נקרא כ-"7 לילות".
+  let masked = text;
+  for (const t of toks) {
+    masked = masked.slice(0, t.index) + "#".repeat(t.len) + masked.slice(t.index + t.len);
+  }
+
+  const nightsM = masked.match(/(\d{1,3})\s*(?:לילות|לילה|nights?)/i);
   // "לילה אחד" / "one night" — נפוץ בדיבור, ואין בו ספרה.
   const nights  = nightsM ? +nightsM[1]
-                : /לילה\s+אחד/.test(text) || /\bone\s+night\b/i.test(text) ? 1
+                : /לילה\s+אחד/.test(masked) || /\bone\s+night\b/i.test(masked) ? 1
                 : null;
+  if (nights !== null && nights < 1)          return { ok: false, reason: "not_after" };
+  if (nights !== null && nights > MAX_NIGHTS) return { ok: false, reason: "too_long" };
 
-  // ⚠️ \b לא עובד על עברית: הוא מוגדר לפי [A-Za-z0-9_], ואות עברית היא
-  // "לא-מילה" — כך ש-/\bהיום\b/ לעולם לא מתאים בתחילת מחרוזת. לכן גבולות
-  // מפורשים לעברית, ו-\b רק לאנגלית. התחילית האופציונלית מכסה צורות
-  // כמו "מהיום" / "למחר" שנדבקות למילה בעברית.
-  const heWord = (w) => new RegExp(`(?:^|[\\s,])[מבלו]?${w}(?=$|[\\s,.!?])`).test(text);
-  const rel = heWord("היום") || /\btoday\b/i.test(text) ? 0
-            : heWord("מחר") || /\btomorrow\b/i.test(text) ? 1
-            : null;
+  // ── איסוף ההתייחסויות ליום, כל אחת עם התפקיד שלה ─────
+  const refs = toks.map(t => ({
+    index: t.index, tok: t, rel: null, role: markerBefore(text.slice(0, t.index)),
+  }));
+  const rt = findRelToken(masked);
+  if (rt) refs.push({ index: rt.index, tok: null, rel: rt.days, role: markerBefore(text.slice(0, rt.index)) });
+  refs.sort((a, b) => a.index - b.index);
 
-  const toks = findDateTokens(text);
+  // תאריך יחסי נקבע מייד; תאריך מספרי צריך השלמת שנה, ולכן תלוי בתפקיד
+  // ובנקודת הייחוס.
+  const resolve = (ref, base, kind) =>
+    ref.rel !== null ? addDays(today, ref.rel) : resolveToken(ref.tok, base, kind);
+
+  if (refs.length === 0) return { ok: false, reason: nights != null ? "no_arrival" : "no_dates" };
+  if (refs.length > 2)   return { ok: false, reason: "ambiguous" };
+
   let checkIn = null, checkOut = null;
 
-  if (rel !== null) {
-    checkIn = addDays(today, rel);
-    if (toks.length >= 1)   checkOut = resolveToken(toks[0], checkIn, "departure");
-    else if (nights != null) checkOut = addDays(checkIn, nights);
-    else return { ok: false, reason: "one_date" };
-  } else if (toks.length >= 2) {
-    checkIn  = resolveToken(toks[0], today, "arrival");
-    if (!checkIn) return { ok: false, reason: "bad_date" };
-    checkOut = resolveToken(toks[1], checkIn, "departure");
-  } else if (toks.length === 1) {
+  if (refs.length === 1) {
+    const r = refs[0];
     if (nights == null) return { ok: false, reason: "one_date" };
-    checkIn = resolveToken(toks[0], today, "arrival");
-    if (!checkIn) return { ok: false, reason: "bad_date" };
-    checkOut = addDays(checkIn, nights);
+
+    if (r.role === "departure") {
+      // ⭐ התיקון: "4 לילות עד ה-21/7" — התאריך הוא העזיבה, וההגעה
+      //    מחושבת אחורה ממנו. נקודת הייחוס להשלמת שנה היא אתמול, כדי
+      //    שעזיבה *היום* לא "תתגלגל" לשנה הבאה.
+      checkOut = resolve(r, addDays(today, -1), "departure");
+      if (!checkOut) return { ok: false, reason: "bad_date" };
+      checkIn  = addDays(checkOut, -nights);
+    } else {
+      checkIn = resolve(r, today, "arrival");
+      if (!checkIn) return { ok: false, reason: "bad_date" };
+      checkOut = addDays(checkIn, nights);
+    }
   } else {
-    return { ok: false, reason: nights != null ? "no_arrival" : "no_dates" };
+    const [a, b] = refs;
+    // שני תאריכים שסומנו באותו תפקיד ("מ-20/7 מ-23/7") אינם ניתנים
+    // להכרעה — ומוטב לשאול שוב מאשר לנחש.
+    if (a.role && a.role === b.role) return { ok: false, reason: "ambiguous" };
+
+    // סימן גובר על מיקום; בהיעדר סימן — ראשון הגעה, שני עזיבה.
+    const flipped = a.role === "departure" || b.role === "arrival";
+    const arrRef  = flipped ? b : a;
+    const depRef  = flipped ? a : b;
+
+    checkIn = resolve(arrRef, today, "arrival");
+    if (!checkIn) return { ok: false, reason: "bad_date" };
+    checkOut = resolve(depRef, checkIn, "departure");
   }
 
   if (!checkIn || !checkOut) return { ok: false, reason: "bad_date" };
@@ -225,6 +337,9 @@ export function validateStayDates(raw, now = new Date()) {
   if (n > MAX_NIGHTS) return { ok: false, reason: "too_long" };
   // הגעה בעבר — מלבד אתמול, שנשאר קביל (אורח שמאחר בלילה).
   if (checkIn.getTime() < today.getTime() - DAY_MS) return { ok: false, reason: "past" };
+  // מספר לילות שנמסר במפורש וסותר את התאריכים ("20/7 - 23/7, 5 לילות")
+  // הוא סתירה אמיתית בקלט. לא בוחרים צד — שואלים.
+  if (nights != null && nights !== n) return { ok: false, reason: "conflict" };
 
   return { ok: true, value: { checkIn: asYmd(checkIn), checkOut: asYmd(checkOut), nights: n } };
 }

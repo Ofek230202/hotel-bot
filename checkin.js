@@ -120,17 +120,20 @@ function israelDateTime(ymd, hhmm = "12:00") {
 // כדי שהניסוח יהיה זהה בכל מקום ולא ייווצר drift. ברור ופשוט לאורח.
 export function depositExplainer(lang = "he") {
   const amt = shekels(depositAmount());
+  // ⚠️ "היתרה תשוחרר" בלי סייג יוצר ציפייה שגויה: כשהחיובים גדולים
+  //    מהפיקדון אין שום יתרה, ולהפך — מחייבים את ההפרש. לכן כל שורה
+  //    מנוסחת כך שהיא נכונה גם כשהיתרה היא אפס.
   return lang === "he"
     ? `🔒 הפיקדון (${amt}) מוקפא בכרטיסך להבטחת השהייה — זו הקפאה בלבד, לא חיוב.\n` +
       "בצ'ק אאוט:\n" +
       "- אם אין חיובים — לא מבוצע חיוב, וההקפאה משוחררת על ידי חברת האשראי תוך 3-5 ימי עסקים.\n" +
-      "- אם יש חיובים — הם ינוכו מהפיקדון, והיתרה משוחררת על ידי חברת האשראי תוך 3-5 ימי עסקים.\n" +
-      "- אם החיובים גדולים מהפיקדון — ההפרש יחויב מאותו כרטיס אשראי שהזנת בפיקדון."
+      "- אם יש חיובים — הם ינוכו מהפיקדון, ויתרת הפיקדון (אם נותרה) משוחררת באותו אופן.\n" +
+      "- אם החיובים גדולים מהפיקדון — הפיקדון ינוכה במלואו, לא תיוותר יתרה, וההפרש יחויב בנפרד מאותו כרטיס."
     : `🔒 The ${amt} deposit is held on your card to secure your stay — a hold only, not a charge.\n` +
       "At check-out:\n" +
       "- If there are no charges — nothing is charged, and the hold is released by your card issuer within 3–5 business days.\n" +
-      "- If there are charges — they are deducted from the deposit, and the remainder is released by your card issuer within 3–5 business days.\n" +
-      "- If charges exceed the deposit — the difference is charged to the same card you used for the deposit.";
+      "- If there are charges — they are deducted from the deposit, and any remaining balance is released the same way.\n" +
+      "- If charges exceed the deposit — the deposit is deducted in full, no balance remains, and the difference is charged separately to the same card.";
 }
 
 export const FOLIO_CATEGORIES = {
@@ -283,7 +286,7 @@ export async function completeCheckin(reservationId, roomNumber) {
       `ברוכים הבאים, *${name}*! 🌟\n\n` +
       `🚪 *חדר:* ${res.roomNumber}\n` +
       (stayLines ? `${stayLines}\n` : "") +
-      `🔑 *כרטיס לחדר ימתין לך מוכן בקבלה* — גש לאסוף אותו, הוא מתוקף לכל משך השהייה\n\n` +
+      `🔑 *כרטיס החדר מחכה לך מוכן בקבלה* — אפשר לאסוף אותו בכל שעה, והוא מתוקף לכל משך השהייה\n\n` +
       `${depositExplainer("he")}\n\n` +
       `📶 WiFi: ${cfg.wifi.name} | ${cfg.wifi.password}\n` +
       `🍳 ארוחת בוקר: ${bf.hours} | ${bf.location}\n` +
