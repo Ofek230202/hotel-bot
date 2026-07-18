@@ -13,6 +13,7 @@ import { startCheckin, processCheckout, getActiveReservation, getPendingReservat
 import { email }                                          from "./email/index.js";
 import { idVerify }                                       from "./idverify/index.js";
 import { concierge, REQUEST_TYPES }                       from "./concierge/index.js";
+import { detectEmergency, emergencyGuestMessage, emergencyKindHe, emergencyDial } from "./emergency.js";
 
 dotenv.config();
 
@@ -190,6 +191,11 @@ const FIELD_LABELS = {
     turnaround: "זמן אספקה", express: "שירות אקספרס", type: "סוג",
     ev_charging: "טעינת רכב חשמלי", height_limit: "הגבלת גובה", duration: "משך",
     happy_hour: "שעת האפי האוור", price_note: "לתשומת לב לגבי המחירים",
+    // ── בטיחות (בריכה וכו') + כשרות ──
+    safety: "בטיחות", lifeguard: "מציל", depth: "עומק", kosher: "כשרות",
+    // ── מבנה המלון (config.building) ──
+    floors: "קומות", lobby: "לובי", reception: "קבלה", elevators: "מעליות",
+    accessibility: "נגישות", key_areas: "מה נמצא בכל קומה",
     // ── ידע הקונסיירז' על הסביבה (config.local_area) ──
     neighbourhood: "השכונה והמיקום", restaurants: "מסעדות מומלצות באזור",
     attractions: "אטרקציות ומקומות לבקר", tours: "טיולים וסיורים",
@@ -211,6 +217,11 @@ const FIELD_LABELS = {
     turnaround: "Turnaround", express: "Express service", type: "Type",
     ev_charging: "EV charging", height_limit: "Height limit", duration: "Duration",
     happy_hour: "Happy hour", price_note: "About the prices",
+    // ── Safety (pool, etc.) + kosher ──
+    safety: "Safety", lifeguard: "Lifeguard", depth: "Depth", kosher: "Kosher",
+    // ── Building / layout (config.building) ──
+    floors: "Floors", lobby: "Lobby", reception: "Reception", elevators: "Lifts",
+    accessibility: "Accessibility", key_areas: "What's on each floor",
     // ── Concierge's knowledge of the area (config.local_area) ──
     neighbourhood: "The neighbourhood", restaurants: "Recommended restaurants nearby",
     attractions: "Attractions & places to visit", tours: "Tours & day trips",
@@ -290,6 +301,10 @@ function buildPrompt(session, lang) {
   // השירותים, ולכן גם כאן אפשר להוסיף קטגוריה ב-config בלי לגעת בקוד.
   const area = renderFields(cfg.local_area?.[L] || cfg.local_area?.en || {}, L);
 
+  // מבנה המלון — ידע בסיסי שהבוט חייב להכיר (איפה הלובי, הקבלה, המעליות),
+  // כדי שלא ישאל את האורח שאלות מגוחכות על מבנה המלון שהוא עצמו עובד בו.
+  const building = renderFields(cfg.building?.[L] || cfg.building?.en || {}, L);
+
   if (lang === "he") {
     return `אתה הקונסיירז׳ הדיגיטלי של ${cfg.name_he}, מלון יוקרה 5 כוכבים.
 השעה הנוכחית בישראל: ${nowFull}
@@ -315,6 +330,13 @@ function buildPrompt(session, lang) {
   "לאיזו שעה נוח לך?".
 - פנייה לאורח: בגוף שני, בנימוס טבעי. אל תמציא צורות פועל.
 - אל תדביק את מה שהאורח כתב לתוך משפט שלך. הפנייה בשם היא משפט נפרד.
+- ⛔ *עקביות בפנייה — חוק, לא המלצה.* אל תתחלף בין "לכם" ל"לכן", בין
+  "אתם" ל"אתן", או בין יחיד לרבים באותה שיחה. בחר צורה אחת בתחילת
+  השיחה והישאר איתה עד סופה. ברירת המחדל: אורח בודד → לשון יחיד; זוג
+  או קבוצה → לשון רבים בזכר ("לכם", "אתם", "שלכם", "ברוכים הבאים"),
+  גם אם יש נשים בקבוצה — זו הצורה התקנית לרבים מעורבים בעברית. עברי
+  לצורת נקבה ("לך", "את") רק אם ברור שמדובר באישה אחת. לפני כל הודעה,
+  ודא שכל כינויי הגוף והפעלים בה מתאימים זה לזה במין ובמספר.
 
 🚨 חירום — עדיפות עליונה, לפני כל דבר אחר:
 אם האורח מתאר פציעה, מצב רפואי, אש, ריח/דליפת גז, או סכנה מיידית — זהה זאת מיד (לפי המשמעות, לא לפי מילה מסוימת):
@@ -338,6 +360,17 @@ function buildPrompt(session, lang) {
 - אם אתה באמת לא יודע — שאל *שאלה אחת* קצרה שתמקד (עם מי? איזה סגנון? מתי?)
   והמלץ. אף פעם לא יותר משאלה אחת ברצף, ולעולם אל תשאל מה שכבר נאמר לך.
 - זכור מה האורח סיפר קודם בשיחה (משפחה עם ילדים, יום נישואים, טבעוני) והתאם.
+
+🎯 *כבד את הבקשה המדויקת — אל תחליף קטגוריה:*
+- כשאורח מבקש משהו ספציפי (מסעדה *בשרית*, *חלבית*, *כשרה*, סושי, טבעוני,
+  מטבח מסוים) — המלץ *אך ורק* על מקום שבאמת עונה על הבקשה הזו לפי הנתונים.
+  לכל מסעדה בנתונים יש שדה *סוג מטבח* ושדה *כשרות* — קרא אותם והתאם.
+- ⛔ לעולם אל תציע מקום חלבי/דגים למי שביקש בשרי, מקום לא-כשר למי שביקש
+  כשר, או מטבח אחר מזה שהתבקש — "משהו דומה" הוא לא מה שהאורח ביקש, וזו
+  תשובה שנכשלת. עדיף מקום אחד שמתאים בול מאשר שלושה שלא.
+- אם *אין* בנתונים מקום שעונה על הבקשה המדויקת — אל תמתיח את האמת ואל
+  תציע תחליף. אמור בכנות: *"אין לי כרגע מקום בשרי/כשר שאני עומד מאחוריו
+  באזור — אשמח לבדוק ולחזור אליך"*, והוסף [RECEPTION:<מה האורח מחפש>].
 
 ⛔⛔ אסור להמציא מקומות — החוק החשוב ביותר בהמלצות:
 - מותר להמליץ *אך ורק* על מקומות שכתובים בנתונים למטה (שירותי המלון + הסביבה).
@@ -439,6 +472,11 @@ WiFi: רשת ${cfg.wifi.name} | סיסמה: ${cfg.wifi.password}
 צ׳ק אין מוקדם: ${cfg.early_checkin ? "זמין בתיאום" : "לא זמין"}
 צ׳ק אאוט מאוחר: ${cfg.late_checkout ? "זמין בתיאום" : "לא זמין"}
 
+🏢 מבנה המלון — אתה עובד כאן ומכיר את הבניין. אל תשאל את האורח שאלות
+מבנה שאתה אמור לדעת ("באיזו קומה הלובי?"). כברירת מחדל בכל מלון: הלובי
+והקבלה בקומת הקרקע. אלה הפרטים הספציפיים של המלון הזה:
+${building}
+
 שירותי המלון:
 ${svcs}
 
@@ -521,6 +559,20 @@ system returning records.
   ask for something you were already told.
 - Remember what the guest mentioned earlier in the conversation (family with children,
   an anniversary, vegan) and tailor to it.
+
+🎯 *Honour the exact request — never swap the category:*
+- When a guest asks for something specific (a *meat* restaurant, a *dairy* one,
+  *kosher*, sushi, vegan, a particular cuisine) — recommend *only* a place that
+  genuinely meets that request in the data. Every restaurant has a *Cuisine* field
+  and a *Kosher* field — read them and match.
+- ⛔ Never offer a dairy/fish place to someone who asked for meat, a non-kosher
+  place to someone who asked for kosher, or a different cuisine than the one asked
+  for. "Something similar" is not what the guest asked for, and it is a failed answer.
+  One place that fits exactly beats three that don't.
+- If *nothing* in the data meets the exact request — don't stretch the truth and
+  don't offer a substitute. Say honestly: *"I don't have a meat/kosher place nearby
+  I'd stand behind just yet — let me look into it and come back to you"*, and append
+  [RECEPTION:<what the guest is looking for>].
 
 ⛔⛔ NEVER INVENT A PLACE — the most important rule in recommendations:
 - You may recommend *only* places written in the data below (hotel services + the area).
@@ -631,6 +683,12 @@ Check-in: ${cfg.checkin_time} | Check-out: ${cfg.checkout_time}
 Early check-in: ${cfg.early_checkin ? "Available upon request" : "Not available"}
 Late check-out: ${cfg.late_checkout ? "Available upon request" : "Not available"}
 
+🏢 THE BUILDING — you work here and know the layout. Never ask the guest a
+structural question you're supposed to know ("which floor is the lobby on?").
+Default in every hotel: the lobby and reception are on the ground floor. Here
+are this hotel's specifics:
+${building}
+
 Hotel services:
 ${svcs}
 
@@ -703,8 +761,14 @@ function parseConciergeRequest(payload) {
 
 // מגיש את הבקשה דרך שכבת concierge/ המבודדת ומחזיר את גוף ההתראה לצוות.
 // היום המוק רק מקצה אסמכתא — הביצוע בפועל הוא של הקונסיירז' האנושי
-// שמקבל את ההודעה הזו. כשיתחבר ספק אמיתי, `status` יחזור "confirmed"
-// וכאן יתווסף עדכון לאורח. נכשל? הבקשה עדיין עוברת לאדם — בלי אסמכתא.
+// שמקבל את ההודעה הזו. לכן הבוט אומר לאורח "העברתי את בקשתך ואחזור עם
+// אישור", ולעולם לא "הזמנתי לך שולחן" (ראה חוק האמינות ב-buildPrompt).
+//
+// 🔌 חיבור עתידי לשירות הזמנות אמיתי (Tabit/OpenTable/גט/ספא-PMS):
+//    נעשה במקום *אחד* בלבד — concierge/index.js (החלפת MockConciergeProvider
+//    בספק אמיתי). כשהספק יחזיר `status: "confirmed"` עם אישור אמיתי, כאן
+//    (ורק אז) יתווסף עדכון "ההזמנה אושרה" לאורח, ורק אז מותר לבוט לומר
+//    שההזמנה בוצעה. עד אז — "הבקשה הועברה". נכשל? הבקשה עדיין עוברת לאדם.
 async function submitConciergeRequest(payload, session, phone) {
   const { type, details } = parseConciergeRequest(payload);
 
@@ -1158,6 +1222,25 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
   // ── ממתינים לפיקדון ──────────────────────────────────
   if (stage === "waiting_payment") {
     await promptStage(phone, "waiting_payment", lang);
+    return;
+  }
+
+  // ── רשת ביטחון: שלב לא מזוהה → לעולם לא שקט (Bug #2) ──
+  // אם ה-checkinStage קיבל ערך שאף ענף למעלה לא מטפל בו, אסור
+  // ש-handleCheckin יחזור בשקט. משדרים מחדש את השלב הנוכחי אם ניתן,
+  // אחרת מאתחלים לשם — האורח תמיד מקבל מענה ולא נתקע.
+  console.error(`⚠️ handleCheckin: שלב לא מזוהה "${stage}" (${phone.slice(-8)}) — משדרים מחדש כדי לא להשתיק את הבוט.`);
+  const known = new Set(["waiting_name", "waiting_reservation", "waiting_dates",
+    "waiting_dates_confirm", "waiting_id", "waiting_terms", "waiting_payment"]);
+  if (known.has(stage)) {
+    await promptStage(phone, stage, lang);
+  } else {
+    patchSession(phone, { checkinStage: "waiting_name", idAttempts: 0 });
+    await promptStage(phone, "waiting_name", lang, {
+      prefix: lang === "he"
+        ? `בוא נמשיך בצ'ק אין 😊`
+        : `Let's continue your check-in 😊`,
+    });
   }
 }
 
@@ -1353,6 +1436,87 @@ async function confirmCheckout(phone, session, lang) {
   }
 }
 
+// ════════════════════════════════════════════════════════
+//  חירום — טיפול דטרמיניסטי, לפני כל דבר אחר (Bug קריטי)
+//  ----------------------------------------------------------
+//  נקרא מ-processIncoming ברגע שזוהה חירום, *לפני* מכונת הצ'ק אין,
+//  הצ'ק אאוט וה-AI. הסדר קריטי: קודם שולחים לאורח את ההנחיה (לפני כל
+//  await שעלול לזרוק) — כך שגם אם ההסלמה לצוות תיכשל, האורח כבר קיבל
+//  את מספרי החירום. כל שלב עטוף ב-try/catch משלו: שום כשל לא משתיק את
+//  ההנחיה שהאורח כבר קיבל.
+// ════════════════════════════════════════════════════════
+async function handleEmergency(phone, text, lang, kind) {
+  const raw = String(text ?? "").trim();
+
+  // 1) האורח מקבל את ההנחיה *מיד* — הדבר הראשון, לפני כל דבר שעלול לזרוק.
+  try {
+    await wa(phone, emergencyGuestMessage(kind, lang), { lang });
+  } catch (e) {
+    console.error("🚨 כשל בשליחת הנחיית החירום לאורח:", e?.message || e);
+  }
+
+  const s = getSession(phone);
+
+  // 2) תיעוד מובנה של האירוע (לא חוסם — נכשל בשקט ללוג בלבד).
+  try {
+    logIncident({
+      phone,
+      roomNumber:  s.roomNumber,
+      guestName:   s.guestName,
+      kind,
+      description: `[${kind}] ${raw.slice(0, 300)}`,
+      channel:     "whatsapp",
+    });
+  } catch (e) {
+    console.error("🚨 כשל בתיעוד אירוע החירום:", e?.message || e);
+  }
+
+  // 3) הסלמה מובטחת לצוות הביטחון (אדם) — בעדיפות גבוהה, בעברית.
+  try {
+    await notifyStaff({
+      dept:       "security",
+      roomNumber: s.roomNumber,
+      guestName:  s.guestName,
+      message:
+        `🚨 *חירום — ${emergencyKindHe(kind)}*\n` +
+        `האורח דיווח: "${raw.slice(0, 400)}"\n` +
+        `📱 ${phone}\n` +
+        `🗣️ שפת האורח: ${lang === "en" ? "אנגלית" : "עברית"}\n` +
+        `📞 האורח קיבל הנחיה להתקשר ${emergencyDial(kind)} (וכל מספרי החירום).\n` +
+        `⏱️ נדרש טיפול אנושי *מיידי* — ביטחון/מנהל תורן.`,
+      priority: "high",
+    });
+  } catch (e) {
+    console.error("🚨 כשל בהסלמת החירום לצוות:", e?.message || e);
+  }
+
+  // 3ב) יתירות בטיחותית: מסלימים *גם* לקבלה, כדי שלא נסתמך על מספר
+  //     ביטחון בודד שאולי לא מאויש באותו רגע. שני אנשים מקבלים התראה.
+  try {
+    await notifyStaff({
+      dept:       "reception",
+      roomNumber: s.roomNumber,
+      guestName:  s.guestName,
+      message:
+        `🚨 *גיבוי חירום — ${emergencyKindHe(kind)}* (הסלמה מקבילה לביטחון)\n` +
+        `האורח דיווח: "${raw.slice(0, 400)}"\n📱 ${phone}\n` +
+        `ודאו שצוות הביטחון/המנהל התורן מטפל *עכשיו*.`,
+      priority: "high",
+    });
+  } catch (e) {
+    console.error("🚨 כשל בהסלמת גיבוי החירום לקבלה:", e?.message || e);
+  }
+
+  // 4) שמירת ההקשר בהיסטוריה — כדי שהמשך השיחה ("הלו?", עדכון) יגיע
+  //    ל-AI עם ההקשר המלא ולא כאילו כלום לא קרה.
+  try {
+    if (raw) pushHistory(phone, "user", raw);
+    pushHistory(phone, "assistant", emergencyGuestMessage(kind, lang));
+  } catch (e) {
+    console.error("🚨 כשל בשמירת היסטוריית החירום:", e?.message || e);
+  }
+}
+
 // ── שער הכניסה — לעולם לא משאיר אורח בלי מענה (Bug #2) ──
 // כל שגיאה, מכל מקום בזרימה, נתפסת כאן: האורח תמיד מקבל הודעה,
 // והתקלה מוסלמת לקבלה (אדם) כדי שמישהו יטפל. אף פעם לא שקט מוחלט.
@@ -1409,6 +1573,17 @@ async function processIncoming(phone, text, media = null) {
       ? (session.lang || signal || "en")
       : (signal || session.lang || "en");
   if (session.lang !== lang) patchSession(phone, { lang });
+
+  // ── 🚨 חירום — קודם לכל דבר אחר (בטיחות) ─────────────
+  // זיהוי דטרמיניסטי (emergency.js), לא תלוי ב-AI, שרץ *לפני* מכונת
+  // הצ'ק אין, הצ'ק אאוט וה-AI. אורח שכותב "יש פצוע" — גם באמצע צ'ק אין,
+  // גם כשה-AI למטה — מקבל מיד את מספרי החירום, והביטחון מוסלם. זו
+  // ההגנה מפני השתיקה בחירום. מזהים על הטקסט הגולמי (לפני כל עיבוד).
+  const emergency = detectEmergency(text);
+  if (emergency) {
+    await handleEmergency(phone, text, lang, emergency.kind);
+    return;
+  }
 
   // הודעה ראשונה: שולחים תפריט/פתיחה רק אם זו ברכה כללית בלבד ("שלום"/"היי").
   // אם יש בהודעה הראשונה כוונה ברורה (צ'ק אין/אאוט, בקשת מחלקה, שאלה) —

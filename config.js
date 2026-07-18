@@ -60,6 +60,31 @@ const DEFAULTS = {
   early_checkin: true,
   late_checkout: true,
 
+  // ── Building / layout (מבנה המלון) ───────────────────
+  // ⚠️ נתוני דוגמה — כל מלון מזין את המבנה האמיתי שלו. אבל *ידע בסיסי*
+  //    חייב להיות כאן כדי שהבוט לא ישאל את האורח שאלות מגוחכות ("באיזו
+  //    קומה הלובי?"). הבוט הוא איש צוות — הוא *יודע* את מבנה המלון.
+  //    הכללים הגנריים (לובי וקבלה בקומת הקרקע) כתובים גם ב-prompt כברירת
+  //    מחדל, כך שגם מלון שלא ימלא את הסעיף הזה עדיין לא ישאל שטויות.
+  building: {
+    en: {
+      floors:        "12 guest floors above ground, plus 2 underground parking levels (-1, -2)",
+      lobby:         "The lobby is on the ground floor (Level 0), at the main entrance",
+      reception:     "The front desk / reception is in the lobby, ground floor, staffed 24/7",
+      elevators:     "Four guest lifts by the lobby serve all floors, including the parking levels",
+      accessibility: "Step-free access from the main entrance; accessible lifts and 6 accessible rooms",
+      key_areas:     "Restaurant & breakfast Level 1 · Fitness Level 2 · Spa Level 3 · Pool & Sky Bar rooftop Level 12 · Business centre Level 1",
+    },
+    he: {
+      floors:        "12 קומות אירוח מעל הקרקע, ועוד 2 קומות חניון תת-קרקעי (‎-1, ‎-2)",
+      lobby:         "הלובי נמצא בקומת הקרקע (קומה 0), בכניסה הראשית",
+      reception:     "דלפק הקבלה נמצא בלובי, בקומת הקרקע, ומאויש 24/7",
+      elevators:     "ארבע מעליות אורחים ליד הלובי משרתות את כל הקומות, כולל קומות החניון",
+      accessibility: "גישה נטולת מדרגות מהכניסה הראשית; מעליות נגישות ו-6 חדרים נגישים",
+      key_areas:     "מסעדה וארוחת בוקר קומה 1 · חדר כושר קומה 2 · ספא קומה 3 · בריכה וסקיי בר בגג קומה 12 · מרכז עסקים קומה 1",
+    },
+  },
+
   // ── Deposit ───────────────────────────────────────────
   // סכום פיקדון השהייה, באגורות (50000 = ₪500). מקור אמת אחד: משמש
   // את שכבת התשלום (checkin.js), את הסבר הפיקדון ואת תנאי השהייה —
@@ -165,7 +190,10 @@ const DEFAULTS = {
         note:      "Heated year-round to 28°C",
         access:    "Complimentary for hotel guests — present your room key",
         amenities: "Towels, sun loungers and shaded cabanas provided at no charge; poolside bar service 10:00–19:00",
-        children:  "Children under 14 must be accompanied by an adult at all times. No lifeguard on duty",
+        depth:     "1.2 m to 1.8 m; there is no shallow children's pool",
+        lifeguard: "A certified lifeguard is on duty 09:00–19:00. Outside those hours swimming is at your own risk and is not recommended",
+        children:  "Children under 14 must be accompanied and actively supervised by an adult at all times, whether or not a lifeguard is on duty",
+        safety:    "Please shower before entering, no diving and no running on the wet deck, and no glassware at the poolside. A ring buoy and a first-aid station are by the lifeguard chair, and a house phone by the entrance reaches security immediately",
       },
       he: {
         name:      "בריכת הגג",
@@ -174,7 +202,10 @@ const DEFAULTS = {
         note:      "מחוממת כל השנה ל-28°C",
         access:    "ללא תשלום לאורחי המלון — יש להציג את כרטיס החדר",
         amenities: "מגבות, מיטות שיזוף וקבנות מוצלות ללא תשלום; שירות בר ליד הבריכה 10:00–19:00",
-        children:  "ילדים מתחת לגיל 14 בליווי מבוגר בלבד. אין מציל בשירות",
+        depth:     "עומק 1.2 מ' עד 1.8 מ'; אין בריכת פעוטות נפרדת",
+        lifeguard: "מציל מוסמך בשירות בין 09:00 ל-19:00. מחוץ לשעות אלה הרחצה באחריות האורח ואינה מומלצת",
+        children:  "ילדים מתחת לגיל 14 בליווי והשגחה פעילה של מבוגר בכל עת, בין אם יש מציל בשירות ובין אם לא",
+        safety:    "יש להתקלח לפני הכניסה למים, אין לקפוץ ראש ואין לרוץ על הדק הרטוב, ואין להכניס כלי זכוכית לאזור הבריכה. גלגל הצלה ועמדת עזרה ראשונה נמצאים ליד כיסא המציל, וטלפון פנימי ליד הכניסה מחובר ישירות למוקד הביטחון",
       },
     },
 
@@ -399,20 +430,25 @@ const DEFAULTS = {
         "and inside a quarter full of restaurants, bars, boutiques and galleries",
 
       restaurants: [
-        { name: "Yam", cuisine: "Seafood, contemporary Israeli", distance: "6 min walk",
-          price_range: "₪140–₪220 per diner", good_for: "A special evening, sunset over the sea",
+        { name: "HaEsh", cuisine: "Meat — grill & steakhouse", kosher: "Kosher (meat, Rabbinate certified)",
+          distance: "9 min walk", price_range: "₪120–₪200 per diner",
+          good_for: "Meat lovers, a hearty dinner, groups",
+          tip: "The place for a proper meat meal nearby — no dairy on the menu; ask for the mixed grill" },
+        { name: "Yam", cuisine: "Seafood & fish", kosher: "Not kosher (serves shellfish)",
+          distance: "6 min walk", price_range: "₪140–₪220 per diner",
+          good_for: "A special evening, sunset over the sea",
           tip: "Ask for a table on the upper terrace — I'll note it on the reservation" },
-        { name: "Sofia", cuisine: "Italian, wood-fired oven", distance: "10 min walk",
-          price_range: "₪90–₪140 per diner", good_for: "Families, a relaxed dinner",
+        { name: "Sofia", cuisine: "Italian, dairy — wood-fired oven", kosher: "Not kosher",
+          distance: "10 min walk", price_range: "₪90–₪140 per diner", good_for: "Families, a relaxed dinner",
           tip: "Warm and noisy in the best way; the kids' pizza is made to order" },
-        { name: "Aleph", cuisine: "Levantine small plates", distance: "12 min walk",
-          price_range: "₪80–₪130 per diner", good_for: "Couples, a lively evening",
+        { name: "Aleph", cuisine: "Levantine small plates (meat & mezze)", kosher: "Not kosher",
+          distance: "12 min walk", price_range: "₪80–₪130 per diner", good_for: "Couples, a lively evening",
           tip: "No reservations before 19:00 — go early or let me get you on the list" },
-        { name: "Nur", cuisine: "Vegetarian & vegan", distance: "8 min walk",
-          price_range: "₪70–₪110 per diner", good_for: "Lunch, plant-based dining",
+        { name: "Nur", cuisine: "Vegetarian & vegan", kosher: "Kosher (dairy & parve)",
+          distance: "8 min walk", price_range: "₪70–₪110 per diner", good_for: "Lunch, plant-based dining",
           tip: "Everything on the menu is vegan; the mushroom dish is the one to order" },
-        { name: "Beit Kaffe", cuisine: "Café, breakfast and light meals", distance: "4 min walk",
-          price_range: "₪45–₪80 per diner", good_for: "A late breakfast, a working morning",
+        { name: "Beit Kaffe", cuisine: "Café, dairy — breakfast and light meals", kosher: "Kosher (dairy)",
+          distance: "4 min walk", price_range: "₪45–₪80 per diner", good_for: "A late breakfast, a working morning",
           tip: "Open from 07:00 and quiet before 09:00 — the best coffee in the quarter" },
       ],
 
@@ -480,20 +516,24 @@ const DEFAULTS = {
         "בתוך רובע מלא במסעדות, ברים, בוטיקים וגלריות",
 
       restaurants: [
-        { name: "ים", cuisine: "דגים ופירות ים, ישראלית עכשווית", distance: "6 דקות הליכה",
-          price_range: "₪140–₪220 לסועד", good_for: "ערב מיוחד, שקיעה מול הים",
+        { name: "האש", cuisine: "בשרי — גריל וסטייקים", kosher: "כשר (בשרי, בהשגחת הרבנות)",
+          distance: "9 דקות הליכה", price_range: "₪120–₪200 לסועד",
+          good_for: "אוהבי בשר, ארוחת ערב משביעה, קבוצות",
+          tip: "המקום לארוחה בשרית אמיתית באזור — אין חלבי בתפריט; שווה לבקש את המעורב על האש" },
+        { name: "ים", cuisine: "דגים ופירות ים", kosher: "לא כשר (מגישים פירות ים)",
+          distance: "6 דקות הליכה", price_range: "₪140–₪220 לסועד", good_for: "ערב מיוחד, שקיעה מול הים",
           tip: "כדאי לבקש שולחן במרפסת העליונה — אציין את זה בהזמנה" },
-        { name: "סופיה", cuisine: "איטלקית, טאבון", distance: "10 דקות הליכה",
-          price_range: "₪90–₪140 לסועד", good_for: "משפחות, ארוחת ערב רגועה",
+        { name: "סופיה", cuisine: "איטלקית, חלבי — טאבון", kosher: "לא כשר",
+          distance: "10 דקות הליכה", price_range: "₪90–₪140 לסועד", good_for: "משפחות, ארוחת ערב רגועה",
           tip: "חם ורועש במובן הטוב; פיצה לילדים מוכנה בהזמנה" },
-        { name: "אלף", cuisine: "מנות קטנות, מטבח לבנטיני", distance: "12 דקות הליכה",
-          price_range: "₪80–₪130 לסועד", good_for: "זוגות, ערב תוסס",
+        { name: "אלף", cuisine: "מנות קטנות, מטבח לבנטיני (בשרי ומזה)", kosher: "לא כשר",
+          distance: "12 דקות הליכה", price_range: "₪80–₪130 לסועד", good_for: "זוגות, ערב תוסס",
           tip: "לא מקבלים הזמנות לפני 19:00 — או להגיע מוקדם, או שאסדר מקום ברשימה" },
-        { name: "נור", cuisine: "צמחוני וטבעוני", distance: "8 דקות הליכה",
-          price_range: "₪70–₪110 לסועד", good_for: "צהריים, אוכל מהצומח",
+        { name: "נור", cuisine: "צמחוני וטבעוני", kosher: "כשר (חלבי ופרווה)",
+          distance: "8 דקות הליכה", price_range: "₪70–₪110 לסועד", good_for: "צהריים, אוכל מהצומח",
           tip: "כל התפריט טבעוני; מנת הפטריות היא זו שכדאי להזמין" },
-        { name: "בית קפה", cuisine: "בית קפה, בקרים וארוחות קלות", distance: "4 דקות הליכה",
-          price_range: "₪45–₪80 לסועד", good_for: "בוקר מאוחר, בוקר עבודה",
+        { name: "בית קפה", cuisine: "בית קפה, חלבי — בקרים וארוחות קלות", kosher: "כשר (חלבי)",
+          distance: "4 דקות הליכה", price_range: "₪45–₪80 לסועד", good_for: "בוקר מאוחר, בוקר עבודה",
           tip: "פתוח מ-07:00 ושקט לפני 09:00 — הקפה הכי טוב ברובע" },
       ],
 
