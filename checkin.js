@@ -346,47 +346,68 @@ export function getFolioTotal(reservationId) {
 }
 
 // ── Format bill for WhatsApp ──────────────────────────
-export function formatFolio(res, lang = "he") {
+// opts.settled — האם החשבון כבר נסלק (צ'ק אאוט בוצע). משנה *רק* את שורות
+// הסיכום התחתונות מזמן עתיד ("ינוכה", "יחויב") לזמן עבר ("נוכה", "חויב"),
+// ומוסיף את מועד שחרור היתרה — כדי שהחשבון בהודעת הצ'ק אאוט יהיה מקור
+// אמת אחד ומלא, בלי שההודעה תחזור על אותן שורות פעם שנייה (drift/כפילות).
+// ברירת מחדל (preview): זמן עתיד, לתצוגה מקדימה לפני האישור.
+export function formatFolio(res, lang = "he", { settled = false } = {}) {
   const total   = getFolioTotal(res.id);
   const deposit = res.deposit;
+  const he      = lang === "he";
+  const RULE    = "━━━━━━━━━━━━━━━━━━━━";
 
   // כותרת החשבון — כוללת את תאריכי השהייה כפי שהאורח מסר בצ'ק אין,
   // כדי שיוכל לוודא שחויב על התקופה הנכונה.
   const stayShort = formatStayShort(stayOf(res), lang);
-  const header = lang === "he"
+  const header = he
     ? `📋 *סיכום חשבון — חדר ${res.roomNumber}*\n` + (stayShort ? `📆 ${stayShort}\n` : "")
     : `📋 *Bill — Room ${res.roomNumber}*\n` + (stayShort ? `📆 ${stayShort}\n` : "");
 
   if (res.folio.length === 0) {
-    return lang === "he"
+    return he
       ? header +
-        `━━━━━━━━━━━━━━━━━━━━\n✅ אין חיובים\n` +
-        `━━━━━━━━━━━━━━━━━━━━\n💚 אין מה לנכות — לא יבוצע חיוב, וההקפאה על הפיקדון (${shekels(deposit)}) תשוחרר על ידי חברת האשראי תוך 3-5 ימי עסקים`
+        `${RULE}\n✅ אין חיובים\n${RULE}\n` +
+        `💚 ${settled ? "לא בוצע חיוב" : "אין מה לנכות — לא יבוצע חיוב"} — ההקפאה על הפיקדון (${shekels(deposit)}) תשוחרר על ידי חברת האשראי תוך 3-5 ימי עסקים`
       : header +
-        `━━━━━━━━━━━━━━━━━━━━\n✅ No charges\n` +
-        `━━━━━━━━━━━━━━━━━━━━\n💚 Nothing to deduct — no charge will be made, and the ${shekels(deposit)} hold will be released by your card issuer within 3–5 business days`;
+        `${RULE}\n✅ No charges\n${RULE}\n` +
+        `💚 ${settled ? "Nothing was charged" : "Nothing to deduct — no charge will be made"} — the ${shekels(deposit)} hold will be released by your card issuer within 3–5 business days`;
   }
 
   const lines = res.folio.map(item => {
     const cat  = FOLIO_CATEGORIES[item.category] || FOLIO_CATEGORIES.OTHER;
-    const name = lang === "he" ? cat.he : cat.en;
+    const name = he ? cat.he : cat.en;
     return `${cat.icon} ${item.description || name}    ₪${(item.amount/100).toFixed(2)}`;
   }).join("\n");
 
   const totalStr   = (total/100).toFixed(2);
   const depositStr = (deposit/100).toFixed(2);
+  const totals = he
+    ? `סה"כ חיובים:  ₪${totalStr}\nפיקדון:       ₪${depositStr}`
+    : `Total charges:  ₪${totalStr}\nDeposit:        ₪${depositStr}`;
 
+  let outcome;
   if (total <= deposit) {
     const refund = ((deposit - total)/100).toFixed(2);
-    return lang === "he"
-      ? header + `━━━━━━━━━━━━━━━━━━━━\n${lines}\n━━━━━━━━━━━━━━━━━━━━\nסה"כ חיובים:  ₪${totalStr}\nפיקדון:       ₪${depositStr}\n━━━━━━━━━━━━━━━━━━━━\n💳 ינוכה מהפיקדון: ₪${totalStr}\n💚 יתרת הפיקדון שתשתחרר: ₪${refund}`
-      : header + `━━━━━━━━━━━━━━━━━━━━\n${lines}\n━━━━━━━━━━━━━━━━━━━━\nTotal charges:  ₪${totalStr}\nDeposit:        ₪${depositStr}\n━━━━━━━━━━━━━━━━━━━━\n💳 Deducted from deposit: ₪${totalStr}\n💚 Remaining deposit released: ₪${refund}`;
+    outcome = he
+      ? (settled
+          ? `💳 *נוכה מהפיקדון: ₪${totalStr}*\n💚 *יתרת הפיקדון (₪${refund}) תשוחרר* על ידי חברת האשראי תוך *3-5 ימי עסקים*`
+          : `💳 ינוכה מהפיקדון: ₪${totalStr}\n💚 יתרת הפיקדון שתשתחרר: ₪${refund}`)
+      : (settled
+          ? `💳 *Deducted from your deposit: ₪${totalStr}*\n💚 *The remaining ₪${refund} will be released* by your card issuer within *3–5 business days*`
+          : `💳 Deducted from deposit: ₪${totalStr}\n💚 Remaining deposit released: ₪${refund}`);
   } else {
     const balance = ((total - deposit)/100).toFixed(2);
-    return lang === "he"
-      ? header + `━━━━━━━━━━━━━━━━━━━━\n${lines}\n━━━━━━━━━━━━━━━━━━━━\nסה"כ חיובים:  ₪${totalStr}\nפיקדון:       ₪${depositStr}\n━━━━━━━━━━━━━━━━━━━━\n💳 הפיקדון (₪${depositStr}) ינוכה במלואו\n🔴 *ההפרש מעל הפיקדון: ₪${balance}* — יחויב מהכרטיס`
-      : header + `━━━━━━━━━━━━━━━━━━━━\n${lines}\n━━━━━━━━━━━━━━━━━━━━\nTotal charges:  ₪${totalStr}\nDeposit:        ₪${depositStr}\n━━━━━━━━━━━━━━━━━━━━\n💳 The deposit (₪${depositStr}) is deducted in full\n🔴 *Amount over the deposit: ₪${balance}* — charged to the card`;
+    outcome = he
+      ? (settled
+          ? `💳 *הפיקדון (₪${depositStr}) נוכה במלואו.*\n✅ *ההפרש (₪${balance}) חויב* מכרטיס האשראי שהזנת בצ'ק אין`
+          : `💳 הפיקדון (₪${depositStr}) ינוכה במלואו\n🔴 *ההפרש מעל הפיקדון: ₪${balance}* — יחויב מהכרטיס`)
+      : (settled
+          ? `💳 *The ₪${depositStr} deposit was deducted in full.*\n✅ *The difference (₪${balance}) was charged* to the card you entered at check-in`
+          : `💳 The deposit (₪${depositStr}) is deducted in full\n🔴 *Amount over the deposit: ₪${balance}* — charged to the card`);
   }
+
+  return header + `${RULE}\n${lines}\n${RULE}\n${totals}\n${RULE}\n${outcome}`;
 }
 
 // ── מנוע סליקת החשבון — משותף לצ'ק אאוט ולחיוב no-show ──
@@ -490,22 +511,17 @@ export async function processCheckout(phone, reservationId, lang = "he") {
   }
 
   // ── B: Charges ≤ deposit → deducted, remainder released ──
+  // ההסבר על הניכוי ושחרור היתרה חי *בתוך* formatFolio(settled) — כדי
+  // שההודעה לא תחזור על אותן שורות פעם שנייה. ההודעה מוסיפה רק את הפרידה.
   else if (s.overage === 0) {
-    const charged = (s.total/100).toFixed(2);
-    const refund  = (s.released/100).toFixed(2);
-
     await wa(res.phone, he
       ? `🚪 *צ'ק אאוט הושלם!*\n\n` +
-        `תודה, *${name}*! 🌟\n\n` +
-        formatFolio(res, lang) + "\n\n" +
-        `💳 *נוכה מהפיקדון: ₪${charged}*\n` +
-        `💚 *יתרת הפיקדון (₪${refund}) תשוחרר* על ידי חברת האשראי תוך *3-5 ימי עסקים*.\n\n` +
+        `תודה, *${name}*! שמחנו לארח אותך 🌟\n\n` +
+        formatFolio(res, lang, { settled: true }) + "\n\n" +
         `נשמח לראותך שוב! ⭐`
       : `🚪 *Check-out complete!*\n\n` +
-        `Thank you, *${name}*! 🌟\n\n` +
-        formatFolio(res, lang) + "\n\n" +
-        `💳 *Deducted from your deposit: ₪${charged}*\n` +
-        `💚 *The remaining ₪${refund} will be released* by your card issuer within *3–5 business days*.\n\n` +
+        `Thank you, *${name}*! It was a pleasure hosting you 🌟\n\n` +
+        formatFolio(res, lang, { settled: true }) + "\n\n" +
         `We hope to see you again! ⭐`,
       { lang }
     );
@@ -513,9 +529,6 @@ export async function processCheckout(phone, reservationId, lang = "he") {
 
   // ── C: Charges > deposit → deposit captured + overage charged to same card ──
   else {
-    const totalStr   = (s.total/100).toFixed(2);
-    const balanceStr = (s.overage/100).toFixed(2);
-
     // אפשרות לאורח לשלם את ההפרש בכרטיס *אחר* במקום כרטיס הפיקדון.
     // הקישור מוביל לעמוד תשלום שבו הוא מזין כרטיס חדש; אם ישלם שם — ההפרש
     // "יעבור" לכרטיס האחר (ראה /checkout/balance/pay). בינתיים, כברירת מחדל,
@@ -538,33 +551,33 @@ export async function processCheckout(phone, reservationId, lang = "he") {
 
     await wa(res.phone, he
       ? `🚪 *צ'ק אאוט הושלם — חדר ${res.roomNumber}*\n\n` +
-        `תודה, *${name}*! 🌟\n\n` +
-        formatFolio(res, lang) + "\n\n" +
-        `💳 *הפיקדון (${shekels(res.deposit)}) נוכה במלואו.*\n` +
-        `❗ החיובים (₪${totalStr}) עלו על הפיקדון.\n` +
-        `✅ *ההפרש (₪${balanceStr}) חויב מכרטיס האשראי שהזנת בצ'ק אין.*\n\n` +
+        `תודה, *${name}*! שמחנו לארח אותך 🌟\n\n` +
+        formatFolio(res, lang, { settled: true }) + "\n\n" +
         `מעדיף לשלם את ההפרש בכרטיס אחר? אפשר להחליף כאן:\n👉 ${res.altCardUrl}\n\n` +
-        `_לשאלות: קבלה שלוחה 0_`
+        `_לשאלות: קבלה, שלוחה 0_`
       : `🚪 *Check-out complete — Room ${res.roomNumber}*\n\n` +
-        `Thank you, *${name}*! 🌟\n\n` +
-        formatFolio(res, lang) + "\n\n" +
-        `💳 *The ${shekels(res.deposit)} deposit was deducted in full.*\n` +
-        `❗ Charges (₪${totalStr}) exceeded the deposit.\n` +
-        `✅ *The difference (₪${balanceStr}) was charged to the card you entered at check-in.*\n\n` +
+        `Thank you, *${name}*! It was a pleasure hosting you 🌟\n\n` +
+        formatFolio(res, lang, { settled: true }) + "\n\n" +
         `Prefer to pay the difference with a different card? You can switch here:\n👉 ${res.altCardUrl}\n\n` +
         `_Questions? Reception, Ext. 0_`,
       { lang }
     );
 
-    await logAlert({
+    const totalStr   = (s.total/100).toFixed(2);
+    const balanceStr = (s.overage/100).toFixed(2);
+    // הסלמה *פעילה* לקבלה (וואטסאפ + מייל), לא רק לוג בדשבורד — חיוב מעל
+    // הפיקדון הוא אירוע שקבלה צריכה לדעת עליו בזמן אמת.
+    await notifyStaff({
       dept: "reception", roomNumber: res.roomNumber, guestName: res.guestName,
       message: `⚠️ חיובים ₪${totalStr} מעל פיקדון | הפרש ₪${balanceStr} חויב מכרטיס הפיקדון | הוצעה החלפת כרטיס`,
       priority: "high",
     });
   }
 
-  // Notify housekeeping
-  await logAlert({
+  // ── התראה פעילה למשק הבית: חדר התפנה ומחכה לניקיון ──────
+  // notifyStaff (ולא logAlert בלבד) — כדי שמשק הבית באמת יקבל וואטסאפ+מייל
+  // ויכין את החדר לאורח הבא, בדיוק כמו שהקבלה מקבלת התראה בצ'ק אין.
+  await notifyStaff({
     dept: "housekeeping", roomNumber: res.roomNumber, guestName: res.guestName,
     message: `🧹 חדר ${res.roomNumber} פנוי — ניקיון מלא נדרש`,
     priority: "normal",
@@ -647,47 +660,39 @@ export async function autoChargeOnNoShow(reservationId, lang = "he") {
       { lang }
     );
   } else if (s.overage === 0) {
-    const refund = (s.released/100).toFixed(2);
     await wa(res.phone, he
       ? `🚪 *הצ'ק אאוט בוצע אוטומטית — חדר ${res.roomNumber}*\n\n` +
         `לא ביצעת צ'ק אאוט עד שעת הסיום, אז סגרנו את השהייה עבורך.\n\n` +
-        formatFolio(res, lang) + "\n\n" +
-        `💳 *נוכה מהפיקדון: ₪${totalStr}*\n` +
-        `💚 *יתרת הפיקדון (₪${refund}) תשוחרר* על ידי חברת האשראי תוך *3-5 ימי עסקים*.\n\n` +
-        `לשאלות: קבלה שלוחה 0`
+        formatFolio(res, lang, { settled: true }) + "\n\n" +
+        `לשאלות: קבלה, שלוחה 0`
       : `🚪 *Check-out was completed automatically — Room ${res.roomNumber}*\n\n` +
         `You didn't check out by the deadline, so we closed the stay for you.\n\n` +
-        formatFolio(res, lang) + "\n\n" +
-        `💳 *Deducted from your deposit: ₪${totalStr}*\n` +
-        `💚 *The remaining ₪${refund} will be released* by your card issuer within *3–5 business days*.\n\n` +
+        formatFolio(res, lang, { settled: true }) + "\n\n" +
         `Questions? Reception, Ext. 0`,
       { lang }
     );
   } else {
-    const balanceStr = (s.overage/100).toFixed(2);
     await wa(res.phone, he
       ? `🚪 *הצ'ק אאוט בוצע אוטומטית — חדר ${res.roomNumber}*\n\n` +
         `לא ביצעת צ'ק אאוט עד שעת הסיום, אז סגרנו את השהייה עבורך.\n\n` +
-        formatFolio(res, lang) + "\n\n" +
-        `💳 *הפיקדון (${shekels(res.deposit)}) נוכה במלואו.*\n` +
-        `✅ *ההפרש (₪${balanceStr}) חויב מכרטיס האשראי שהזנת בצ'ק אין.*\n\n` +
-        `לשאלות: קבלה שלוחה 0`
+        formatFolio(res, lang, { settled: true }) + "\n\n" +
+        `לשאלות: קבלה, שלוחה 0`
       : `🚪 *Check-out was completed automatically — Room ${res.roomNumber}*\n\n` +
         `You didn't check out by the deadline, so we closed the stay for you.\n\n` +
-        formatFolio(res, lang) + "\n\n" +
-        `💳 *The ${shekels(res.deposit)} deposit was deducted in full.*\n` +
-        `✅ *The difference (₪${balanceStr}) was charged to the card you entered at check-in.*\n\n` +
+        formatFolio(res, lang, { settled: true }) + "\n\n" +
         `Questions? Reception, Ext. 0`,
       { lang }
     );
   }
 
-  await logAlert({
+  // הסלמה פעילה (וואטסאפ + מייל) — no-show הוא אירוע שקבלה ומשק הבית
+  // חייבים לדעת עליו בזמן אמת, לא רק כרשומה בדשבורד.
+  await notifyStaff({
     dept: "reception", roomNumber: res.roomNumber, guestName: res.guestName,
     message: `🏃 *NO-SHOW* חדר ${res.roomNumber} · ${res.guestName} — לא בוצע צ'ק אאוט; חויב אוטומטית ₪${totalStr}`,
     priority: "high",
   });
-  await logAlert({
+  await notifyStaff({
     dept: "housekeeping", roomNumber: res.roomNumber, guestName: res.guestName,
     message: `🧹 חדר ${res.roomNumber} פנוי (no-show) — ניקיון מלא נדרש`,
     priority: "normal",

@@ -1403,10 +1403,13 @@ test("places: בקשת המלצה מפעילה חיפוש חי סביב מיקו
   await bot.handleIncoming(p, "אני רוצה מסעדת בשר כשרה בקרבת מקום");
 
   // הכלי נקרא פעם אחת, עם הבקשה המדויקת ומיקום המלון מה-config.
+  // ⚠️ הקואורדינטות נגזרות מה-config עצמו (מקור האמת) ולא מקובעות כאן —
+  //    כדי שהחלפת מיקום המלון בקונפיג לא תשבור את הבדיקה.
+  const { hotelConfig: locCfg } = await import("./config.js");
   assert.equal(placesCalls.length, 1, "החיפוש לא הופעל");
   assert.match(placesCalls[0].query, /kosher meat/i, "הבקשה המדויקת לא עברה לחיפוש");
-  assert.equal(placesCalls[0].location.lat, 32.0743, "מיקום המלון לא עבר לחיפוש");
-  assert.equal(placesCalls[0].location.lng, 34.7664);
+  assert.equal(placesCalls[0].location.lat, locCfg.location.lat, "מיקום המלון לא עבר לחיפוש");
+  assert.equal(placesCalls[0].location.lng, locCfg.location.lng);
 
   // התוצאה האמיתית הגיעה לאורח.
   assert.match(lastBody(), /Real Grill/, "המקום האמיתי לא הוצג לאורח");
@@ -1456,6 +1459,132 @@ test("places: כמה קריאות כלי ברצף לא תוקעות — נעצר
   assert.ok(placesCalls.length <= 5);
   // האורח קיבל מענה כלשהו (aiReply של הקריאה הסופית ללא כלים).
   assert.ok(lastBody().length > 0);
+});
+
+// ════════════════════════════════════════════════════════
+//  צ'ק אאוט — מכונת המצבים המלאה (הצגת חשבון → אישור → סליקה)
+//  ----------------------------------------------------------
+//  עד כה לא היו בדיקות מקצה-לקצה לצ'ק אאוט. כאן מריצים צ'ק אין מלא
+//  דרך הצ'אט, מקבלים את ההזמנה למצב checked_in (דרך completeCheckin),
+//  מוסיפים חיובים, ואז מפעילים את זרימת הצ'ק אאוט — כולל שלושת מקרי
+//  הפיקדון והביטול. גם מאמת שאין כפילות בשורות ניכוי הפיקדון.
+// ════════════════════════════════════════════════════════
+
+// מביא אורח עד מצב checked_in *אמיתי* (כמו אחרי תשלום), ומחזיר {phone, res}.
+async function checkedInGuest({ lang = "he" } = {}) {
+  const { reservations, completeCheckin } = await import("./checkin.js");
+  const p = await checkinUpTo("waiting_payment", { lang });
+  const res = Object.values(reservations).find(r => r.phone === p && r.stage === "pending_payment");
+  await completeCheckin(res.id, "412");
+  return { p, res, reservations };
+}
+
+test("צ'ק אאוט: 'צק אאוט' מציג את החשבון המלא ומבקש אישור", async () => {
+  const { p } = await checkedInGuest();
+  const { addFolioItem } = await import("./checkin.js");
+  const { reservations } = await import("./checkin.js");
+  const res = Object.values(reservations).find(r => r.phone === p);
+  addFolioItem(res.id, "MINIBAR", "מיני בר", 9500);
+  sent.length = 0;
+
+  await bot.handleIncoming(p, "צק אאוט");
+  assert.match(lastBody(), /בקשת צ'ק אאוט|סיכום חשבון/, "מציג בקשת צ'ק אאוט עם חשבון");
+  assert.match(lastBody(), /מיני בר/, "פריט החיוב מופיע");
+  assert.match(lastBody(), /כן|לא/, "מבקש אישור כן/לא");
+  assert.ok(!lastBody().includes("["), "אין תג שדולף");
+});
+
+test("צ'ק אאוט (מקרה A): אין חיובים → פיקדון משוחרר, פרידה חמה", async () => {
+  const { p } = await checkedInGuest();
+  sent.length = 0;
+  await bot.handleIncoming(p, "צק אאוט");
+  sent.length = 0;
+  await bot.handleIncoming(p, "כן");
+
+  const guest = sent.filter(s => s.to === p).map(s => s.body).join("\n");
+  assert.match(guest, /צ'ק אאוט הושלם/, "אישור צ'ק אאוט");
+  assert.match(guest, /לא בוצע חיוב|אין חיובים/, "אין חיובים");
+  assert.match(guest, /3-5 ימי עסקים/, "מועד שחרור הפיקדון");
+  assert.match(guest, /נשמח לראותך שוב/, "פרידה חמה");
+  assert.ok(!guest.includes("["), "אין תג שדולף");
+
+  const staff = sent.filter(s => s.to !== p).map(s => s.body).join("\n");
+  assert.match(staff, /ניקיון|פנוי/, "משק הבית מקבל התראה על חדר פנוי");
+});
+
+test("צ'ק אאוט (מקרה B): חיובים ≤ פיקדון → ניכוי + שחרור יתרה, בלי כפילות שורות", async () => {
+  const { p, reservations } = await checkedInGuest();
+  const { addFolioItem } = await import("./checkin.js");
+  const res = Object.values(reservations).find(r => r.phone === p);
+  addFolioItem(res.id, "RESTAURANT", "ארוחת ערב", 12000);
+  addFolioItem(res.id, "MINIBAR", "מיני בר", 8000); // סה"כ ₪200 < ₪500
+  sent.length = 0;
+
+  await bot.handleIncoming(p, "צק אאוט");
+  // מנקים כדי לבדוק את *הודעת האישור הסופית* בלבד (התצוגה המקדימה היא
+  // הודעה נפרדת מוקדמת יותר, בזמן עתיד — לא כפילות בתוך אותה הודעה).
+  sent.length = 0;
+  await bot.handleIncoming(p, "כן");
+
+  const confirmation = sent.filter(s => s.to === p).map(s => s.body).join("\n");
+  assert.match(confirmation, /צ'ק אאוט הושלם/);
+  assert.match(confirmation, /נוכה מהפיקדון: ₪200\.00/, "סכום הניכוי הנכון");
+  assert.match(confirmation, /יתרת הפיקדון \(₪300\.00\) תשוחרר/, "היתרה הנכונה משוחררת");
+  // הרגרסיה שתוקנה: שורת "נוכה מהפיקדון" הופיעה פעמיים *באותה הודעה*
+  // (פעם בתוך formatFolio ופעם בשורה שהודבקה אחריו). עכשיו פעם אחת.
+  const occurrences = (confirmation.match(/נוכה מהפיקדון: ₪200\.00/g) || []).length;
+  assert.equal(occurrences, 1, `שורת הניכוי הופיעה ${occurrences} פעמים — צריכה פעם אחת`);
+});
+
+test("צ'ק אאוט (מקרה C): חיובים > פיקדון → פיקדון מלא + הפרש + הצעת כרטיס אחר", async () => {
+  const { p, reservations } = await checkedInGuest();
+  const { addFolioItem } = await import("./checkin.js");
+  const res = Object.values(reservations).find(r => r.phone === p);
+  addFolioItem(res.id, "RESTAURANT", "אירוע", 70000); // ₪700 > ₪500
+  sent.length = 0;
+
+  await bot.handleIncoming(p, "צק אאוט");
+  await bot.handleIncoming(p, "כן");
+
+  const guest = sent.filter(s => s.to === p).map(s => s.body).join("\n");
+  assert.match(guest, /נוכה במלואו/, "הפיקדון נוכה במלואו");
+  assert.match(guest, /ההפרש \(₪200\.00\) חויב/, "ההפרש חויב");
+  assert.match(guest, /כרטיס אחר/, "מוצעת החלפה לכרטיס אחר");
+  assert.match(guest, /http/, "קישור להחלפת הכרטיס");
+  assert.ok(!guest.includes("["), "אין תג שדולף");
+});
+
+test("צ'ק אאוט: 'לא' מבטל את הצ'ק אאוט — לא מחייב, נשאר checked_in", async () => {
+  const { p, reservations } = await checkedInGuest();
+  const { addFolioItem } = await import("./checkin.js");
+  const res = Object.values(reservations).find(r => r.phone === p);
+  addFolioItem(res.id, "MINIBAR", "מיני בר", 5000);
+  sent.length = 0;
+
+  await bot.handleIncoming(p, "צק אאוט");
+  sent.length = 0;
+  await bot.handleIncoming(p, "לא");
+
+  assert.match(lastBody(), /בוטל/, "הצ'ק אאוט בוטל");
+  const after = Object.values(reservations).find(r => r.phone === p);
+  assert.equal(after.stage, "checked_in", "ההזמנה נשארת פעילה");
+  assert.equal(after.captured, false, "לא בוצע חיוב");
+});
+
+test("צ'ק אאוט: אורח אנגלי מקבל צ'ק אאוט באנגלית מלאה — בלי ערבוב שפות", async () => {
+  const { p } = await checkedInGuest({ lang: "en" });
+  sent.length = 0;
+
+  await bot.handleIncoming(p, "check out");
+  const bill = lastBody();
+  assert.match(bill, /Check-out request|Bill/, "בקשת צ'ק אאוט באנגלית");
+  assert.ok(!/[֐-׿]/.test(bill), `עברית דלפה לאורח אנגלי: ${bill}`);
+
+  sent.length = 0;
+  await bot.handleIncoming(p, "yes");
+  const guest = sent.filter(s => s.to === p).map(s => s.body).join("\n");
+  assert.match(guest, /Check-out complete/, "אישור באנגלית");
+  assert.ok(!/[֐-׿]/.test(guest), `עברית דלפה לאישור הצ'ק אאוט: ${guest}`);
 });
 
 // ניקוי קובץ ה-DB הזמני

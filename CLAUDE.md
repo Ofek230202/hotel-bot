@@ -117,10 +117,11 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
   vehicle plate for parking, special requests. **Check-out** still lacks: invoice/receipt,
   minibar check, luggage storage, late-checkout offer, feedback.
 - No logging/monitoring, no rate-limiting, no Twilio request validation (security).
-- ~~No tests~~ **PARTIAL** — `e2e.test.mjs` (54 tests, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
+- ~~No tests~~ **PARTIAL** — `e2e.test.mjs` (103 tests, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
   תגים, זהות, **מדיניות סוגי מסמכים, תאריכי שהייה, אישור תנאים, עקביות שפה מקצה לקצה**
   (כולל רינדור עמוד האישור), **המידע המובנה שמגיע ל-AI (system prompt), ומיזוג/שמירת הקונפיג**
-  (כולל ריסטארט אמיתי בתהליך נפרד). עדיין חסרות בדיקות לצ'ק אאוט ולשכבת התשלום.
+  (כולל ריסטארט אמיתי בתהליך נפרד), **וזרימת הצ'ק אאוט המלאה** (הצגת חשבון → אישור → שלושת
+  מקרי הפיקדון + ביטול + עקביות שפה). עדיין חסרות בדיקות לשכבת התשלום המבודדת עצמה.
 
 ### ID document storage (אחסון תעודות זהות)
 `idverify/MockIdProvider` שומר את התמונה ל-`id-documents/` (ב-`.gitignore`) —
@@ -258,9 +259,10 @@ Priority order (to be decided together):
 - [ ] **P3 — Tests** — done for check-in / input validation / language / tags / ID /
       **service rendering + concierge (area knowledge, request types, provider failure)** /
       **stay-date parsing (every HE/EN phrasing + the ambiguous cases) + date confirmation +
-      truncated-tag leak + deposit wording**
-      (`e2e.test.mjs`, 65 tests, `npm test`). Still missing: check-out state machine + payment
-      provider.
+      truncated-tag leak + deposit wording** / **check-out state machine (bill preview →
+      confirm → all three deposit outcomes + cancel + HE/EN consistency)**
+      (`e2e.test.mjs`, 103 tests, `npm test`). Still missing: the isolated payment provider layer
+      itself.
 
 ### שפה — עקביות מקצה לקצה (ממומש)
 אורח שפתח באנגלית מקבל אנגלית ב**כל** נקודה: כל שלבי הצ'אט, עמוד הפיקדון, **עמוד האישור**
