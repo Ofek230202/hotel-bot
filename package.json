@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --experimental-test-module-mocks --test e2e.test.mjs"
+    "test": "node --experimental-test-module-mocks --test e2e.test.mjs places.test.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",

@@ -42,17 +42,42 @@ mock.module("twilio", {
   },
 });
 
+// aiScript — פונקציה אופציונלית(params, callIndex) שמחזירה תשובת AI
+// מלאה (כולל tool_use). מאפשר לבדוק את לולאת הכלי: קריאה ראשונה מחזירה
+// בקשת חיפוש, השנייה מנסחת תשובה. null → התנהגות ברירת המחדל (טקסט aiReply).
+let aiScript = null;
 mock.module("@anthropic-ai/sdk", {
   exports: {
     default: class Anthropic {
       messages = {
         create: async (params) => {
+          const idx = aiCalls;
           aiCalls++;
           aiParams = params;
+          if (aiScript) {
+            const scripted = aiScript(params, idx);
+            if (scripted) return scripted;
+          }
           return { content: [{ type: "text", text: aiReply }] };
         },
       };
     },
+  },
+});
+
+// ── places/ — שכבת חיפוש המקומות (נשלטת מהבדיקה, בלי רשת/מפתח) ──
+let placesResult = { ok: true, provider: "mock", results: [] };
+let placesCalls  = [];
+mock.module("./places/index.js", {
+  exports: {
+    places: { searchNearby: async (p) => { placesCalls.push(p); return placesResult; } },
+    placesLive: false,
+    PLACE_CATEGORIES: Object.freeze({
+      restaurant: "restaurant", cafe: "cafe", bar: "bar", bakery: "bakery",
+      attraction: "tourist_attraction", museum: "museum", park: "park",
+      nightlife: "night_club", shopping: "shopping_mall", store: "store",
+      spa: "spa", pharmacy: "pharmacy",
+    }),
   },
 });
 
@@ -82,7 +107,12 @@ function freshGuest() { return `whatsapp:+9725000000${String(++phoneSeq).padStar
 // כל בדיקה מתחילה נקייה — כולל תשובת ה-AI. בלי איפוס aiReply, תשובה
 // שנשארה מבדיקה קודמת "נדלקת" בבדיקה הבאה: תג [CONCIERGE:...] שדלף כך
 // שלח התראות רפאים לצוות באמצע בדיקות אחרות.
-beforeEach(() => { sent.length = 0; aiCalls = 0; aiParams = null; aiReply = "שלום!"; });
+beforeEach(() => {
+  sent.length = 0; aiCalls = 0; aiParams = null; aiReply = "שלום!";
+  aiScript = null;
+  placesCalls = [];
+  placesResult = { ok: true, provider: "mock", results: [] };
+});
 
 const lastBody  = () => sent.at(-1)?.body ?? "";
 const allBodies = () => sent.map(s => s.body).join("\n---\n");
@@ -1335,6 +1365,97 @@ test("קונסיירז' מדויק: הכלל לכבד בקשה בשרית/כשר
 test("עברית עקבית: הכלל נגד ערבוב לכם/לכן מגיע ל-AI", async () => {
   const he = await askConcierge("אנחנו זוג, מה תמליץ לנו?");
   assert.match(he, /לכם.*לכן|עקביות בפנייה/, "הכלל על עקביות לכם/לכן");
+});
+
+// ════════════════════════════════════════════════════════
+//  Google Places — חיפוש מקומות אמיתי דרך שכבת places/
+// ════════════════════════════════════════════════════════
+
+test("places: כלי search_nearby_places נשלח ל-AI בכל תור קונסיירז'", async () => {
+  const p = freshGuest();
+  await bot.handleIncoming(p, "מה שעות הספא?");
+  assert.ok(Array.isArray(aiParams.tools), "tools לא נשלח ל-AI");
+  const tool = aiParams.tools.find(t => t.name === "search_nearby_places");
+  assert.ok(tool, "הכלי search_nearby_places חסר");
+  assert.ok(tool.input_schema.properties.query, "לכלי אין שדה query");
+});
+
+test("places: בקשת המלצה מפעילה חיפוש חי סביב מיקום המלון ומחזירה מקום אמיתי", async () => {
+  placesResult = {
+    ok: true, provider: "mock",
+    results: [{
+      name: "Real Grill", address: "12 Herbert Samuel St", category: "Steak house",
+      rating: 4.6, ratingCount: 1240, priceSymbol: "₪₪₪", openNow: true,
+      distanceText: "300 m", distanceMeters: 300,
+    }],
+  };
+  // תור 1: ה-AI מבקש לחפש. תור 2: מנסח תשובה לאורח.
+  aiScript = (params, idx) => {
+    if (idx === 0) return {
+      stop_reason: "tool_use",
+      content: [{ type: "tool_use", id: "t1", name: "search_nearby_places",
+        input: { query: "kosher meat restaurant", category: "restaurant", keyword: "kosher" } }],
+    };
+    return { content: [{ type: "text", text: "אני ממליץ בחום על *Real Grill* 🌟 — 300 מ׳ מהמלון." }] };
+  };
+
+  const p = freshGuest();
+  await bot.handleIncoming(p, "אני רוצה מסעדת בשר כשרה בקרבת מקום");
+
+  // הכלי נקרא פעם אחת, עם הבקשה המדויקת ומיקום המלון מה-config.
+  assert.equal(placesCalls.length, 1, "החיפוש לא הופעל");
+  assert.match(placesCalls[0].query, /kosher meat/i, "הבקשה המדויקת לא עברה לחיפוש");
+  assert.equal(placesCalls[0].location.lat, 32.0743, "מיקום המלון לא עבר לחיפוש");
+  assert.equal(placesCalls[0].location.lng, 34.7664);
+
+  // התוצאה האמיתית הגיעה לאורח.
+  assert.match(lastBody(), /Real Grill/, "המקום האמיתי לא הוצג לאורח");
+
+  // הקריאה השנייה ל-AI קיבלה tool_result עם המקום — כך הוא ידע לנסח.
+  const msgsJson = JSON.stringify(aiParams.messages);
+  assert.match(msgsJson, /tool_result/, "לא הוחזר tool_result ל-AI");
+  assert.match(msgsJson, /Real Grill/, "תוצאות החיפוש לא הוחזרו ל-AI");
+});
+
+test("places: חיפוש שנכשל (unavailable) → status עובר ל-AI, אין קריסה", async () => {
+  placesResult = { ok: false, provider: "mock", reason: "unavailable", results: [] };
+  aiScript = (params, idx) => {
+    if (idx === 0) return {
+      stop_reason: "tool_use",
+      content: [{ type: "tool_use", id: "t2", name: "search_nearby_places", input: { query: "sushi" } }],
+    };
+    // ה-AI רואה את הכישלון ומנסח "אבדוק ואחזור" + [RECEPTION].
+    return { content: [{ type: "text", text: "אשמח לבדוק ולחזור אליך 🙏 [RECEPTION:סושי באזור]" }] };
+  };
+
+  const p = freshGuest();
+  await bot.handleIncoming(p, "יש סושי טוב בסביבה?");
+
+  assert.equal(placesCalls.length, 1);
+  // ה-status הועבר ל-AI כדי שידע לא להמציא.
+  const toolResult = JSON.stringify(aiParams.messages);
+  assert.match(toolResult, /unavailable/, "סטטוס הכישלון לא הועבר ל-AI");
+  // התג הפנימי לא דלף לאורח, והאורח קיבל מענה אנושי.
+  assert.doesNotMatch(lastBody(), /\[RECEPTION/, "תג פנימי דלף לאורח");
+  assert.match(lastBody(), /אבדוק|לבדוק/);
+});
+
+test("places: כמה קריאות כלי ברצף לא תוקעות — נעצר בגבול ומחזיר טקסט", async () => {
+  placesResult = { ok: true, provider: "mock", results: [{ name: "Loop Place", distanceText: "100 m", distanceMeters: 100 }] };
+  // ה-AI מבקש כלי שוב ושוב — הלולאה חייבת להיעצר ולא להיתקע.
+  aiScript = () => ({
+    stop_reason: "tool_use",
+    content: [{ type: "tool_use", id: "tx", name: "search_nearby_places", input: { query: "loop" } }],
+  });
+
+  const p = freshGuest();
+  await bot.handleIncoming(p, "המלצה?");
+
+  // נעצר בגבול הקשיח (MAX_HOPS) — לא לולאה אינסופית.
+  assert.ok(aiCalls <= 6, `יותר מדי קריאות AI: ${aiCalls}`);
+  assert.ok(placesCalls.length <= 5);
+  // האורח קיבל מענה כלשהו (aiReply של הקריאה הסופית ללא כלים).
+  assert.ok(lastBody().length > 0);
 });
 
 // ניקוי קובץ ה-DB הזמני

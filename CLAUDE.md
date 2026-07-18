@@ -56,6 +56,7 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
 | `state.js` | **In-memory state** (`sessions`, `staffAlerts`, `stats`). `getSession`, `pushHistory`, `patchSession`, `logAlert`. Comment even says "swap for Redis/DB in production". | Works, NOT persistent, NOT multi-tenant |
 | `config.js` | **Single hotel** config: `DEFAULTS` (in code) + `overrides` (persisted in DB, table `config`) → `hotelConfig = deepMerge(DEFAULTS, overrides)`. Identity, dept numbers/emails, times, WiFi, **detailed services** (spa treatments+prices, restaurant, gym, room service, laundry, pool, bar, breakfast), parking, **`local_area`** (concierge knowledge *outside* the hotel: nearby restaurants, attractions, tours, nightlife, shopping, transport), FAQ, welcome, `deposit_amount`, `terms`. `updateConfig` deep-merges + persists. ⚠️ All service/price/policy/area data is **sample data** — every hotel replaces it. | Works for 1 hotel only |
 | `concierge/` | שכבת בקשות הקונסיירז' המבודדת. `ConciergeProvider` — הממשק + `REQUEST_TYPES` (taxi/restaurant/spa/tour/transfer/rental/gift/other); `MockConciergeProvider` — מקצה אסמכתא (`CNG-XXXXXX`) ומחזיר `status:"received"`, **לא מזמין כלום בפועל** — הביצוע הוא של הקונסיירז' האנושי שמקבל את ההתראה. נקודת החלפה אחת: `concierge/index.js`. | Works (mock) |
+| `places/` | שכבת **חיפוש מקומות אמיתיים** מבודדת (Google Places API New — Text Search). `PlacesProvider` — הממשק + `PLACE_CATEGORIES` (מיפוי קטגוריה→`includedType`); `GooglePlacesProvider` — קורא ל-`places:searchText` עם `X-Goog-Api-Key` מ-`process.env.GOOGLE_PLACES_API_KEY` (**המפתח לעולם לא בקוד/לוג/גוף בקשה**), מנרמל שם/כתובת/דירוג/מחיר ומחשב מרחק (haversine); `MockPlacesProvider` — תוצאות דמו בלי רשת/מפתח, פורמט זהה. `util.js` — haversine + פורמט מרחק/מחיר. נקודת החלפה אחת: `places/index.js` (בוחר Google אם יש מפתח, אחרת mock; `PLACES_PROVIDER=mock` כופה mock). ה-AI מקבל את הכלי `search_nearby_places` (tool-use) ומכבד בקשה מדויקת (בשרי/כשר/טבעוני) דרך שדה `query`. | Works |
 | `i18n.js` | `detectLang` / `detectLangSignal` (Hebrew unicode heuristic), `detectLanguageRequest` + `stripLanguageRequest` (בקשת מעבר שפה), `t` helper. | Works |
 | `validate.js` | אימות קלט האורח: שם (דוחה גם *מילות פקודה* כמו "I want to check in"), מספר הזמנה, תמונת ת"ז, **תאריכי שהייה** (`validateStayDates` — פרסור חופשי HE/EN **מבוסס-תפקיד**: "עד"/"until" לפני תאריך = עזיבה) ו**אישור תנאים** (`validateTermsConfirmation` — דורש נוסח מפורש). + `stripInternalTags` (כולל תג **קטוע**). | Works |
 | `idverify/` | שכבת אימות זהות מבודדת. `vision.js` — בדיקת Claude vision אמיתית; `MockIdProvider` — אוכף `ACCEPTED_DOC_TYPES = {id_card, passport}` **בקוד** (לא רק ב-prompt) ושומר מקומית (דמו). רישיון נהיגה נדחה במפורש. נקודת החלפה אחת: `idverify/index.js`. | Works |
@@ -67,9 +68,13 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
 - WhatsApp in/out via Twilio.
 - Bilingual AI concierge answers (Claude `claude-sonnet-4-6`).
 - **Full concierge role** — not just a receptionist: local recommendations (restaurants,
-  attractions, tours, nightlife, shopping) sourced *only* from `config.local_area`, arranging
-  requests (taxi, table, spa, tour, rental, gifts/special requests) via
-  `[CONCIERGE:<type>|<details>]` → `concierge/` layer, and proactive luxury-hotel closing offers.
+  attractions, tours, nightlife, shopping) from **two real sources** — `config.local_area`
+  (hotel-vetted) *and* **live Google Places search** (`places/`, tool `search_nearby_places`) for
+  real nearby places when the curated list doesn't cover the exact request. The bot honours the
+  exact ask (meat/kosher/dairy/vegan/cuisine) via the tool's `query`, and still may name *only*
+  places one of those two sources actually returned — never invents. Arranging requests (taxi,
+  table, spa, tour, rental, gifts/special requests) via `[CONCIERGE:<type>|<details>]` →
+  `concierge/` layer, and proactive luxury-hotel closing offers.
   The prompt forbids promising a booking is *done* — the mock only passes the request to a human,
   so the bot says "I've passed it on", never "your table is reserved".
 - **WhatsApp-clean output** — markdown tables are banned in the prompt (WhatsApp can't render
@@ -301,8 +306,10 @@ Priority order (to be decided together):
 - Node ESM, Express. Start: `npm start` (`node server.js`), dev: `npm run dev`.
 - Env vars expected (no `.env` committed): `ANTHROPIC_API_KEY`, `TWILIO_ACCOUNT_SID`,
   `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_NUMBER`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
-  `BASE_URL`, `PORT`, `DASHBOARD_PASSWORD`.
-- AI model in use: `claude-sonnet-4-6` (`bot.js`).
+  `BASE_URL`, `PORT`, `DASHBOARD_PASSWORD`, `GOOGLE_PLACES_API_KEY` (חיפוש מקומות חי; בלעדיו
+  `places/` נופל אוטומטית ל-mock), `PLACES_PROVIDER` (אופציונלי; `mock` כופה את המוק גם כשיש מפתח).
+- AI model in use: `claude-sonnet-4-6` (`bot.js`). הקונסיירז' רץ עם tool-use — הכלי
+  `search_nearby_places` (`places/`) זמין לו בכל תור להמלצות מקומות אמיתיים.
 
 > Rule for future work: payments change in ONE place (the provider abstraction). Never re-couple
 > business logic to a specific payment vendor.

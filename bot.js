@@ -13,6 +13,7 @@ import { startCheckin, processCheckout, getActiveReservation, getPendingReservat
 import { email }                                          from "./email/index.js";
 import { idVerify }                                       from "./idverify/index.js";
 import { concierge, REQUEST_TYPES }                       from "./concierge/index.js";
+import { places, PLACE_CATEGORIES, placesLive }           from "./places/index.js";
 import { detectEmergency, emergencyGuestMessage, emergencyKindHe, emergencyDial } from "./emergency.js";
 
 dotenv.config();
@@ -271,6 +272,181 @@ function renderFields(obj, lang, indent = "  ") {
   return lines.join("\n");
 }
 
+// ════════════════════════════════════════════════════════
+//  כלי חיפוש מקומות אמיתיים — Google Places דרך שכבת places/
+//  ----------------------------------------------------------
+//  ה-AI מקבל את הכלי הזה בכל תור. כשאורח מבקש המלצה שאין לה כיסוי
+//  ב-config.local_area (או שהאורח רוצה אפשרויות נוספות), ה-AI קורא
+//  לכלי עם תיאור חופשי ("מסעדת בשר כשרה") + קטגוריה, ומקבל מקומות
+//  אמיתיים סביב מיקום המלון. כך הבוט מפסיק "להמציא" ומתחיל להמליץ על
+//  מקומות שקיימים באמת — בלי לוותר על הכלל שאסור לנקוב בשם שלא הוחזר לו.
+// ════════════════════════════════════════════════════════
+const PLACES_TOOL = {
+  name: "search_nearby_places",
+  description:
+    "Search for REAL places near the hotel (restaurants, cafés, bars, attractions, museums, " +
+    "shops, nightlife, etc.) using live map data. Call this whenever a guest asks for a " +
+    "recommendation that the hotel's own curated area list does not already cover, or when the " +
+    "guest wants more/other options. HONOUR THE EXACT REQUEST: put cuisine, dietary and kosher " +
+    "words into `query` (e.g. 'kosher meat restaurant', 'vegan café', 'sushi'). Returns real " +
+    "names, addresses, ratings, price level and distance from the hotel. Only recommend places " +
+    "this tool (or the hotel's own list) actually returned — never invent one.",
+  input_schema: {
+    type: "object",
+    properties: {
+      query: {
+        type: "string",
+        description:
+          "Free-text of what the guest wants, in the guest's own terms. Include cuisine / " +
+          "dietary / kosher / style words here so the exact request is honoured. Examples: " +
+          "'kosher meat restaurant', 'vegan café', 'romantic seafood restaurant', 'art museum'.",
+      },
+      category: {
+        type: "string",
+        enum: Object.keys(PLACE_CATEGORIES),
+        description: "Optional place category to focus the search on the right kind of place.",
+      },
+      keyword: {
+        type: "string",
+        description: "Optional extra filter word appended to the query (e.g. 'kosher', 'meat', 'vegan', 'sushi').",
+      },
+      open_now: {
+        type: "boolean",
+        description: "Set true only if the guest specifically wants somewhere open right now.",
+      },
+    },
+    required: ["query"],
+  },
+};
+
+// מריץ את הכלי: מוציא את מיקום המלון מה-config, קורא לשכבת places/,
+// ומחזיר ל-AI מחרוזת JSON קומפקטית. לעולם לא זורק — כישלון/היעדר
+// תוצאות מוחזרים כ-status שה-AI יודע לתרגם ל"אבדוק ואחזור" + [RECEPTION].
+async function runPlacesTool(input = {}, lang = "he") {
+  const loc = hotelConfig.location;
+  if (!loc || loc.lat == null || loc.lng == null) {
+    return JSON.stringify({
+      status: "no_location",
+      message: "The hotel location is not configured, so a live area search can't run. Offer to check with reception and follow up.",
+    });
+  }
+
+  const query = String(input.query || "").trim();
+  if (!query) {
+    return JSON.stringify({ status: "no_results", message: "No search query was provided." });
+  }
+
+  let res;
+  try {
+    res = await places.searchNearby({
+      query,
+      category: input.category,
+      keyword:  input.keyword,
+      openNow:  !!input.open_now,
+      lang,
+      location: { lat: loc.lat, lng: loc.lng, address: lang === "he" ? (loc.address_he || loc.address) : loc.address },
+      radius:   loc.search_radius_m || 4000,
+      limit:    6,
+    });
+  } catch (e) {
+    console.error("Places tool failed:", e?.message || e);
+    return JSON.stringify({
+      status: "unavailable",
+      message: "The live places search is temporarily unavailable. Tell the guest you'll check and come back, and escalate with [RECEPTION].",
+    });
+  }
+
+  if (!res?.ok) {
+    return JSON.stringify({
+      status: res?.reason || "unavailable",
+      message: "The live places search returned no data. Tell the guest you'll check and come back, and escalate with [RECEPTION].",
+    });
+  }
+  if (!res.results.length) {
+    return JSON.stringify({
+      status: "no_results",
+      query,
+      message: "No matching places were found nearby. Do NOT invent one — tell the guest you'll check and come back, and escalate with [RECEPTION].",
+    });
+  }
+
+  // מחזירים רק את השדות שה-AI צריך כדי לנסח המלצה. distanceText/priceSymbol
+  // כבר בשפת השיחה. ה-AI מנסח בעצמו לפי כללי הפורמט של וואטסאפ.
+  return JSON.stringify({
+    status: "ok",
+    query,
+    hotel: lang === "he" ? (loc.address_he || loc.address) : loc.address,
+    source: "google_places_live",
+    results: res.results.map((r) => ({
+      name:        r.name,
+      address:     r.address,
+      category:    r.category,
+      rating:      r.rating,
+      ratingCount: r.ratingCount,
+      price:       r.priceSymbol,
+      openNow:     r.openNow,
+      distance:    r.distanceText,
+    })),
+  });
+}
+
+// ── תור שיחה אחד מול ה-AI, כולל לולאת שימוש-בכלי ──────────
+// כל עוד ה-AI מבקש לחפש מקומות (search_nearby_places) — מריצים את הכלי,
+// מחזירים לו את התוצאה וממשיכים, עד שהוא מנסח טקסט סופי לאורח. ההיסטוריה
+// הנשמרת (session.history) *לא נגעת*: בלוקי ה-tool_use/tool_result חיים
+// רק בעותק המקומי msgs, כדי שלא ירעילו את ההיסטוריה ב-SQLite ואת התורים
+// הבאים. גבול קשיח של קריאות מונע לולאת כלי אינסופית.
+async function runConciergeTurn(session, lang, phone) {
+  const system   = buildPrompt(session, lang);
+  const msgs     = [...(session.history || [])];
+  const MAX_HOPS = 4;
+  const tail8    = phone ? phone.slice(-8) : "—";
+
+  for (let hop = 0; hop < MAX_HOPS; hop++) {
+    const r = await createMessageWithRetry({
+      model: AI_MODEL,
+      // ⚠️ 1000 (לא 500) — תשובה עם רשימת המלצות + תג בסוף חרגה מ-500,
+      // ה-AI נקטע באמצע כתיבת התג והשארית דלפה לאורח. ראה ההגנות למטה.
+      max_tokens: 1000,
+      system,
+      messages: msgs,
+      tools: [PLACES_TOOL],
+    });
+
+    const content  = r.content || [];
+    const toolUses = content.filter(b => b.type === "tool_use");
+    const text     = content.filter(b => b.type === "text").map(b => b.text).join("").trim();
+
+    // ה-AI ביקש לחפש מקומות → מריצים את הכלי, מחזירים לו תוצאות, ממשיכים.
+    if (r.stop_reason === "tool_use" && toolUses.length) {
+      msgs.push({ role: "assistant", content });
+      const results = [];
+      for (const tu of toolUses) {
+        console.log(`🗺️ [places] ${tail8} → ${JSON.stringify(tu.input || {}).slice(0, 120)}`);
+        const out = tu.name === "search_nearby_places"
+          ? await runPlacesTool(tu.input || {}, lang)
+          : JSON.stringify({ status: "unknown_tool" });
+        results.push({ type: "tool_result", tool_use_id: tu.id, content: out });
+      }
+      msgs.push({ role: "user", content: results });
+      continue;
+    }
+
+    // תשובה שנקטעה בגלל התקציב — נרשמת ללוג. הטיפול (תג קטוע → פעולה +
+    // סינון) קורה אצל הקורא ואינו תלוי בבדיקה הזו.
+    if (r.stop_reason === "max_tokens") {
+      console.error(`⚠️ תשובת ה-AI נקטעה (max_tokens) עבור ${tail8} — סוף: …${text.slice(-80)}`);
+    }
+    return text;
+  }
+
+  // חרגנו ממספר הקריאות המותר לכלי — קריאה אחרונה *בלי* כלים, כדי לחלץ
+  // טקסט סופי לאורח במקום להיתקע. עדיף תשובה מנוסחת מאשר שתיקה.
+  console.error(`⚠️ [places] ${tail8} — עברנו ${MAX_HOPS} קריאות כלי; מסיימים בלי כלים.`);
+  const last = await createMessageWithRetry({ model: AI_MODEL, max_tokens: 1000, system, messages: msgs });
+  return (last.content || []).filter(b => b.type === "text").map(b => b.text).join("").trim();
+}
+
 function buildPrompt(session, lang) {
   const cfg = hotelConfig;
   const L = lang === "he" ? "he" : "en";
@@ -372,17 +548,32 @@ function buildPrompt(session, lang) {
   תציע תחליף. אמור בכנות: *"אין לי כרגע מקום בשרי/כשר שאני עומד מאחוריו
   באזור — אשמח לבדוק ולחזור אליך"*, והוסף [RECEPTION:<מה האורח מחפש>].
 
+🔎 *כלי חיפוש מקומות חי (Google Places) — יש לך אותו:*
+יש לך כלי בשם search_nearby_places שמחזיר מקומות *אמיתיים* סביב המלון —
+מסעדות, בתי קפה, ברים, אטרקציות, מוזיאונים, חנויות, חיי לילה ועוד, עם שם,
+כתובת, דירוג, רמת מחיר ומרחק מהמלון.
+- יש לך *שני מקורות* להמלצות, ורק שניים: (1) רשימת הסביבה שהמלון אצר (למטה),
+  ו-(2) התוצאות שהכלי הזה מחזיר. שניהם מקורות אמיתיים — מותר להמליץ מכל אחד מהם.
+- מתי לקרוא לכלי: כשאין ברשימת המלון מקום שעונה *בדיוק* על מה שהאורח ביקש, או
+  כשהאורח רוצה עוד אפשרויות. עדיף להפעיל את הכלי מאשר לומר "אין לי".
+- 🎯 כבד את הבקשה המדויקת: כתוב את מילות הבשרי/כשר/חלבי/טבעוני/סוג המטבח בתוך
+  שדה query ("מסעדת בשר כשרה", "בית קפה טבעוני", "סושי"). כך התוצאות באמת יתאימו.
+- אחרי שהכלי מחזיר תוצאות — בחר את 2-3 המתאימות ביותר לאורח ונסח המלצה חמה
+  (לפי כללי הפורמט של וואטסאפ). אל תשפוך את כל הרשימה.
+- אם הכלי החזיר status של שגיאה/אין תוצאות — אל תמציא. אמור שתבדוק ותחזור,
+  והוסף [RECEPTION:<מה האורח מחפש>].
+
 ⛔⛔ אסור להמציא מקומות — החוק החשוב ביותר בהמלצות:
-- מותר להמליץ *אך ורק* על מקומות שכתובים בנתונים למטה (שירותי המלון + הסביבה).
-  אלה המקומות שהמלון בדק ועומד מאחוריהם.
-- ⛔ אל תנקוב בשם של מסעדה, בר, חנות, מועדון, ספק או עסק שאינו ברשימה — גם אם
-  אתה "מכיר" אותו, גם אם הוא מפורסם, וגם אם האורח מפציר. שם שהמצאת עלול להיות
-  מקום שנסגר, שלא קיים, או שהמלון לא היה שולח אליו אורח. אורח שמגיע למקום
-  שהמצאת — זה כישלון של המלון, לא שלך.
-- ⛔ אל תמציא כתובת, מספר טלפון, שעות פתיחה, מחיר או מרחק. אם זה לא כתוב למטה,
-  אתה לא יודע את זה.
-- אין באזור מה שהאורח מחפש (סושי, מקום כשר, מועדון ספציפי)? אל תמציא ואל תגיד
-  רק "אני לא יודע" ותשאיר אותו תלוי באוויר. זה הניסוח הנכון:
+- מותר להמליץ *אך ורק* על מקומות שכתובים בנתונים למטה (שירותי המלון + הסביבה)
+  *או* שהכלי search_nearby_places החזיר. אלה המקומות היחידים שאתה "יודע".
+- ⛔ אל תנקוב בשם של מסעדה, בר, חנות, מועדון, ספק או עסק שלא הופיע באחד משני
+  המקורות האלה — גם אם אתה "מכיר" אותו, גם אם הוא מפורסם, וגם אם האורח מפציר.
+  שם שהמצאת עלול להיות מקום שנסגר, שלא קיים, או שהמלון לא היה שולח אליו אורח.
+  אורח שמגיע למקום שהמצאת — זה כישלון של המלון, לא שלך.
+- ⛔ אל תמציא כתובת, מספר טלפון, שעות פתיחה, מחיר או מרחק. השתמש *רק* בפרטים
+  שכתובים למטה או שהכלי החזיר. אם פרט לא נמצא באף אחד מהם — אתה לא יודע אותו.
+- אין באזור מה שהאורח מחפש (גם אחרי חיפוש בכלי)? אל תמציא ואל תגיד רק "אני לא
+  יודע" ותשאיר אותו תלוי באוויר. זה הניסוח הנכון:
   *"אין לי כרגע המלצה שאני עומד מאחוריה בשבילך — אשמח לבדוק ולחזור אליך."*
   והוסף [RECEPTION:<מה האורח מחפש>] כדי שאדם יברר ויחזור. זו תשובה מצוינת.
   "אני לא יודע" בלי המשך היא תשובה פסולה.
@@ -467,6 +658,7 @@ function buildPrompt(session, lang) {
   המשפט הזה האורח קורא ₪680 לאדם. אותו דבר לגבי "לאדם" / "לסועד" / "ליום".
 
 מידע המלון:
+מיקום המלון: ${cfg.location?.address_he || cfg.location?.address || "—"}
 WiFi: רשת ${cfg.wifi.name} | סיסמה: ${cfg.wifi.password}
 צ׳ק אין: ${cfg.checkin_time} | צ׳ק אאוט: ${cfg.checkout_time}
 צ׳ק אין מוקדם: ${cfg.early_checkin ? "זמין בתיאום" : "לא זמין"}
@@ -574,18 +766,35 @@ system returning records.
   I'd stand behind just yet — let me look into it and come back to you"*, and append
   [RECEPTION:<what the guest is looking for>].
 
+🔎 *Live places search (Google Places) — you have it:*
+You have a tool called search_nearby_places that returns REAL places around the hotel —
+restaurants, cafés, bars, attractions, museums, shops, nightlife and more, each with a
+name, address, rating, price level and distance from the hotel.
+- You have *two sources* for recommendations, and only two: (1) the hotel's curated area
+  list (below), and (2) whatever this tool returns. Both are real — recommend from either.
+- When to call it: when the hotel's own list has nothing that meets the guest's request
+  *exactly*, or when the guest wants more options. Prefer calling the tool over "I don't have one".
+- 🎯 Honour the exact request: put the meat / kosher / dairy / vegan / cuisine words inside
+  the 'query' field ("kosher meat restaurant", "vegan café", "sushi"). That makes the
+  results actually match.
+- Once the tool returns results — pick the 2-3 that suit the guest best and write a warm
+  recommendation (following the WhatsApp formatting rules). Never dump the whole list.
+- If the tool returns an error/no-results status — do NOT invent. Say you'll check and
+  come back, and append [RECEPTION:<what the guest is looking for>].
+
 ⛔⛔ NEVER INVENT A PLACE — the most important rule in recommendations:
-- You may recommend *only* places written in the data below (hotel services + the area).
-  Those are the places the hotel has vetted and stands behind.
-- ⛔ Never name a restaurant, bar, shop, club, supplier or business that isn't on that
-  list — not even if you "know" it, not even if it's famous, not even if the guest
-  presses you. A name you invented may be somewhere that has closed, that doesn't
-  exist, or that the hotel would never send a guest to. A guest arriving at a place
-  you made up is the hotel's failure, not yours.
-- ⛔ Never invent an address, a phone number, opening hours, a price or a distance.
-  If it isn't written below, you don't know it.
-- The area doesn't have what the guest wants (sushi, a kosher place, a specific club)?
-  Don't invent, and don't just say "I don't know" and leave them hanging. Say this:
+- You may recommend *only* places written in the data below (hotel services + the area)
+  *or* returned by the search_nearby_places tool. Those are the only places you "know".
+- ⛔ Never name a restaurant, bar, shop, club, supplier or business that didn't come from
+  one of those two sources — not even if you "know" it, not even if it's famous, not even
+  if the guest presses you. A name you invented may be somewhere that has closed, that
+  doesn't exist, or that the hotel would never send a guest to. A guest arriving at a
+  place you made up is the hotel's failure, not yours.
+- ⛔ Never invent an address, a phone number, opening hours, a price or a distance. Use
+  *only* details written below or returned by the tool. If a detail is in neither, you
+  don't know it.
+- The area still doesn't have what the guest wants (even after a tool search)? Don't
+  invent, and don't just say "I don't know" and leave them hanging. Say this:
   *"I don't have a recommendation I'd stand behind for that just yet — let me look
   into it and come back to you."*
   Then append [RECEPTION:<what the guest is looking for>] so a person finds out and
@@ -678,6 +887,7 @@ Rules:
   The same goes for "per person" / "per diner" / "per day".
 
 Hotel Information:
+Hotel location: ${cfg.location?.address || "—"}
 WiFi: Network ${cfg.wifi.name} | Password: ${cfg.wifi.password}
 Check-in: ${cfg.checkin_time} | Check-out: ${cfg.checkout_time}
 Early check-in: ${cfg.early_checkin ? "Available upon request" : "Not available"}
@@ -1673,29 +1883,8 @@ async function processIncoming(phone, text, media = null) {
   pushHistory(phone, "user", userMsg);
   let raw;
   try {
-    const r = await createMessageWithRetry({
-      model: AI_MODEL,
-      // ⚠️ היה 500 — וזו הייתה הסיבה לדליפת "[CONCIERGE:restaurant|":
-      // תשובה עם רשימת המלצות + תג בסופה חרגה מהתקציב, ה-AI נקטע באמצע
-      // כתיבת התג, והשארית נשלחה לאורח. התקציב הוכפל כדי שתשובה רגילה
-      // *עם* תג תיכנס בנוחות. (הקטיעה עדיין מטופלת בכל השכבות למטה —
-      // תקציב גדול יותר מקטין את הסיכוי, לא מחליף את ההגנה.)
-      max_tokens: 1000,
-      system: buildPrompt(sessions[phone] || session, lang),
-      messages: (sessions[phone] || session).history,
-    });
-    // חילוץ עמיד של הטקסט — מתעלמים מבלוקים שאינם טקסט (thinking וכו').
-    raw = (r.content || [])
-      .filter(b => b.type === "text")
-      .map(b => b.text)
-      .join("")
-      .trim();
+    raw = await runConciergeTurn(sessions[phone] || session, lang, phone);
     if (!raw) throw new Error("empty AI response");
-    // תשובה שנקטעה בגלל התקציב — נרשמת ללוג כדי שנדע. הטיפול עצמו
-    // (תג קטוע → פעולה + סינון) קורה בהמשך ואינו תלוי בבדיקה הזו.
-    if (r.stop_reason === "max_tokens") {
-      console.error(`⚠️ תשובת ה-AI נקטעה (max_tokens) עבור ${phone.slice(-8)} — סוף התשובה: …${raw.slice(-80)}`);
-    }
   } catch (e) {
     console.error("AI error (all retries failed):", e?.message || e);
     raw = lang === "he"
