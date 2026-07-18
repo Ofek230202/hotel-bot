@@ -74,11 +74,14 @@ const DEFAULTS = {
   //
   // ⚠️ הקואורדינטות למטה הן דוגמה (אזור טיילת תל אביב) התואמת ל-local_area
   //    הבדיוני. אין להשאירן בפרודקשן — כל מלון מזין את המיקום שלו.
+  // ⚠️ נתוני דוגמה של David Kempinski Tel Aviv — המלון על טיילת חוף הים
+  //    בתל אביב (רחוב הירקון / טיילת תל אביב, ליד גן העצמאות). כל מלון
+  //    אמיתי חייב להחליף את הכתובת והקואורדינטות במיקום המדויק שלו.
   location: {
-    address:         "Kempinski Hotel (demo), Tel Aviv beachfront",
-    address_he:      "מלון קמפינסקי (דמו), טיילת תל אביב",
-    lat:             32.0743,
-    lng:             34.7664,
+    address:         "HaYarkon Street, Tel Aviv-Yafo, Israel (David Kempinski Tel Aviv — demo)",
+    address_he:      "רחוב הירקון, תל אביב-יפו — דוד קמפינסקי תל אביב (דמו)",
+    lat:             32.0900,
+    lng:             34.7700,
     search_radius_m: 4000,
   },
 
