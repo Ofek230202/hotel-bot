@@ -80,8 +80,14 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
 - **WhatsApp-clean output** — markdown tables are banned in the prompt (WhatsApp can't render
   them; guests saw `|---|---|`). Lists render as `• *name* (duration) — price`, and a
   conditional price (e.g. couples massage = for two people) must be spelled out in words.
-- AI-driven department routing via internal `[HK:...]` / `[MAINTENANCE:...]` / `[CONCIERGE:...]` /
-  `[RECEPTION:...]` tags → `notifyStaff` sends WhatsApp to the dept + logs an alert.
+- AI-driven department routing to **all 7 standard 5-star departments**, understanding-based (by
+  meaning, not keywords). Internal tags → `notifyStaff` (WhatsApp + email + alert log):
+  `[HK:...]`/`[HK_URGENT:...]` → housekeeping, `[MAINTENANCE:...]` → maintenance,
+  `[ROOMSERVICE:...]` → room service, `[SECURITY:...]` → security (non-emergency),
+  `[RECEPTION:...]` → reception, `[CONCIERGE:...]` → concierge, `[EMERGENCY:...]` → security
+  (+ the deterministic emergency flow). The prompt (HE+EN) describes each department's scope with
+  routing examples (coffee→room service, spill→housekeeping, blown bulb→maintenance, suspicious
+  person→security, injury→emergency), so the AI always routes and never leaves a request unanswered.
 - Check-in **conversation** state machine: name → reservation → **stay dates** → **date
   confirmation** → **extra details** (guests/ETA/vehicle/requests — optional, one message,
   skippable) → ID → **terms acceptance** → deposit. Every stage has exactly one phrasing

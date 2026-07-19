@@ -92,6 +92,7 @@ export async function notifyStaff({ dept, roomNumber, guestName, message, priori
     maintenance:  hotelConfig.maintenance_number,
     concierge:    hotelConfig.concierge_number,
     security:     hotelConfig.security_number,
+    room_service: hotelConfig.room_service_number,
   };
   const emailMap = {
     housekeeping: hotelConfig.housekeeping_email,
@@ -99,11 +100,14 @@ export async function notifyStaff({ dept, roomNumber, guestName, message, priori
     maintenance:  hotelConfig.maintenance_email,
     concierge:    hotelConfig.concierge_email,
     security:     hotelConfig.security_email,
+    room_service: hotelConfig.room_service_email,
   };
-  const emoji = { housekeeping: "🧹", reception: "🏨", maintenance: "🔧", concierge: "⭐", security: "🚨" }[dept] || "🔔";
+  const emoji = { housekeeping: "🧹", reception: "🏨", maintenance: "🔧", concierge: "⭐", security: "🚨", room_service: "🛎️" }[dept] || "🔔";
+  // שם המחלקה בכותרת ההתראה — קריא לצוות (room_service → ROOM SERVICE).
+  const deptLabel = dept.replace(/_/g, " ").toUpperCase();
   const urgency = priority === "high" ? "🚨 *דחוף* 🚨\n" : "";
   const { full } = israelTime();
-  const body = `${urgency}${emoji} *${dept.toUpperCase()}*\n\n👤 אורח: ${guestName || "—"}\n🚪 חדר: ${roomNumber || "—"}\n📝 ${message}\n⏰ ${full}`;
+  const body = `${urgency}${emoji} *${deptLabel}*\n\n👤 אורח: ${guestName || "—"}\n🚪 חדר: ${roomNumber || "—"}\n📝 ${message}\n⏰ ${full}`;
 
   // ── ערוץ 1: וואטסאפ ──────────────────────────────────
   const to = numberMap[dept];
@@ -114,7 +118,7 @@ export async function notifyStaff({ dept, roomNumber, guestName, message, priori
   // ── ערוץ 2: מייל (דרך שכבת המייל המבודדת) ────────────
   const toEmail = emailMap[dept];
   if (toEmail) {
-    const subject = `${priority === "high" ? "🚨 דחוף — " : ""}${dept.toUpperCase()} | חדר ${roomNumber || "—"} | ${guestName || "—"}`;
+    const subject = `${priority === "high" ? "🚨 דחוף — " : ""}${deptLabel} | חדר ${roomNumber || "—"} | ${guestName || "—"}`;
     try {
       await email.send({ to: toEmail, subject, body, dept, priority, meta: { roomNumber, guestName, message } });
     } catch (e) { console.error("Staff notify (email) failed:", e.message); }
@@ -506,13 +510,24 @@ function buildPrompt(session, lang) {
   "לאיזו שעה נוח לך?".
 - פנייה לאורח: בגוף שני, בנימוס טבעי. אל תמציא צורות פועל.
 - אל תדביק את מה שהאורח כתב לתוך משפט שלך. הפנייה בשם היא משפט נפרד.
-- ⛔ *עקביות בפנייה — חוק, לא המלצה.* אל תתחלף בין "לכם" ל"לכן", בין
-  "אתם" ל"אתן", או בין יחיד לרבים באותה שיחה. בחר צורה אחת בתחילת
-  השיחה והישאר איתה עד סופה. ברירת המחדל: אורח בודד → לשון יחיד; זוג
-  או קבוצה → לשון רבים בזכר ("לכם", "אתם", "שלכם", "ברוכים הבאים"),
-  גם אם יש נשים בקבוצה — זו הצורה התקנית לרבים מעורבים בעברית. עברי
-  לצורת נקבה ("לך", "את") רק אם ברור שמדובר באישה אחת. לפני כל הודעה,
-  ודא שכל כינויי הגוף והפעלים בה מתאימים זה לזה במין ובמספר.
+- ⛔ *מין ומספר — חוק ברזל, זה מה שגורם לך להישמע כמו בן אדם אמיתי.*
+  בעברית כל פנייה נושאת מין (זכר/נקבה) ומספר (יחיד/רבים). פנייה בצורה
+  הלא נכונה צורמת לאורח מיד. לכן:
+  1. *זהה את מין האורח מתוך *איך שהוא עצמו כותב** — הפעלים והתארים שהאורח
+     משתמש בהם על עצמו מסגירים את מינו: "הגעתי ואני *עייפה*", "אני *רוצה*"
+     (נקבה) מול "אני *עייף*", "*הזמנתי*" בצורת זכר. אם האורח כתב בלשון נקבה
+     — פנה אליו בנקבה ("את", "לך" בהגייה נקבית, "תרצי", "מוזמנת"). אם בזכר
+     — בזכר ("אתה", "תרצה", "מוזמן"). זה ההבדל בין בוט מדויק לבוט מביך.
+  2. *כשמין האורח אינו ידוע* (עדיין לא כתב דבר שמסגיר אותו) — העדף ניסוח
+     *נטול-מין* שנכון לשניהם: פעלים בעבר בגוף שני ("הגעת", "ביקשת" —
+     נכתבים זהה לזכר ולנקבה), שמות עצם ("בשמחה", "לרשותך", "אשמח לעזור"),
+     ופנייה בשם. הימנע מפועל עתיד/הווה גוף שני שמחייב מין ("תרצה"/"תרצי")
+     כשאינך יודע — או השתמש ב"אפשר…?" / "נשמח…" במקום.
+  3. *עקביות מוחלטת* — בחר צורה אחת ואל תתחלף באמצע השיחה בין זכר לנקבה,
+     בין "לכם" ל"לכן", או בין יחיד לרבים. לפני *כל* הודעה, קרא אותה שוב
+     וודא שכל הפעלים, התארים וכינויי הגוף מתאימים זה לזה במין ובמספר.
+  4. *זוג/קבוצה* → לשון רבים בזכר ("לכם", "אתם", "ברוכים הבאים") — זו
+     הצורה התקנית לרבים, גם אם יש נשים בקבוצה. אורח בודד → לשון יחיד.
 
 🚨 חירום — עדיפות עליונה, לפני כל דבר אחר:
 אם האורח מתאר פציעה, מצב רפואי, אש, ריח/דליפת גז, או סכנה מיידית — זהה זאת מיד (לפי המשמעות, לא לפי מילה מסוימת):
@@ -697,11 +712,36 @@ ${faqs}
 פרטי האורח:
 שם: ${nameFor(session, "he") || "—"} | חדר: ${session.roomNumber || "—"} | מצב: ${session.stage || "—"}
 
+🏨 המחלקות של המלון — לכל בקשה יש בית, ואתה תמיד מנתב אותה נכון:
+אתה מרכז הבקשות של המלון. כל בקשה של אורח מנותבת למחלקה הנכונה דרך התג
+המתאים (המחלקה מקבלת וואטסאפ + מייל). לעולם אל תשאיר בקשה בלי מענה, ולעולם
+אל תשלח אורח "לחייג בעצמו" — אתה מעביר, ומעדכן שהעברת. זהה לפי *המשמעות*,
+לא לפי מילה בודדת:
+- *קבלה (Reception)* — שאלות כלליות, מפתח/כרטיס, חשבון וחיובים, ארכה,
+  כל מה שאינו שייך למחלקה אחרת. תג: [RECEPTION].
+- *משק בית (Housekeeping)* — ניקיון, מגבות, מצעים ושמיכות, מוצרי טואלטיקה,
+  משהו שנשפך/התלכלך, חדר לא נקי, פינוי כלים. תג: [HK] (דחוף → [HK_URGENT]).
+- *אחזקה (Maintenance)* — כל תקלה טכנית: נורה שרופה, מזגן/חימום, אינסטלציה,
+  מים חמים, טלוויזיה, כספת, תריס, חשמל, אינטרנט בחדר. תג: [MAINTENANCE].
+- *שירות חדרים (Room Service)* — הזמנת אוכל/שתייה/קפה לחדר, תפריט בחדר.
+  תג: [ROOMSERVICE].
+- *ביטחון (Security)* — אדם חשוד, תחושת חוסר ביטחון, איום, מטרד/רעש שמדאיג,
+  חפץ חשוד — *כשאין פציעה או סכנת חיים מיידית*. תג: [SECURITY].
+- *חירום (Emergency)* — פציעה, מצב רפואי, אש, גז, סכנת חיים מיידית.
+  תג: [EMERGENCY] (ראה סעיף החירום למעלה — קודם ההנחיה לאורח).
+- *קונסיירז' (Concierge)* — המלצות, הזמנות (מונית/שולחן/ספא/סיור), בקשות
+  מיוחדות. תג: [CONCIERGE:<סוג>|<פרטים>].
+דוגמאות ניתוב: "בא לי קפה לחדר" → [ROOMSERVICE]. "נשפך חלב על השטיח" → [HK].
+"נשברה נורה" / "המזגן לא עובד" → [MAINTENANCE]. "צריך עוד מגבות" → [HK].
+"מסתובב פה מישהו חשוד" → [SECURITY]. "נפצעתי" / "יש אש" → [EMERGENCY].
+
 פקודות פנימיות (הוסף בסוף תגובתך בשורה נפרדת, האורח לא יראה אותן):
-[HK:<תיאור>] — בקשת ניקיון
-[HK_URGENT:<תיאור>] — ניקיון דחוף
-[MAINTENANCE:<תיאור>] — תקלה טכנית
-[RECEPTION:<תיאור>] — העברה לנציג אנושי
+[HK:<תיאור>] — בקשת משק בית (ניקיון, מגבות, מצעים, משהו שנשפך)
+[HK_URGENT:<תיאור>] — משק בית דחוף
+[MAINTENANCE:<תיאור>] — תקלה טכנית (נורה, מזגן, אינסטלציה, טלוויזיה)
+[ROOMSERVICE:<תיאור>] — הזמנת אוכל/שתייה/קפה לחדר
+[SECURITY:<תיאור>] — עניין ביטחוני שאינו חירום (אדם חשוד, מטרד, איום)
+[RECEPTION:<תיאור>] — העברה לקבלה (שאלה כללית, חשבון, כל דבר ללא מחלקה)
 [EMERGENCY:<סוג + תיאור>] — חירום (פציעה / רפואי / אש / גז / סכנה) — הסלמה דחופה לביטחון
 
 [CONCIERGE:<סוג>|<כל הפרטים>] — בקשה שדורשת סידור בפועל.
@@ -942,11 +982,37 @@ ${faqs}
 Guest:
 Name: ${nameFor(session, "en") || "—"} | Room: ${session.roomNumber || "—"}
 
+🏨 THE HOTEL'S DEPARTMENTS — every request has a home, and you always route it:
+You are the hotel's request hub. Every guest request is routed to the right
+department via the matching tag (that department gets WhatsApp + email). Never
+leave a request unanswered, and never tell a guest to "call it yourself" — you
+pass it on and confirm you have. Identify by *meaning*, not a single keyword:
+- *Reception* — general questions, key/keycard, bill and charges, extensions,
+  anything not owned by another department. Tag: [RECEPTION].
+- *Housekeeping* — cleaning, towels, linen and blankets, toiletries, a spill or
+  mess, an unclean room, clearing dishes. Tag: [HK] (urgent → [HK_URGENT]).
+- *Maintenance* — any technical fault: a blown bulb, air-conditioning/heating,
+  plumbing, hot water, TV, safe, blinds, electrics, in-room internet. Tag: [MAINTENANCE].
+- *Room Service* — ordering food/drinks/coffee to the room, in-room menu. Tag: [ROOMSERVICE].
+- *Security* — a suspicious person, feeling unsafe, a threat, a worrying
+  disturbance/noise, a suspicious object — *when there is no injury or immediate
+  danger to life*. Tag: [SECURITY].
+- *Emergency* — injury, medical event, fire, gas, immediate danger to life.
+  Tag: [EMERGENCY] (see the emergency section above — the guest instruction comes first).
+- *Concierge* — recommendations, bookings (taxi/table/spa/tour), special
+  requests. Tag: [CONCIERGE:<type>|<details>].
+Routing examples: "I'd like a coffee to the room" → [ROOMSERVICE]. "Milk spilled
+on the carpet" → [HK]. "A bulb went out" / "the AC isn't working" → [MAINTENANCE].
+"I need more towels" → [HK]. "Someone suspicious is here" → [SECURITY].
+"I'm injured" / "there's a fire" → [EMERGENCY].
+
 Internal commands (add at end of reply on a new line, guest never sees these):
-[HK:<description>] — housekeeping request
+[HK:<description>] — housekeeping (cleaning, towels, linen, a spill)
 [HK_URGENT:<description>] — urgent housekeeping
-[MAINTENANCE:<description>] — technical issue
-[RECEPTION:<description>] — escalate to human agent
+[MAINTENANCE:<description>] — technical fault (bulb, AC, plumbing, TV)
+[ROOMSERVICE:<description>] — order food/drinks/coffee to the room
+[SECURITY:<description>] — a non-emergency security matter (suspicious person, disturbance, threat)
+[RECEPTION:<description>] — escalate to reception (general question, bill, anything without a department)
 [EMERGENCY:<type + description>] — emergency (injury/medical/fire/gas/danger) — urgent escalation to security
 
 [CONCIERGE:<type>|<all the details>] — a request that needs actually arranging.
@@ -1030,7 +1096,7 @@ async function submitConciergeRequest(payload, session, phone) {
 // ולכן קרו *שני* דברים רעים בבת אחת: הבקשה של האורח לא הועברה לאף
 // אחד, והטקסט "[CONCIERGE:restaurant|" נשלח אליו כהודעה.
 // עכשיו התג נתפס, הבקשה עוברת לאדם (מסומנת כחלקית), והטקסט מוסר.
-const ACTION_TAG_RE = /\[(HK|HK_URGENT|MAINTENANCE|CONCIERGE|RECEPTION|EMERGENCY):([^\]]*?)(\]|$)/g;
+const ACTION_TAG_RE = /\[(HK_URGENT|HK|MAINTENANCE|ROOMSERVICE|CONCIERGE|RECEPTION|SECURITY|EMERGENCY):([^\]]*?)(\]|$)/g;
 
 async function runActions(raw, session, phone) {
   const re = new RegExp(ACTION_TAG_RE.source, "g");
@@ -1049,11 +1115,13 @@ async function runActions(raw, session, phone) {
     }
     const dept = {
       HK: "housekeeping", HK_URGENT: "housekeeping",
-      MAINTENANCE: "maintenance", CONCIERGE: "concierge", RECEPTION: "reception",
-      EMERGENCY: "security",
+      MAINTENANCE: "maintenance", ROOMSERVICE: "room_service",
+      CONCIERGE: "concierge", RECEPTION: "reception",
+      SECURITY: "security", EMERGENCY: "security",
     }[type];
     // בקשה קטועה = פרטים חסרים = חייבת עין אנושית, יהיה הסוג אשר יהיה.
-    const priority = truncated || type.includes("URGENT") || type === "RECEPTION" || type === "EMERGENCY"
+    const priority = truncated || type.includes("URGENT") || type === "RECEPTION"
+      || type === "SECURITY" || type === "EMERGENCY"
       ? "high" : "normal";
 
     // ── חירום: תיעוד מובנה של האירוע לפני ההסלמה ────────
@@ -1246,10 +1314,10 @@ async function promptStage(phone, stage, lang, { prefix = "", brief = false } = 
   // לכתוב הכל בהודעה אחת, או פשוט *לדלג*. לא חוסם את הצ'ק אין.
   if (stage === "waiting_details") {
     return wa(phone, p + (he
-      ? `כמעט סיימנו! עוד כמה פרטים קטנים שיעזרו לנו לארח אתכם כמו שצריך (אפשר לכתוב הכל בהודעה אחת, או פשוט לכתוב *דלג*):\n\n` +
-        `• כמה אורחים תהיו?\n` +
-        `• בסביבות איזו שעה תגיעו?\n` +
-        `• אם הגעתם ברכב — מספר הרכב, לחניה\n` +
+      ? `כמעט סיימנו! עוד כמה פרטים קטנים שיעזרו לנו לארח אותך כמו שצריך (אפשר לכתוב הכל בהודעה אחת, או פשוט לכתוב *דלג*):\n\n` +
+        `• כמה אורחים תהיו בחדר?\n` +
+        `• באיזו שעה בערך מתוכננת ההגעה?\n` +
+        `• אם מגיעים ברכב — מספר הרכב, לחניה\n` +
         `• בקשה מיוחדת? (קומה גבוהה, מיטה זוגית, חדר שקט…)`
       : `Almost there! A few small details that help us host you properly (feel free to put it all in one message, or just type *skip*):\n\n` +
         `• How many guests will you be?\n` +
@@ -1348,7 +1416,9 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
     patchSession(phone, { checkinStage: "waiting_name", idAttempts: 0 });
     await promptStage(phone, "waiting_name", lang, {
       prefix: lang === "he"
-        ? `ברוך הבא! 🌟 נשמח לעשות עבורך צ׳ק אין דיגיטלי.`
+        // ניסוח *נטול-מין* (unisex): "שמחים שהגעת" ו"עבורך" נכתבים זהה
+        // לזכר ולנקבה — כך הפתיחה נכונה לכל אורח, בלי "ברוך הבא" הזכרי.
+        ? `שמחים שהגעת! 🌟 נשמח להשלים עבורך את הצ׳ק אין הדיגיטלי.`
         : `Welcome! 🌟 Let's get you checked in.`,
     });
     return;
@@ -1436,7 +1506,7 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
     if (isNegative(input)) {
       patchSession(phone, { checkinStage: "waiting_dates", pendingStay: null });
       await promptStage(phone, "waiting_dates", lang, {
-        prefix: lang === "he" ? "אין בעיה, בוא נתקן את זה." : "No problem, let's put that right.",
+        prefix: lang === "he" ? "אין בעיה, נתקן את זה יחד." : "No problem, let's put that right.",
       });
       return;
     }
@@ -1536,7 +1606,7 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
     patchSession(phone, { checkinStage: "waiting_name", idAttempts: 0 });
     await promptStage(phone, "waiting_name", lang, {
       prefix: lang === "he"
-        ? `בוא נמשיך בצ'ק אין 😊`
+        ? `נמשיך בצ'ק אין 😊`
         : `Let's continue your check-in 😊`,
     });
   }
@@ -1743,9 +1813,10 @@ async function confirmCheckout(phone, session, lang) {
 
 // ── משוב האורח — בקשה נעימה ולא מעיקה ─────────────────
 async function promptFeedback(phone, lang) {
+  // ניסוח נטול-מין: "נשמח", "אפשר", "לדרג" — נכונים לזכר ולנקבה כאחד.
   await wa(phone, lang === "he"
     ? `לפני שניפרד — נשמח מאוד לשמוע איך הייתה השהייה 🌟\n` +
-      `אפשר לדרג מ-*1 עד 5*, או לכתוב מילה קצרה. וכמובן — מוזמנים פשוט לכתוב *דלג*.`
+      `אפשר לדרג מ-*1 עד 5*, או לכתוב מילה קצרה. וכמובן — אפשר גם פשוט לכתוב *דלג*.`
     : `Before you go — we'd love to hear how your stay was 🌟\n` +
       `Feel free to rate it *1 to 5*, or drop a quick note. Or just type *skip*, of course.`, { lang });
 }
@@ -1764,7 +1835,7 @@ async function handleFeedback(phone, text, lang) {
   // דילוג — פרידה חמה בלי לשמור משוב.
   if (isSkipWord(raw)) {
     await wa(phone, he
-      ? "בשמחה, אין צורך 🙏 תודה ששהיתם איתנו — נסיעה טובה ולהתראות! 🌟"
+      ? "בשמחה, אין צורך 🙏 תודה ששהית איתנו — נסיעה טובה ולהתראות! 🌟"
       : "Of course, no problem 🙏 Thank you for staying with us — safe travels and see you again! 🌟", { lang });
     return;
   }
@@ -1792,12 +1863,13 @@ async function handleFeedback(phone, text, lang) {
   } catch (e) { console.error("feedback notify failed:", e?.message || e); }
 
   // תודה חמה — מותאמת לדירוג אם ניתן.
+  // ניסוח נטול-מין ובלשון יחיד — עקבי עם הפרידה בצ'ק אאוט ("לראותך").
   const warm = rating && rating <= 3
     ? (he
-        ? "תודה על הכנות — כל מילה עוזרת לנו להשתפר 🙏 נשמח לארח אתכם שוב ולתת חוויה טובה עוד יותר."
+        ? "תודה על הכנות — כל מילה עוזרת לנו להשתפר 🙏 נשמח לארח אותך שוב ולתת חוויה טובה עוד יותר."
         : "Thank you for your honesty — every word helps us improve 🙏 We'd love to host you again and do even better.")
     : (he
-        ? "תודה רבה על המילים החמות! 🌟 שמחנו מאוד לארח אתכם, ומחכים לראותכם שוב."
+        ? "תודה רבה על המילים החמות! 🌟 שמחנו מאוד לארח אותך, ונשמח לראותך שוב."
         : "Thank you so much for the kind words! 🌟 It was a pleasure hosting you, and we can't wait to welcome you back.");
   await wa(phone, warm, { lang });
 }

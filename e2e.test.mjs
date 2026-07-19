@@ -1237,6 +1237,7 @@ test("חירום (זיהוי): מזהה פציעה/אש/סכנה — HE + EN —
 
   // חייב לזהות
   assert.equal(detectEmergency("יש אדם פצוע פה!")?.kind, "medical");
+  assert.equal(detectEmergency("נפצעתי, אני מדמם")?.kind, "medical"); // גוף ראשון (הלקוח ציין)
   assert.equal(detectEmergency("מישהו לא נושם")?.kind, "medical");
   assert.equal(detectEmergency("יש שריפה בחדר")?.kind, "fire");
   assert.equal(detectEmergency("אני מריח גז")?.kind, "fire");
@@ -1249,6 +1250,8 @@ test("חירום (זיהוי): מזהה פציעה/אש/סכנה — HE + EN —
   assert.equal(detectEmergency("מישהו מעשן ליד הבריכה"), null, "'מעשן' לא אמור להיתפס כ'עשן'");
   assert.equal(detectEmergency("אפשר מספר ההזמנה מאושר?"), null, "'מאושר' לא אמור להיתפס כ'אש'");
   assert.equal(detectEmergency("צריך סכין ומזלג לחדר"), null, "בקשת סכו\"ם אינה חירום");
+  assert.equal(detectEmergency("חתכתי את הלחם"), null, "'חתכתי את הלחם' אינו פציעה");
+  assert.equal(detectEmergency("המזגן לא עובד"), null, "תקלת מזגן אינה חירום");
   assert.equal(detectEmergency("מה שעות הבריכה?"), null);
   assert.equal(detectEmergency("Can I book a table?"), null);
 });
@@ -1841,6 +1844,124 @@ test("משוב באנגלית: אורח אנגלי מקבל בקשת משוב ו
   const thanks = sent.filter(s => s.to === p).map(s => s.body).join("\n");
   assert.match(thanks, /Thank you/i);
   assert.ok(!/[֐-׿]/.test(thanks), `עברית דלפה בתודה: ${thanks}`);
+});
+
+// ════════════════════════════════════════════════════════
+//  אישור לקוח — ניתוב בקשות למחלקות (7 מחלקות)
+// ════════════════════════════════════════════════════════
+test("ניתוב: שירות חדרים — 'קפה לחדר' מגיע למחלקת Room Service (וואטסאפ + מייל)", async () => {
+  const { hotelConfig } = await import("./config.js");
+  const p = freshGuest();
+  await bot.handleIncoming(p, "שלום");
+  sent.length = 0;
+
+  aiReply = "בשמחה, מעביר לשירות החדרים! ☕ [ROOMSERVICE:קפה חם + חלב לחדר 305]";
+  await bot.handleIncoming(p, "אפשר קפה לחדר?");
+
+  const staff = sent.find(s => s.to === hotelConfig.room_service_number);
+  assert.ok(staff, "שירות החדרים חייב לקבל את הבקשה");
+  assert.match(staff.body, /ROOM SERVICE/, "כותרת המחלקה קריאה (לא ROOM_SERVICE)");
+  assert.match(staff.body, /קפה חם/, "הפרטים עוברים");
+  const guest = sent.filter(s => s.to === p).map(s => s.body).join("\n");
+  assert.ok(!guest.includes("["), `תג דלף לאורח: ${guest}`);
+});
+
+test("ניתוב: ביטחון (לא-חירום) — 'אדם חשוד' מגיע ל-Security בעדיפות גבוהה", async () => {
+  const { hotelConfig } = await import("./config.js");
+  const p = freshGuest();
+  await bot.handleIncoming(p, "שלום");
+  sent.length = 0;
+
+  aiReply = "תודה שעדכנת, אני מטפל בזה מיד. [SECURITY:אדם לא מזוהה מסתובב בקומה 4]";
+  await bot.handleIncoming(p, "מסתובב פה מישהו חשוד במסדרון");
+
+  const staff = sent.find(s => s.to === hotelConfig.security_number);
+  assert.ok(staff, "הביטחון חייב לקבל התראה");
+  assert.match(staff.body, /דחוף/, "עניין ביטחוני מסומן כדחוף");
+  assert.match(staff.body, /אדם לא מזוהה/);
+});
+
+test("ניתוב: כל תג מגיע למחלקה הנכונה (וואטסאפ)", async () => {
+  const { hotelConfig } = await import("./config.js");
+  const cases = [
+    ["[HK:עוד מגבות לחדר]",              hotelConfig.housekeeping_number,  /HOUSEKEEPING/],
+    ["[MAINTENANCE:נורה שרופה בחדר]",    hotelConfig.maintenance_number,   /MAINTENANCE/],
+    ["[ROOMSERVICE:כריך וקולה לחדר]",    hotelConfig.room_service_number,  /ROOM SERVICE/],
+    ["[SECURITY:רעש חשוד מחדר 210]",     hotelConfig.security_number,      /SECURITY/],
+    ["[RECEPTION:שאלה על החשבון]",       hotelConfig.reception_number,     /RECEPTION/],
+  ];
+  for (const [tag, number, title] of cases) {
+    const p = freshGuest();
+    await bot.handleIncoming(p, "שלום");
+    sent.length = 0;
+    aiReply = `בסדר גמור. ${tag}`;
+    await bot.handleIncoming(p, "בבקשה");
+    const staff = sent.find(s => s.to === number);
+    assert.ok(staff, `${tag}: לא הגיע למחלקה הנכונה`);
+    assert.match(staff.body, title, `${tag}: כותרת מחלקה שגויה`);
+    const guest = sent.filter(s => s.to === p).map(s => s.body).join("\n");
+    assert.ok(!guest.includes("["), `${tag}: תג דלף לאורח`);
+  }
+});
+
+test("ניתוב: הנחיות המחלקות + התגים החדשים מגיעים ל-AI — HE + EN", async () => {
+  const he = await askConcierge("מה יש במלון?");
+  assert.match(he, /המחלקות של המלון/, "סעיף מחלקות בעברית");
+  assert.match(he, /\[ROOMSERVICE:/, "תג שירות חדרים");
+  assert.match(he, /\[SECURITY:/, "תג ביטחון");
+  assert.match(he, /בא לי קפה לחדר.*ROOMSERVICE/s, "דוגמת ניתוב קפה→שירות חדרים");
+  assert.match(he, /נשברה נורה.*MAINTENANCE/s, "דוגמת ניתוב נורה→אחזקה");
+
+  const en = await askConcierge("what's in the hotel?");
+  assert.match(en, /THE HOTEL'S DEPARTMENTS/i);
+  assert.match(en, /\[ROOMSERVICE:/);
+  assert.match(en, /\[SECURITY:/);
+});
+
+test("ניתוב: חירום דטרמיניסטי — 'נפצעתי' → 101 מיד, בלי תלות ב-AI", async () => {
+  const { detectEmergency } = await import("./emergency.js");
+  assert.equal(detectEmergency("נפצעתי!")?.kind, "medical");
+
+  const p = freshGuest();
+  await bot.handleIncoming(p, "שלום");
+  sent.length = 0;
+  aiCalls = 0;
+  await bot.handleIncoming(p, "נפצעתי, אני מדמם");
+  const guest = sent.filter(s => s.to === p).map(s => s.body).join("\n");
+  assert.match(guest, /101/, "הנחיית חירום מיידית");
+  assert.equal(aiCalls, 0, "חירום לא עובר ב-AI");
+});
+
+// ════════════════════════════════════════════════════════
+//  אישור לקוח — עברית נטולת-מין בהודעות המערכת
+// ════════════════════════════════════════════════════════
+test("מגדר: פתיחת הצ'ק אין נטולת-מין — בלי 'ברוך הבא' הזכרי ובלי 'בוא'", async () => {
+  const p = freshGuest();
+  sent.length = 0;
+  await bot.handleIncoming(p, "צק אין");
+  const body = lastBody();
+  assert.ok(!/ברוך הבא/.test(body), `'ברוך הבא' מגדר זכר: ${body}`);
+  assert.ok(!/\bבוא\b/.test(body), `'בוא' מגדר זכר: ${body}`);
+  assert.match(body, /שמך המלא/, "עדיין מבקש שם");
+});
+
+test("מגדר: הכלל להתאמת מין/מספר לפי כתיבת האורח מגיע ל-AI", async () => {
+  const he = await askConcierge("מה שעות הספא?");
+  assert.match(he, /מין ומספר/, "חוק המין והמספר");
+  assert.match(he, /איך שהוא עצמו כותב|מתוך.*כותב/, "זיהוי מין לפי כתיבת האורח");
+  assert.match(he, /נטול-מין/, "ברירת מחדל נטולת-מין כשלא ידוע");
+});
+
+test("מגדר: פרידת הצ'ק אאוט + המשוב עקביים בלשון יחיד נטולת-מין", async () => {
+  const { p } = await checkedInGuest();
+  await bot.handleIncoming(p, "צק אאוט");
+  await bot.handleIncoming(p, "כן");
+  sent.length = 0;
+  await bot.handleIncoming(p, "5, היה מושלם");
+  const thanks = sent.filter(s => s.to === p).map(s => s.body).join("\n");
+  // בלי צורות רבים ("אתכם"/"לראותכם") שסותרות את "לראותך" בצ'ק אאוט
+  assert.ok(!/אתכם|לראותכם|ששהיתם/.test(thanks), `ערבוב יחיד/רבים בפרידה: ${thanks}`);
+  assert.match(thanks, /לראותך|אותך/, "לשון יחיד נטולת-מין");
 });
 
 // ניקוי קובץ ה-DB הזמני

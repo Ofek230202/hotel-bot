@@ -46,6 +46,7 @@ const DEFAULTS = {
   maintenance_number:  "whatsapp:+9729876543",
   concierge_number:    "whatsapp:+9721112233",
   security_number:     "whatsapp:+9725556677",   // ביטחון / מנהל תורן — להסלמת חירום
+  room_service_number: "whatsapp:+9724445566",    // שירות חדרים — אוכל/שתייה לחדר
 
   // ── Internal contacts (Email per department) ─────────
   housekeeping_email: "housekeeping@kempinski-demo.co.il",
@@ -53,6 +54,7 @@ const DEFAULTS = {
   maintenance_email:  "maintenance@kempinski-demo.co.il",
   concierge_email:    "concierge@kempinski-demo.co.il",
   security_email:     "security@kempinski-demo.co.il",
+  room_service_email: "roomservice@kempinski-demo.co.il",
 
   // ── Timing ───────────────────────────────────────────
   checkin_time:  "15:00",

@@ -600,7 +600,7 @@ export async function processCheckout(phone, reservationId, lang = "he") {
       ? `🚪 *צ'ק אאוט הושלם — חדר ${res.roomNumber}*\n\n` +
         `תודה, *${name}*! שמחנו לארח אותך 🌟\n\n` +
         formatFolio(res, lang, { settled: true }) + "\n\n" +
-        `מעדיף לשלם את ההפרש בכרטיס אחר? אפשר להחליף כאן:\n👉 ${res.altCardUrl}\n\n` +
+        `אם נוח יותר לשלם את ההפרש בכרטיס אחר — אפשר להחליף כאן:\n👉 ${res.altCardUrl}\n\n` +
         `_לשאלות: קבלה, שלוחה 0_`
       : `🚪 *Check-out complete — Room ${res.roomNumber}*\n\n` +
         `Thank you, *${name}*! It was a pleasure hosting you 🌟\n\n` +
