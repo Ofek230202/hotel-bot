@@ -21,6 +21,23 @@ const ai = new Anthropic({
 });
 
 const MAX_BYTES = 5 * 1024 * 1024; // מגבלת תמונה סבירה (5MB)
+const FETCH_TIMEOUT = 10_000;      // מפסיקים הורדת מדיה תקועה — אחרת הבוט נתקע בשקט
+
+// ── fetch עם timeout קשיח ───────────────────────────────
+// 🔴 Bug קריטי (שקט מוחלט בצ'ק אין): fetch של Node לא נכשל לבד על חיבור
+//    תקוע — הוא ממתין לנצח. אורח ששלח צילום ת"ז וה-CDN של טוויליו לא ענה
+//    קיבל "🔎 בודק את המסמך…" ואז *שתיקה מוחלטת*, כי ה-await לא חזר לעולם
+//    ולא נזרקה שגיאה שאפשר לתפוס. AbortController אחרי 10 שניות הופך תקיעה
+//    לשגיאה נתפסת → שכבת הצ'ק אין ממשיכה ("שלח שוב" / בדיקה ידנית).
+async function fetchWithTimeout(url, opts = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+  try {
+    return await fetch(url, { ...opts, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // ── הורדת המדיה מטוויליו ───────────────────────────────
 // כתובות המדיה של טוויליו מוגנות ב-Basic Auth ומפנות (redirect) לאחסון
@@ -33,12 +50,12 @@ export async function fetchMedia(url) {
     ? { Authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString("base64")}` }
     : {};
 
-  let r = await fetch(url, { headers, redirect: "manual" });
+  let r = await fetchWithTimeout(url, { headers, redirect: "manual" });
 
   // 30x → מושכים מהיעד הסופי בלי האימות של טוויליו
   let hops = 0;
   while (r.status >= 300 && r.status < 400 && r.headers.get("location") && hops++ < 5) {
-    r = await fetch(new URL(r.headers.get("location"), url).toString(), { redirect: "manual" });
+    r = await fetchWithTimeout(new URL(r.headers.get("location"), url).toString(), { redirect: "manual" });
   }
 
   if (!r.ok) throw new Error(`media fetch failed: HTTP ${r.status}`);

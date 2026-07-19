@@ -569,8 +569,11 @@ function buildPrompt(session, lang) {
 כתובת, דירוג, רמת מחיר ומרחק מהמלון.
 - יש לך *שני מקורות* להמלצות, ורק שניים: (1) רשימת הסביבה שהמלון אצר (למטה),
   ו-(2) התוצאות שהכלי הזה מחזיר. שניהם מקורות אמיתיים — מותר להמליץ מכל אחד מהם.
-- מתי לקרוא לכלי: כשאין ברשימת המלון מקום שעונה *בדיוק* על מה שהאורח ביקש, או
-  כשהאורח רוצה עוד אפשרויות. עדיף להפעיל את הכלי מאשר לומר "אין לי".
+- מתי לקרוא לכלי: *כמעט תמיד* כשאורח מבקש מסעדה / בית קפה / בר / אטרקציה /
+  מקום ספציפי באזור — הכלי מחזיר מקומות *אמיתיים* לפי המיקום המדויק של המלון
+  (${cfg.location?.address_he || cfg.location?.address || "אזור המלון"}), וזה
+  עדיף על הרשימה האצורה. הפעל אותו גם כשהרשימה לא מכסה את הבקשה בדיוק, וגם
+  כשרוצים עוד אפשרויות. עדיף תמיד להפעיל את הכלי מאשר לומר "אין לי" או לנחש.
 - 🎯 כבד את הבקשה המדויקת: כתוב את מילות הבשרי/כשר/חלבי/טבעוני/סוג המטבח בתוך
   שדה query ("מסעדת בשר כשרה", "בית קפה טבעוני", "סושי"). כך התוצאות באמת יתאימו.
 - אחרי שהכלי מחזיר תוצאות — בחר את 2-3 המתאימות ביותר לאורח ונסח המלצה חמה
@@ -609,17 +612,19 @@ function buildPrompt(session, lang) {
 - כשיש לך את הפרטים — הוסף את התג [CONCIERGE:<סוג>|<כל הפרטים>] והודע לאורח.
 
 ⚠️⚠️ מה מותר להבטיח — חוק ברזל של אמינות:
-אתה *מעביר* את הבקשה לקונסיירז' האנושי, והוא זה שמבצע אותה מול המסעדה/חברת
-המוניות. בזמן שאתה כותב לאורח, שום דבר עדיין לא בוצע ושום דבר עדיין לא אושר.
-לכן, בלי יוצא מן הכלל:
-- ✅ הניסוח הנכון: *"אעביר את בקשתך לקונסיירז' שלנו ואחזור אליך עם אישור"* /
-  "העברתי את הבקשה, ואעדכן אותך ברגע שהיא מאושרת".
-- ⛔ אסור בהחלט: "הזמנתי לך מונית ל-20:00", "השולחן שלך שמור", "סידרתי לך",
-  "זה מטופל, המונית בדרך". אלה הבטחות שאתה לא יכול לקיים — ואורח שיורד ללובי
-  ומגלה שאין מונית הוא כישלון חמור.
-- ⛔ אל תמציא אישור, שעה שסוכמה, מספר אסמכתא, שם נהג או שם של מי שמטפל בבקשה.
-- אל תתנצל על כך ואל תסביר לאורח איך המערכת עובדת מבפנים — אמור בביטחון ובחום
-  מה קורה עכשיו ומתי הוא יקבל תשובה. זה מה שקונסיירז' אנושי אומר.
+אתה מתאם את הבקשה מול הספק (המסעדה / חברת המוניות) מאחורי הקלעים. בזמן שאתה
+כותב לאורח, שום דבר עדיין לא בוצע ושום דבר עדיין לא אושר. לכן, בלי יוצא מן הכלל:
+- ✅ הניסוח הנכון — אלגנטי, אישי ובגוף ראשון: *"אני מטפל בזה עבורך — אתאם
+  ואחזור אליך עם אישור."* / *"בשמחה, אני על זה — אעדכן אותך ברגע שהכול מסודר."*
+- ⛔ אל תזכיר "קונסיירז' אנושי", "הקונסיירז' האמיתי", "אעביר את הבקשה הלאה" או
+  שום מנגנון פנימי. מבחינת האורח *אתה* המטפל בבקשה — פשוט אמור שאתה מטפל בזה
+  ותחזור עם אישור.
+- ⛔ אסור בהחלט להבטיח שההזמנה כבר *בוצעה/אושרה*: "הזמנתי לך מונית ל-20:00",
+  "השולחן שלך שמור", "המונית בדרך". עדיין לא אישרת כלום — אתה מתאם ותחזור עם
+  אישור. אורח שיורד ללובי ומגלה שאין מונית הוא כישלון חמור.
+- ⛔ אל תמציא אישור, שעה שסוכמה, מספר אסמכתא או שם נהג.
+- אל תתנצל ואל תסביר לאורח איך המערכת עובדת מבפנים — אמור בביטחון ובחום מה קורה
+  עכשיו ומתי יקבל תשובה.
 
 *פרואקטיביות* — החום של מלון יוקרה:
 - סיים כמעט כל תשובה בהצעה קונקרטית אחת, לא ב-"יש עוד משהו?" הכללי והריק.
@@ -702,8 +707,13 @@ ${svcs}
 ${park}
 
 🗺️ הסביבה — הידע שלך על מחוץ למלון (זה מה שהופך אותך לקונסיירז'):
-כל ההמלצות שלך מגיעות *מכאן בלבד*. אל תמליץ על מקום שאינו ברשימה, גם אם
-אתה "מכיר" אותו — מלון 5 כוכבים עומד מאחורי כל המלצה שהוא נותן.
+יש לך *שני מקורות אמת* להמלצות, ורק שניים: (1) הרשימה האצורה למטה, ו-(2)
+הכלי search_nearby_places (Google) שמחזיר מקומות אמיתיים סביב המלון. להמלצה
+על מסעדה/בר/אטרקציה — *העדף את הכלי*, כדי להמליץ על מקום אמיתי וקרוב לפי
+המיקום המדויק של המלון. אסור בהחלט להמליץ על מקום שלא הופיע באחד משני
+המקורות — גם אם אתה "מכיר" אותו; מלון 5 כוכבים עומד מאחורי כל המלצה. אם
+הכלי לא החזיר תוצאות — אל תמציא, אמור שתבדוק ותחזור והוסף [RECEPTION:<הבקשה>].
+הרשימה האצורה (מקומות שהמלון בחר להמליץ עליהם):
 ${area}
 
 שאלות נפוצות:
@@ -823,8 +833,11 @@ restaurants, cafés, bars, attractions, museums, shops, nightlife and more, each
 name, address, rating, price level and distance from the hotel.
 - You have *two sources* for recommendations, and only two: (1) the hotel's curated area
   list (below), and (2) whatever this tool returns. Both are real — recommend from either.
-- When to call it: when the hotel's own list has nothing that meets the guest's request
-  *exactly*, or when the guest wants more options. Prefer calling the tool over "I don't have one".
+- When to call it: *almost always* when a guest asks for a restaurant / café / bar /
+  attraction / a specific kind of place nearby — the tool returns *real* places around the
+  hotel's exact location (${cfg.location?.address || "the hotel area"}), which is better than
+  the curated list. Call it when the list doesn't match exactly, and when the guest wants more
+  options. Always prefer calling the tool over saying "I don't have one" or guessing.
 - 🎯 Honour the exact request: put the meat / kosher / dairy / vegan / cuisine words inside
   the 'query' field ("kosher meat restaurant", "vegan café", "sushi"). That makes the
   results actually match.
@@ -867,19 +880,22 @@ name, address, rating, price level and distance from the hotel.
 - Once you have the details — append [CONCIERGE:<type>|<all the details>] and tell the guest.
 
 ⚠️⚠️ WHAT YOU MAY PROMISE — an iron rule of honesty:
-You *pass* the request to our human concierge, and they are the one who carries it out with
-the restaurant or the taxi company. At the moment you write to the guest, nothing has been
-done yet and nothing has been confirmed yet. Therefore, without exception:
-- ✅ The right phrasing: *"I'll pass your request to our concierge and come back to you with
-  a confirmation"* / "I've passed it on and I'll update you the moment it's confirmed."
-- ⛔ Never: "I've booked you a taxi for 20:00", "Your table is reserved", "It's all sorted,
-  the car is on its way." Those are promises you cannot keep — and a guest who goes down to
-  the lobby to find no taxi is a serious failure.
-- ⛔ Never invent a confirmation, an agreed time, a reference number, a driver's name, or
-  the name of whoever is handling the request.
-- Don't apologise for this and don't explain the internals to the guest — say, warmly and
-  with confidence, what is happening now and when they'll hear back. That's what a human
-  concierge does.
+You coordinate the request with the provider (the restaurant / the taxi company) behind the
+scenes. At the moment you write to the guest, nothing has been done yet and nothing has been
+confirmed yet. Therefore, without exception:
+- ✅ The right phrasing — elegant, personal, first-person: *"I'm taking care of this for you
+  — I'll arrange it and come back to you with a confirmation."* / *"With pleasure, I'm on it —
+  I'll update you the moment it's all set."*
+- ⛔ Never mention a "human concierge", "the real concierge", "I'll pass this on", or any
+  internal mechanism. To the guest, *you* are the one handling it — simply say you're taking
+  care of it and will come back with a confirmation.
+- ⛔ Never promise the booking is already *done/confirmed*: "I've booked you a taxi for 20:00",
+  "Your table is reserved", "the car is on its way." You haven't confirmed anything yet — you're
+  arranging it and will return with a confirmation. A guest who goes to the lobby to find no
+  taxi is a serious failure.
+- ⛔ Never invent a confirmation, an agreed time, a reference number, or a driver's name.
+- Don't apologise and don't explain the internals to the guest — say, warmly and with
+  confidence, what is happening now and when they'll hear back.
 
 *Being proactive* — the warmth of a luxury hotel:
 - End almost every reply with one concrete offer, not a hollow "anything else?".
@@ -971,9 +987,13 @@ ${svcs}
 ${park}
 
 🗺️ THE AREA — your knowledge beyond the hotel (this is what makes you a concierge):
-Every recommendation you give comes *from here alone*. Never recommend a place that
-isn't on this list, even if you "know" it — a 5-star hotel stands behind every
-recommendation it makes.
+You have *two sources of truth* for recommendations, and only two: (1) the curated list
+below, and (2) the search_nearby_places tool (Google), which returns real places around the
+hotel. For a restaurant/bar/attraction recommendation, *prefer the tool* — so you recommend a
+real place, near the hotel's exact location. Never recommend a place that came from neither
+source, even if you "know" it — a 5-star hotel stands behind every recommendation. If the tool
+returns nothing, don't invent: say you'll check and come back, and append [RECEPTION:<request>].
+The curated list (places the hotel chose to recommend):
 ${area}
 
 FAQ:
@@ -1097,6 +1117,29 @@ async function submitConciergeRequest(payload, session, phone) {
 // אחד, והטקסט "[CONCIERGE:restaurant|" נשלח אליו כהודעה.
 // עכשיו התג נתפס, הבקשה עוברת לאדם (מסומנת כחלקית), והטקסט מוסר.
 const ACTION_TAG_RE = /\[(HK_URGENT|HK|MAINTENANCE|ROOMSERVICE|CONCIERGE|RECEPTION|SECURITY|EMERGENCY):([^\]]*?)(\]|$)/g;
+
+// ── מחלקות "בתוך החדר" — חייבות מספר חדר (Bug #3) ───────
+// ניקיון, אחזקה ושירות חדרים שולחים אדם *לחדר האורח*. בלי מספר חדר הצוות
+// לא יודע לאן ללכת. לכן לפני שמעבירים בקשה כזו — אם מספר החדר לא ידוע,
+// שואלים את האורח (מי שלא עשה צ'ק אין דרך הבוט אין לו חדר בסשן).
+// קונסיירז'/קבלה/ביטחון/חירום *לא* חוסמים: מונית/שולחן אינם "לחדר",
+// וחירום לעולם לא ממתין — הקבלה מזהה את האורח לפי הטלפון.
+const ROOM_BOUND_TAG_RE = /\[(?:HK_URGENT|HK|MAINTENANCE|ROOMSERVICE)(?::|\]|\s|$)/;
+function needsRoomNumber(raw) {
+  return ROOM_BOUND_TAG_RE.test(String(raw ?? ""));
+}
+
+// מחלץ מספר חדר מהודעת אורח. תומך: "304", "חדר 304", "room 512", "1205",
+// וחדר עם אות ("12A"). מחזיר את מספר החדר כמחרוזת, או null אם אין.
+function extractRoomNumber(text) {
+  const t = String(text ?? "").trim();
+  if (!t) return null;
+  const labelled = t.match(/(?:חדר|room|rm|מספר|no\.?|#)\s*(\d{1,4}[A-Za-z]?)/i);
+  if (labelled) return labelled[1].toUpperCase();
+  const bare = t.match(/^\s*(\d{1,4}[A-Za-z]?)\s*$/);
+  if (bare) return bare[1].toUpperCase();
+  return null;
+}
 
 async function runActions(raw, session, phone) {
   const re = new RegExp(ACTION_TAG_RE.source, "g");
@@ -1260,7 +1303,7 @@ function formatCheckinDetails(d, lang = "he") {
 // טקסט שהאורח הקליד — כך נולד "I want to check in, please enter your
 // reservation number": השם הקודם הודבק כפנייה בתחילת המשפט הבא.
 // פנייה בשם, אם יש, מגיעה כ-prefix בשורה נפרדת משלה.
-async function promptStage(phone, stage, lang, { prefix = "", brief = false } = {}) {
+async function promptStage(phone, stage, lang, { prefix = "", brief = false, withExample = false } = {}) {
   const he = lang === "he";
   const p  = prefix ? prefix + "\n\n" : "";
 
@@ -1277,20 +1320,18 @@ async function promptStage(phone, stage, lang, { prefix = "", brief = false } = 
   }
 
   if (stage === "waiting_dates") {
-    // ⚠️ הדוגמאות חייבות להיות מסומנות *במפורש* כדוגמאות. קודם הן הוצגו
-    // כשורה מודגשת בלי הסבר, ואורחים הבינו ש-20/07/2026 הוא תאריך אמיתי
-    // שהמלון כבר יודע עליו. תאריך לדוגמה שנקרא כתאריך אמיתי = שהייה שגויה.
-    return wa(phone, p + (he
-      ? `📅 מהם *תאריכי השהייה* שלך?\n\n` +
-        `אפשר לשלוח תאריך הגעה ותאריך עזיבה, או תאריך הגעה ומספר לילות.\n\n` +
-        `_כך נראה הפורמט — אלה דוגמאות בלבד, לא התאריכים שלך:_\n` +
-        `_«11/11/2026 - 14/11/2026»_\n` +
-        `_«11/11/2026, 3 לילות»_`
-      : `📅 What are your *stay dates*?\n\n` +
-        `You can send an arrival and a departure date, or an arrival date and the number of nights.\n\n` +
-        `_This is what the format looks like — these are examples only, not your dates:_\n` +
-        `_«11/11/2026 - 14/11/2026»_\n` +
-        `_«11/11/2026, 3 nights»_`), { lang });
+    // ── שאלה קצרה ונקייה כברירת מחדל (Bug #5) ──────────────
+    // קודם הבוט שפך את כל הפורמט והדוגמאות בכל פנייה — מכוער וחוזר. עכשיו
+    // השאלה קצרה, והבוט מבין תאריכים בצורה חכמה. הדוגמה מוצגת *רק* כשצריך:
+    // אחרי שהאורח שלח משהו שלא הצלחנו לקרוא (withExample=true) — ואז פעם
+    // אחת, מסומנת במפורש כדוגמה כדי שלא תיקרא כתאריך אמיתי.
+    const ask = he
+      ? `📅 מתי מתוכננת השהייה שלך — תאריך הגעה ותאריך עזיבה?`
+      : `📅 When is your stay — an arrival date and a departure date?`;
+    const example = he
+      ? `\n\n_אפשר גם הגעה ומספר לילות. למשל: «19/07/2026 עד 23/07/2026» או «19/07/2026, 4 לילות»._`
+      : `\n\n_You can also give an arrival date and the number of nights. E.g. «19/07/2026 to 23/07/2026» or «19/07/2026, 4 nights»._`;
+    return wa(phone, p + ask + (withExample ? example : ""), { lang });
   }
 
   // ── אישור התאריכים — לפני שממשיכים הלאה ───────────────
@@ -1465,7 +1506,7 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
       await promptStage(phone, "waiting_reservation", lang, { prefix: hint("reservation", v.reason, lang) });
       return;
     }
-    patchSession(phone, { checkinStage: "waiting_dates", pendingReservation: v.value });
+    patchSession(phone, { checkinStage: "waiting_dates", pendingReservation: v.value, pendingDatesText: null });
     await promptStage(phone, "waiting_dates", lang, {
       prefix: lang === "he"
         ? `✅ *הזמנה מספר ${v.value} אותרה!*`
@@ -1478,14 +1519,40 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
   // עד כה מספר הלילות היה קבוע (3) לכל אורח. עכשיו האורח מוסר אותם,
   // הם נשמרים על ההזמנה, ומהם נגזר תוקף כרטיס החדר ורגע ה-no-show.
   if (stage === "waiting_dates") {
-    const v = validateStayDates(input);
-    if (!v.ok) {
-      await promptStage(phone, "waiting_dates", lang, { prefix: hint("dates", v.reason, lang) });
+    // ── צבירת מידע חלקי לאורך כמה הודעות (Bug #2) ─────────
+    // אורח שכתב "4 לילות" ואז "19.7" מסר את המידע בשתי הודעות. קודם כל
+    // חלק נבדק לבד, נכשל ונשכח — והבוט שאל שוב ושוב את אותה שאלה. עכשיו
+    // זוכרים את מה שכבר נמסר (session.pendingDatesText) ומצרפים אליו את
+    // ההודעה הבאה: "4 לילות" + "19.7" → הגעה 19/7, 4 לילות.
+    const prev = getSession(phone).pendingDatesText || "";
+
+    // תשובה מלאה בהודעה אחת גוברת (מונעת זיהום משארית ישנה); אחרת מצרפים.
+    let v = validateStayDates(input);
+    let combined = input;
+    if (!v.ok && prev) {
+      combined = `${prev} ${input}`.trim();
+      const merged = validateStayDates(combined);
+      if (merged.ok) v = merged;
+    }
+
+    if (v.ok) {
+      // הצלחנו — מנקים את הצבירה וממשיכים לאישור.
+      patchSession(phone, { checkinStage: "waiting_dates_confirm", pendingStay: v.value, pendingDatesText: null });
+      await promptStage(phone, "waiting_dates_confirm", lang);
       return;
     }
-    // לא ממשיכים ישר לשלב הבא — קודם מאשרים מול האורח מה הבנו.
-    patchSession(phone, { checkinStage: "waiting_dates_confirm", pendingStay: v.value });
-    await promptStage(phone, "waiting_dates_confirm", lang);
+
+    // עדיין חסר מידע. בודקים אם מה שבידינו הוא "חצי" שימושי — מספר לילות
+    // בלי תאריך (no_arrival), או תאריך יחיד בלי לילות (one_date). אם כן,
+    // זוכרים אותו וממשיכים לבקש *רק את מה שחסר*; אחרת (קלט לא ברור/סותר)
+    // לא צוברים זבל, ומראים דוגמה קצרה כדי לעזור.
+    const state   = validateStayDates(combined);
+    const partial = state.reason === "no_arrival" || state.reason === "one_date";
+    patchSession(phone, { pendingDatesText: partial ? combined : null });
+    await promptStage(phone, "waiting_dates", lang, {
+      prefix:      hint("dates", state.reason, lang),
+      withExample: !partial,
+    });
     return;
   }
 
@@ -1504,7 +1571,7 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
     }
 
     if (isNegative(input)) {
-      patchSession(phone, { checkinStage: "waiting_dates", pendingStay: null });
+      patchSession(phone, { checkinStage: "waiting_dates", pendingStay: null, pendingDatesText: null });
       await promptStage(phone, "waiting_dates", lang, {
         prefix: lang === "he" ? "אין בעיה, נתקן את זה יחד." : "No problem, let's put that right.",
       });
@@ -1663,18 +1730,24 @@ async function handleIdStage(phone, media, lang) {
 
   // 2. אימות אמיתי דרך שכבת idverify המבודדת (Claude vision).
   //    לא זורק בזרימה רגילה — תקלה טכנית חוזרת כ-"manual_review".
+  //    🔴 עוטפים ב-timeout קשיח (מירוץ מול 40 שניות): גם אם משהו בשרשרת
+  //    האימות נתקע (רשת/AI), האורח לא יישאר לעולם על "🔎 בודק…". חריגת
+  //    זמן = בדיקה ידנית, והצ'ק אין ממשיך — לעולם לא שקט (Bug #1).
   let result;
   try {
-    result = await idVerify.verifyDocument({
-      reservationId: reservationNumber,
-      phone,
-      guestName,
-      mediaUrl: media.url,
-      contentType: m.value,
-      documentType: "id_or_passport",
-    });
+    result = await Promise.race([
+      idVerify.verifyDocument({
+        reservationId: reservationNumber,
+        phone,
+        guestName,
+        mediaUrl: media.url,
+        contentType: m.value,
+        documentType: "id_or_passport",
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("id verify timeout")), 40_000)),
+    ]);
   } catch (e) {
-    console.error("ID verification crashed:", e?.message || e);
+    console.error("ID verification crashed/timed out:", e?.message || e);
     result = { status: "manual_review", storedPath: null, documentType: "id" };
   }
 
@@ -2023,6 +2096,41 @@ async function processIncoming(phone, text, media = null) {
     return;
   }
 
+  // ── ממתינים למספר חדר כדי להעביר בקשה למחלקה (Bug #3) ─
+  // בקשה למחלקת "בתוך החדר" (ניקיון/אחזקה/רום סרוויס) מאורח שאין לו חדר
+  // ידוע — עוכבה עד שהאורח ימסור את מספר החדר. ההודעה הזו אמורה להיות
+  // מספר החדר: אם כן — משחררים את הבקשה עם החדר הנכון; אם לא — מבקשים
+  // שוב פעם אחת, ואז מעבירים לקבלה (מזהה לפי הטלפון) בלי לאבד את הבקשה.
+  if (session.pendingRoomActionRaw) {
+    const heldRaw  = session.pendingRoomActionRaw;
+    const heldLang = session.pendingRoomLang || lang;
+    const room     = extractRoomNumber(body);
+
+    if (room) {
+      patchSession(phone, { roomNumber: room, pendingRoomActionRaw: null, pendingRoomLang: null, pendingRoomAttempts: 0 });
+      let reply = stripInternalTags(await runActions(heldRaw, sessions[phone] || session, phone));
+      if (!reply) reply = heldLang === "he"
+        ? `מצוין — חדר *${room}*! 🌟 העברתי את הבקשה לצוות המתאים, והם מטפלים בזה כעת.`
+        : `Perfect — room *${room}*! 🌟 I've passed your request to the right team and they're on it.`;
+      await wa(phone, reply, { lang: heldLang });
+      pushHistory(phone, "assistant", reply);
+      return;
+    }
+
+    const attempts = (session.pendingRoomAttempts || 0) + 1;
+    if (attempts < 2) {
+      patchSession(phone, { pendingRoomAttempts: attempts });
+      await wa(phone, lang === "he"
+        ? "רק כדי שהבקשה תגיע למקום הנכון — מה מספר החדר? (למשל 512)"
+        : "Just so your request reaches the right place — what's your room number? (e.g. 512)", { lang });
+      return;
+    }
+    // אחרי שני ניסיונות בלי מספר חדר — לא מאבדים את הבקשה: מעבירים לצוות
+    // (הקבלה מזהה את האורח לפי הטלפון), ומטפלים בהודעה הנוכחית כרגיל.
+    patchSession(phone, { pendingRoomActionRaw: null, pendingRoomLang: null, pendingRoomAttempts: 0 });
+    await runActions(heldRaw, sessions[phone] || session, phone).catch(() => {});
+  }
+
   // הודעה ראשונה: שולחים תפריט/פתיחה רק אם זו ברכה כללית בלבד ("שלום"/"היי").
   // אם יש בהודעה הראשונה כוונה ברורה (צ'ק אין/אאוט, בקשת מחלקה, שאלה) —
   // ממשיכים מיד לטיפול בה למטה, בלי לשלוח תפריט מקדים.
@@ -2165,6 +2273,22 @@ async function processIncoming(phone, text, media = null) {
         ? "לא מצאתי הזמנה פעילה על שמך לצ'ק אאוט. אם כבר ביצעת צ'ק אין, אפשר לפנות לקבלה בשלוחה 0 ונשלים זאת מיד."
         : "I couldn't find an active reservation to check out. If you've already checked in, reception at Ext. 0 will sort it out right away.", { lang });
     }
+    return;
+  }
+
+  // ── מספר חדר חובה לבקשת מחלקה "בתוך החדר" (Bug #3) ────
+  // ה-AI ביקש להעביר בקשה לניקיון/אחזקה/רום סרוויס, אבל אין לנו מספר חדר
+  // (אורח שלא עשה צ'ק אין דרך הבוט). לא מעבירים בקשה בלי חדר — הצוות לא
+  // יידע לאן ללכת. עוצרים, זוכרים את הבקשה, ומבקשים את מספר החדר. ההודעה
+  // הבאה של האורח תשחרר את הבקשה עם החדר הנכון (הטיפול למעלה).
+  const sess = sessions[phone] || session;
+  if (needsRoomNumber(raw) && !sess.roomNumber) {
+    patchSession(phone, { pendingRoomActionRaw: raw, pendingRoomLang: lang, pendingRoomAttempts: 0 });
+    const ask = lang === "he"
+      ? "בשמחה אדאג לזה 🙏 מה מספר החדר שלך? (כדי שהצוות יגיע למקום הנכון)"
+      : "I'd be glad to sort that out for you 🙏 What's your room number? (so the team reaches the right place)";
+    await wa(phone, ask, { lang });
+    pushHistory(phone, "assistant", ask);
     return;
   }
 

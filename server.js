@@ -10,6 +10,18 @@ import { reservations, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIE
 import checkinRouter from "./checkin-routes.js";
 
 dotenv.config();
+
+// ── רשת ביטחון אחרונה ברמת התהליך (Bug #1: שקט מוחלט) ──
+// דחיית promise שלא נתפסה או חריגה לא-מטופלת יכולות להפיל את כל התהליך —
+// ואז *כל* האורחים מקבלים שתיקה עד ריסטארט. תופסים אותן, רושמים ללוג,
+// וממשיכים לרוץ. עדיף בוט חי שפספס הודעה אחת מאשר בוט מת לכולם.
+process.on("unhandledRejection", (reason) => {
+  console.error("🚨 unhandledRejection (נתפס — התהליך ממשיך):", reason?.stack || reason?.message || reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("🚨 uncaughtException (נתפס — התהליך ממשיך):", err?.stack || err?.message || err);
+});
+
 const app  = express();
 const PORT = process.env.PORT || 3000;
 const PASS = process.env.DASHBOARD_PASSWORD || "hotel2024";
