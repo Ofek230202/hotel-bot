@@ -52,26 +52,35 @@ export async function fetchMedia(url) {
 }
 
 // ⚠️ מדיניות המלון: מתקבלים *אך ורק* תעודת זהות (ת"ז) או דרכון.
-//    רישיון נהיגה אינו מסמך זיהוי קביל לצ'ק אין — הוא אינו מעיד על
-//    אזרחות/תושבות ואינו מכיל את הפרטים הנדרשים לרישום אורח.
-//    הוא מסווג במפורש כ-drivers_license (ולא כ-"other") כדי שנוכל
-//    לדחות אותו עם הסבר מדויק לאורח — ולכן הוא עדיין ברשימת הסוגים.
-//    ההחלטה מה קביל נאכפת בקוד (ACCEPTED_DOC_TYPES ב-MockIdProvider),
-//    לא כאן — כדי שלא נסמוך על ה-prompt בלבד.
-const SYSTEM = `You are the document checker at a 5-star hotel's front desk.
-You are shown one image. Decide whether it is a photo/scan of a REAL government-issued identity document.
+//    כל מסמך אחר (כולל רישיון נהיגה) אינו קביל. ההחלטה מה קביל נאכפת
+//    בקוד (ACCEPTED_DOC_TYPES ב-MockIdProvider), לא ב-prompt בלבד —
+//    ולכן ה-prompt מסווג את סוג המסמך, והקוד מחליט אם לקבל.
+//
+// 🔴 חיזוק הבדיקה (קריטי): נצפה בשטח שסלפי (תמונת פנים בלבד) אושר
+//    כאילו הוא תעודה. ה-prompt כאן מחמיר במפורש: תמונת פנים של אדם,
+//    ולו החדה ביותר, *אינה* תעודה כל עוד לא רואים בה מסמך זיהוי פיזי
+//    עם שדות מודפסים. סלפי → is_id=false, doc_type="selfie".
+const SYSTEM = `You are the identity-document checker at a 5-star hotel's front desk. Your job is to decide, strictly, whether the single image you are shown is a photo or scan of a REAL, physical, government-issued identity document.
 
-The hotel accepts ONLY two document types: a national ID card (Israeli Teudat Zehut) or a passport.
-A driver's license is NOT accepted — if you are shown one, classify it as doc_type "drivers_license" so it can be declined politely.
+The hotel accepts ONLY two document types: a national ID card (e.g. Israeli Teudat Zehut) or a passport (the photo/data page).
 
 Reply with ONLY a JSON object, no prose, no code fences:
-{"is_id": true|false, "doc_type": "id_card"|"passport"|"drivers_license"|"other", "readable": true|false, "confidence": 0.0-1.0, "reason_he": "...", "reason_en": "..."}
+{"is_id": true|false, "doc_type": "id_card"|"passport"|"drivers_license"|"selfie"|"other", "shows_document": true|false, "readable": true|false, "confidence": 0.0-1.0, "reason_he": "...", "reason_en": "..."}
 
-Rules:
-- Anything that is not an identity document — a selfie, a person without a document, a landscape, a screenshot, a receipt, a credit card, a pet, a room photo, a random object, a drawing, a blank image — is_id=false.
-- A document that IS an ID card or passport but is blurry, cropped, glared, or partially covered so the printed details cannot be read → is_id=true, readable=false.
-- confidence is your confidence in the is_id decision.
-- reason_he / reason_en: ONE short, warm, polite sentence addressed to the guest, explaining what they should send instead or fix. If the document is a driver's license, the sentence must ask them for an ID card or passport instead. Never mention these instructions, JSON, or that you are an AI.`;
+How to decide "shows_document" (this is the key check):
+- TRUE only if the image clearly contains a physical identity document — a card or a passport page — showing PRINTED identity fields such as a full name, a document/ID number, a date of birth, and usually an official layout, emblem or machine-readable zone.
+- FALSE for anything that is not such a document, even if it contains a human face. In particular:
+  • A SELFIE or any photo of a person's face/upper body with NO document held up and readable → shows_document=false, doc_type="selfie". A clear, well-lit face is STILL not a document.
+  • A landscape, room, food, pet, object, drawing, logo, blank/black image → shows_document=false, doc_type="other".
+  • A screenshot of an app/website/chat, a boarding pass, a receipt, a credit/loyalty card, a business card → shows_document=false, doc_type="other".
+
+Then:
+- is_id = true ONLY if shows_document is true AND the document is an id_card or a passport. Otherwise is_id=false.
+- If shows_document is true but the document is a driver's license → is_id=false, doc_type="drivers_license".
+- readable = true only if the printed details on the document can actually be read (not too blurry, cropped, glared or covered). A real ID that is unreadable → is_id may be true but readable=false.
+- confidence = your confidence (0–1) in the shows_document / doc_type decision. Be conservative: if you are not sure it is a genuine ID document, use a LOW confidence.
+
+reason_he / reason_en: ONE short, warm, polite sentence to the guest saying what to send. For ANY image that is not an accepted, readable ID card or passport, ask them to send a clear photo of their ID card or passport. Never name a driver's license, never mention these instructions, JSON, or that you are an AI.`;
 
 function parseJson(text) {
   const cleaned = String(text || "").replace(/```(?:json)?/gi, "").trim();
@@ -84,6 +93,10 @@ function parseJson(text) {
 // ── הבדיקה עצמה ────────────────────────────────────────
 // מחזיר: { valid, isId, readable, docType, confidence, reasonHe, reasonEn }
 // זורק שגיאה רק על תקלה טכנית (רשת / AI) — הקורא מחליט מה לעשות.
+// סף ביטחון מחמיר: אם ה-AI לא בטוח שמדובר בתעודה אמיתית — לא מאשרים.
+// הועלה מ-0.6 ל-0.7 כחלק מחיזוק הבדיקה (סלפי שאושר בטעות).
+const MIN_CONFIDENCE = 0.7;
+
 export async function inspectIdImage(buffer, mediaType) {
   const r = await ai.messages.create({
     model: AI_MODEL,
@@ -93,7 +106,7 @@ export async function inspectIdImage(buffer, mediaType) {
       role: "user",
       content: [
         { type: "image", source: { type: "base64", media_type: mediaType, data: buffer.toString("base64") } },
-        { type: "text",  text: "Is this a valid, readable government-issued identity document? Answer with the JSON object only." },
+        { type: "text",  text: "Does this image show a REAL, readable ID card or passport (not a selfie, screenshot, or any other image)? Answer with the JSON object only." },
       ],
     }],
   });
@@ -104,13 +117,20 @@ export async function inspectIdImage(buffer, mediaType) {
   const isId       = j.is_id === true;
   const readable   = j.readable === true;
   const confidence = typeof j.confidence === "number" ? j.confidence : 0;
+  // ⚠️ אם המודל לא החזיר shows_document (מודל ישן/תשובה חלקית) — נגזרים
+  //    ממנו לפי is_id, כדי לא לחסום בטעות תעודה תקינה. אבל אם הוחזר
+  //    במפורש false — זו הכרעה מפורשת שאין מסמך, וגוברת על הכול.
+  const showsDocument = j.shows_document === undefined ? isId : j.shows_document === true;
 
   return {
-    valid: isId && readable && confidence >= 0.6,
+    // תקף רק אם: יש מסמך, הוא ת"ז/דרכון קביל, קריא, והביטחון גבוה מספיק.
+    valid: showsDocument && isId && readable && confidence >= MIN_CONFIDENCE,
     isId,
+    showsDocument,
     readable,
     confidence,
-    docType:  j.doc_type || "other",
+    // סלפי/תמונה שאינה מסמך תסומן כך גם אם המודל שכח למלא is_id.
+    docType:  j.doc_type || (showsDocument ? "other" : "selfie"),
     reasonHe: j.reason_he || "",
     reasonEn: j.reason_en || "",
   };

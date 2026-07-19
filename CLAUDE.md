@@ -59,7 +59,7 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
 | `places/` | שכבת **חיפוש מקומות אמיתיים** מבודדת (Google Places API New — Text Search). `PlacesProvider` — הממשק + `PLACE_CATEGORIES` (מיפוי קטגוריה→`includedType`); `GooglePlacesProvider` — קורא ל-`places:searchText` עם `X-Goog-Api-Key` מ-`process.env.GOOGLE_PLACES_API_KEY` (**המפתח לעולם לא בקוד/לוג/גוף בקשה**), מנרמל שם/כתובת/דירוג/מחיר ומחשב מרחק (haversine); `MockPlacesProvider` — תוצאות דמו בלי רשת/מפתח, פורמט זהה. `util.js` — haversine + פורמט מרחק/מחיר. נקודת החלפה אחת: `places/index.js` (בוחר Google אם יש מפתח, אחרת mock; `PLACES_PROVIDER=mock` כופה mock). ה-AI מקבל את הכלי `search_nearby_places` (tool-use) ומכבד בקשה מדויקת (בשרי/כשר/טבעוני) דרך שדה `query`. | Works |
 | `i18n.js` | `detectLang` / `detectLangSignal` (Hebrew unicode heuristic), `detectLanguageRequest` + `stripLanguageRequest` (בקשת מעבר שפה), `t` helper. | Works |
 | `validate.js` | אימות קלט האורח: שם (דוחה גם *מילות פקודה* כמו "I want to check in"), מספר הזמנה, תמונת ת"ז, **תאריכי שהייה** (`validateStayDates` — פרסור חופשי HE/EN **מבוסס-תפקיד**: "עד"/"until" לפני תאריך = עזיבה) ו**אישור תנאים** (`validateTermsConfirmation` — דורש נוסח מפורש). + `stripInternalTags` (כולל תג **קטוע**). | Works |
-| `idverify/` | שכבת אימות זהות מבודדת. `vision.js` — בדיקת Claude vision אמיתית; `MockIdProvider` — אוכף `ACCEPTED_DOC_TYPES = {id_card, passport}` **בקוד** (לא רק ב-prompt) ושומר מקומית (דמו). רישיון נהיגה נדחה במפורש. נקודת החלפה אחת: `idverify/index.js`. | Works |
+| `idverify/` | שכבת אימות זהות מבודדת. `vision.js` — בדיקת Claude vision אמיתית **ומחמירה** (בודקת `shows_document`: סלפי/צילום מסך/תמונה אקראית → `is_id=false`; סף ביטחון 0.7); `MockIdProvider` — אוכף `ACCEPTED_DOC_TYPES = {id_card, passport}` **בקוד** (לא רק ב-prompt), ושומר את המסמך **מוצפן at-rest** (`crypto.js`, AES-256-GCM, קובץ `.enc`) — דמו מקומי, לא plaintext. הסבר הדחייה לאורח **גנרי** (לא נוקב בשם המסמך שנשלח). נקודת החלפה אחת: `idverify/index.js` (שם גם ה-hand-off העתידי ל-PMS). | Works |
 | `e2e.test.mjs` | בדיקות end-to-end לזרימת הצ'ק אין, השפה, התגים והזהות (`npm test`). | Works |
 | `index.html` (50KB) | Standalone dashboard/landing UI. | Present, not wired into the server flow as a tracked file |
 | `package.json` | Deps: `@anthropic-ai/sdk`, `twilio`, `stripe`, `express`, `dotenv`, `uuid`. ESM (`"type":"module"`). | OK |
@@ -83,7 +83,8 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
 - AI-driven department routing via internal `[HK:...]` / `[MAINTENANCE:...]` / `[CONCIERGE:...]` /
   `[RECEPTION:...]` tags → `notifyStaff` sends WhatsApp to the dept + logs an alert.
 - Check-in **conversation** state machine: name → reservation → **stay dates** → **date
-  confirmation** → ID → **terms acceptance** → deposit. Every stage has exactly one phrasing
+  confirmation** → **extra details** (guests/ETA/vehicle/requests — optional, one message,
+  skippable) → ID → **terms acceptance** → deposit. Every stage has exactly one phrasing
   source (`promptStage`), so a mid-flow language switch re-sends the *current* stage in the new
   language.
 - **Stay dates are role-based, never positional, and always confirmed.** "4 לילות עד ה-21/7"
@@ -113,9 +114,14 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
 - **Hardcoded room "304"** (assigned in `checkin-routes.js`; in production comes from the PMS).
   ~~hardcoded currency `gbp`~~ → ILS via `payments/index.js`. ~~hardcoded hotel name/deposit~~ →
   now read from `config.js` (`name`, `name_he`, `deposit_amount`, `wifi`, `services`).
-- **Still not collected at check-in:** number of guests, ETA, email, nationality/ID number,
-  vehicle plate for parking, special requests. **Check-out** still lacks: invoice/receipt,
-  minibar check, luggage storage, late-checkout offer, feedback.
+- **Now collected at check-in** (stage `waiting_details`, all optional/skippable): number of
+  guests, ETA, vehicle plate for parking, special requests — parsed best-effort from one free
+  message (`parseCheckinDetails`), stored on the reservation, shown in the confirmation + staff
+  alert. **Still not collected:** email, nationality/ID number.
+- **Check-out** now shows a **grouped, itemised bill** (per-category with subtotals; minibar is
+  its own section) and asks the guest for **feedback** (1–5 rating and/or a note; skippable) —
+  saved on the reservation, escalated to management (low ratings → high priority). Still lacks:
+  formal invoice/receipt PDF, minibar check, luggage storage, late-checkout offer.
 - No logging/monitoring, no rate-limiting, no Twilio request validation (security).
 - ~~No tests~~ **PARTIAL** — `e2e.test.mjs` (103 tests, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
   תגים, זהות, **מדיניות סוגי מסמכים, תאריכי שהייה, אישור תנאים, עקביות שפה מקצה לקצה**
@@ -124,10 +130,12 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
   מקרי הפיקדון + ביטול + עקביות שפה). עדיין חסרות בדיקות לשכבת התשלום המבודדת עצמה.
 
 ### ID document storage (אחסון תעודות זהות)
-`idverify/MockIdProvider` שומר את התמונה ל-`id-documents/` (ב-`.gitignore`) —
-**אחסון דמו בלבד: מקומי, לא מוצפן, בלי בקרת גישה ובלי retention.**
-⚠️ אסור להריץ כך בפרודקשן עם אורחים אמיתיים. המעבר לאחסון מאובטח ומוצפן
-נעשה במקום אחד: `idverify/index.js`.
+`idverify/MockIdProvider` שומר את התמונה ל-`id-documents/` (ב-`.gitignore`) **מוצפנת**
+(`idverify/crypto.js`, AES-256-GCM, קובץ `.enc`; מפתח מ-`ID_ENCRYPTION_KEY`, ואם חסר —
+מפתח דמו נגזר עם אזהרה). **עדיין אחסון דמו: מקומי, בלי בקרת גישה ובלי retention.**
+⚠️ אסור להריץ כך בפרודקשן עם אורחים אמיתיים. במלון אמיתי המסמך יישלח ל-**PMS/vault
+מאובטח** של המלון — נקודת ה-hand-off מסומנת ב-`MockIdProvider.#store`, וההחלפה נעשית
+במקום אחד: `idverify/index.js`.
 
 ---
 
@@ -309,7 +317,8 @@ Priority order (to be decided together):
 - Env vars expected (no `.env` committed): `ANTHROPIC_API_KEY`, `TWILIO_ACCOUNT_SID`,
   `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_NUMBER`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
   `BASE_URL`, `PORT`, `DASHBOARD_PASSWORD`, `GOOGLE_PLACES_API_KEY` (חיפוש מקומות חי; בלעדיו
-  `places/` נופל אוטומטית ל-mock), `PLACES_PROVIDER` (אופציונלי; `mock` כופה את המוק גם כשיש מפתח).
+  `places/` נופל אוטומטית ל-mock), `PLACES_PROVIDER` (אופציונלי; `mock` כופה את המוק גם כשיש מפתח),
+  `ID_ENCRYPTION_KEY` (32 בייט hex/base64 להצפנת מסמכי זיהוי; בלעדיו — מפתח דמו נגזר, לא לפרודקשן).
 - AI model in use: `claude-sonnet-4-6` (`bot.js`). הקונסיירז' רץ עם tool-use — הכלי
   `search_nearby_places` (`places/`) זמין לו בכל תור להמלצות מקומות אמיתיים.
 

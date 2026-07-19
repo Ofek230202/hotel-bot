@@ -6,7 +6,8 @@
 //     שבודק אם זו באמת תעודת זהות/דרכון קריאים. תמונה אקראית
 //     נדחית. אף פעם לא מאשרים "אומת" למשהו שאינו תעודה.
 //  2. אחסון — *דמו בלבד*: התמונה נשמרת מקומית בתיקייה id-documents/
-//     בדיסק, לא מוצפנת.
+//     בדיסק, כעת *מוצפנת at-rest* (AES-256-GCM, קובץ .enc) דרך
+//     idverify/crypto.js — כבר לא plaintext.
 //
 //  🔐 בפרודקשן — האחסון המקומי הזה חייב להתחלף באחסון מאובטח:
 //     מוצפן במנוחה (at rest), הרשאות גישה מבוקרות, tokenization,
@@ -24,27 +25,22 @@ import path from "node:path";
 import { v4 as uuidv4 } from "uuid";
 import { IdProvider } from "./IdProvider.js";
 import { fetchMedia, inspectIdImage } from "./vision.js";
+import { encryptBuffer, isUsingDemoKey, ENC_ALGO } from "./crypto.js";
 
 const STORE_DIR = path.resolve("id-documents");
 const EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
 
 // ── מדיניות: אילו מסמכים קבילים לצ'ק אין ───────────────
-// אכיפה *בקוד*, לא רק ב-prompt. בלי הרשימה הזו כל מסמך ממשלתי היה
-// עובר — כולל רישיון נהיגה, שהוא באמת תעודה ממשלתית ולכן ה-AI מחזיר
-// עליו is_id=true. במלון מקבלים תעודת זהות או דרכון בלבד.
+// אכיפה *בקוד*, לא רק ב-prompt. במלון מקבלים תעודת זהות או דרכון בלבד;
+// כל סוג אחר נדחה — ראה הבדיקה למטה.
 const ACCEPTED_DOC_TYPES = new Set(["id_card", "passport"]);
 
-// הסבר לאורח כשהמסמך אמיתי אך אינו קביל — מנוסח כאן ולא ע"י ה-AI,
-// כדי שהניסוח יהיה עקבי ולא ישתנה בין קריאה לקריאה.
+// הסבר אחיד לאורח כשהמסמך אינו קביל — מנוסח כאן ולא ע"י ה-AI, כדי
+// שהניסוח יהיה עקבי. ⚠️ בכוונה גנרי לכל סוג: לא נוקבים בשם המסמך
+// שנשלח (למשל רישיון נהיגה) — פשוט מבקשים את מה שכן מתקבל.
 const NOT_ACCEPTED_REASON = {
-  drivers_license: {
-    he: "רישיון נהיגה אינו קביל לצ'ק אין — אשמח לצילום של *תעודת זהות* או *דרכון*.",
-    en: "A driver's license can't be accepted for check-in — please send a photo of your *ID card* or *passport*.",
-  },
-  other: {
-    he: "המסמך אינו קביל לצ'ק אין — אשמח לצילום של *תעודת זהות* או *דרכון*.",
-    en: "That document can't be accepted for check-in — please send a photo of your *ID card* or *passport*.",
-  },
+  he: "המסמך אינו קביל לצ'ק אין — נדרשת *תעודת זהות* או *דרכון* בלבד. אשמח לצילום ברור של אחד מהם.",
+  en: "That document can't be accepted for check-in — we require an *ID card* or a *passport* only. Please send a clear photo of one of them.",
 };
 
 // README שמסביר לכל מי שנתקל בתיקייה למה היא כאן ומה אסור לעשות איתה.
@@ -53,7 +49,8 @@ const README = `⚠️ מסמכי זיהוי של אורחים — אחסון ד
 התיקייה הזו נוצרת אוטומטית ע"י idverify/MockIdProvider.js ומכילה
 צילומי תעודות זהות/דרכונים של אורחים (PII רגיש).
 
-זהו אחסון *דמו*: מקומי, לא מוצפן, בלי בקרת גישה ובלי מדיניות מחיקה.
+זהו אחסון *דמו*: מקומי, מוצפן at-rest (AES-256-GCM, קבצי .enc) אך
+בלי בקרת גישה, בלי retention, ועם מפתח דמו אם לא הוגדר ID_ENCRYPTION_KEY.
 
 🔐 בפרודקשן זה חייב לעבור לאחסון מאובטח ומוצפן (encrypted at rest,
    הרשאות מבוקרות, retention/מחיקה אוטומטית, תאימות לחוק הגנת הפרטיות).
@@ -126,13 +123,12 @@ export class MockIdProvider extends IdProvider {
     // רישיון נהיגה מגיע לכאן: is_id=true, readable=true. נדחה במפורש,
     // עם הסבר משלנו, ו*לא* נשמר — אין סיבה לאחסן מסמך שלא קיבלנו.
     if (!ACCEPTED_DOC_TYPES.has(check.docType)) {
-      const why = NOT_ACCEPTED_REASON[check.docType] || NOT_ACCEPTED_REASON.other;
       console.log(`🪪 [ID] נדחה — סוג מסמך לא קביל (${check.docType}) — לא נשמר.`);
       return {
         success: false, documentId: null, documentType: check.docType,
         status: "rejected", storedPath: null,
         isId: check.isId, readable: check.readable, confidence: check.confidence,
-        reasonHe: why.he, reasonEn: why.en,
+        reasonHe: NOT_ACCEPTED_REASON.he, reasonEn: NOT_ACCEPTED_REASON.en,
       };
     }
 
@@ -147,22 +143,38 @@ export class MockIdProvider extends IdProvider {
     };
   }
 
-  // שמירת התמונה + metadata לצדה. ⚠️ דמו בלבד — ראה README בראש הקובץ.
+  // שמירת התמונה + metadata לצדה.
+  // 🔐 התמונה נשמרת *מוצפנת* (AES-256-GCM, קובץ .enc) — לא עוד plaintext
+  //    על הדיסק. עדיין אחסון דמו מקומי (ראה README בראש הקובץ), אבל לפחות
+  //    לא קריא למי שנתקל בקובץ. המפתח מגיע מ-idverify/crypto.js.
+  //
+  // 🏨 נקודת החיבור העתידית ל-PMS (אל תמחק): במלון אמיתי, במקום לשמור
+  //    כאן, שולחים את מסמך הזיהוי ל-PMS/vault המאובטח של המלון דרך ספק
+  //    אחסון חדש ב-idverify/index.js. שם הוא נשמר עם בקרת גישה, retention
+  //    ותאימות לחוק. השורה למטה (fs.writeFile) היא בדיוק ה-hand-off שיוחלף.
   async #store(buffer, mediaType, meta) {
     try {
       await ensureStore();
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const base  = `${stamp}__${safe(meta.reservationId || meta.phone)}__${safe(meta.guestName)}`;
-      const file  = path.join(STORE_DIR, `${base}.${EXT[mediaType] || "jpg"}`);
-      await fs.writeFile(file, buffer);
+      // סיומת .enc אחידה (בלי סיומת המדיה) כדי שקובץ ה-metadata (.json)
+      // ליד ה-.enc יימצא ע"י אותה החלפה פשוטה: storedPath → .json.
+      const encFile = path.join(STORE_DIR, `${base}.enc`);
+
+      // 🔐 מצפינים לפני הכתיבה. (⏩ PMS hand-off point — ראה ההערה למעלה.)
+      const encrypted = encryptBuffer(buffer);
+      await fs.writeFile(encFile, encrypted);
+
       await fs.writeFile(path.join(STORE_DIR, `${base}.json`), JSON.stringify({
         ...meta,
         mediaType,
         bytes: buffer.length,
+        encrypted: true,
+        encryption: { algorithm: ENC_ALGO, format: "[IV 12B][authTag 16B][ciphertext]", demoKey: isUsingDemoKey() },
         storedAt: new Date().toISOString(),
-        note: "DEMO STORAGE — unencrypted local disk. Production: encrypted secure storage (see idverify/index.js).",
+        note: "DEMO STORAGE — encrypted at rest but on local disk. Production: send to the hotel's secure PMS/vault (see idverify/index.js).",
       }, null, 2), "utf8");
-      return file;
+      return encFile;
     } catch (e) {
       // כישלון שמירה לא מפיל את הצ'ק אין — מדווח ללוג וממשיך.
       console.error(`🪪 [ID] שמירת המסמך נכשלה: ${e.message}`);

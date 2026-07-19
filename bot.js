@@ -7,9 +7,9 @@ import dotenv    from "dotenv";
 import { hotelConfig }                                    from "./config.js";
 import { getSession, recordActivity, pushHistory, patchSession, logAlert, logIncident, stats, sessions } from "./state.js";
 import { detectLangSignal, detectLanguageRequest, stripLanguageRequest } from "./i18n.js";
-import { stripInternalTags, hasInternalTag, validateFullName, validateReservationNumber, validateIdMedia, validateStayDates, validateTermsConfirmation } from "./validate.js";
+import { stripInternalTags, hasInternalTag, validateFullName, validateReservationNumber, validateIdMedia, validateStayDates, validateTermsConfirmation, parseCheckinDetails, isSkipWord } from "./validate.js";
 import { resolveNameForms, nameFor }                      from "./names.js";
-import { startCheckin, processCheckout, getActiveReservation, getPendingReservation, formatFolio, depositExplainer, formatStayDates } from "./checkin.js";
+import { startCheckin, processCheckout, getActiveReservation, getPendingReservation, formatFolio, depositExplainer, formatStayDates, saveFeedback } from "./checkin.js";
 import { email }                                          from "./email/index.js";
 import { idVerify }                                       from "./idverify/index.js";
 import { concierge, REQUEST_TYPES }                       from "./concierge/index.js";
@@ -1167,6 +1167,22 @@ function renderTerms(lang) {
   return list.map((item, i) => `${i + 1}. *${fill(item.title)}*\n${fill(item.body)}`).join("\n\n");
 }
 
+// ── תצוגת פרטי הצ'ק אין הנוספים ───────────────────────
+// מקבל אובייקט עם guests/eta/vehicle/requests (מהסשן או מההזמנה)
+// ומחזיר בלוק שורות מתויגות לפי שפה, או "" אם אין שום פרט.
+// מקור אמת אחד — משמש גם באישור באמצע הצ'ק אין, גם בהודעת האישור לאורח
+// וגם בהתראה לצוות (שם תמיד בעברית).
+function formatCheckinDetails(d, lang = "he") {
+  if (!d) return "";
+  const he = lang === "he";
+  const lines = [];
+  if (d.guests)   lines.push(he ? `👥 אורחים: ${d.guests}`          : `👥 Guests: ${d.guests}`);
+  if (d.eta)      lines.push(he ? `🕐 הגעה משוערת: ${d.eta}`        : `🕐 Estimated arrival: ${d.eta}`);
+  if (d.vehicle)  lines.push(he ? `🚗 רכב (לחניה): ${d.vehicle}`    : `🚗 Vehicle (for parking): ${d.vehicle}`);
+  if (d.requests) lines.push(he ? `📝 בקשה מיוחדת: ${d.requests}`   : `📝 Special request: ${d.requests}`);
+  return lines.join("\n");
+}
+
 // ── מקור האמת לניסוח כל שלב ────────────────────────────
 // prefix = הסבר על קלט קודם שלא התקבל (ריק בפעם הראשונה).
 // נקרא גם בפתיחת שלב, גם אחרי קלט לא תקין, וגם כשאורח מחליף שפה
@@ -1225,6 +1241,23 @@ async function promptStage(phone, stage, lang, { prefix = "", brief = false } = 
       : `Just to make sure I've understood correctly:\n\n${formatStayDates(stay, "en")}\n\nIs that right? Please reply *yes* to confirm, or *no* if it needs correcting.`), { lang });
   }
 
+  // ── פרטים נוספים (אופציונלי, חלק) ────────────────────
+  // מלון אמיתי מבקש כמה פרטים שיעזרו לארח נכון. הכול אופציונלי — אפשר
+  // לכתוב הכל בהודעה אחת, או פשוט *לדלג*. לא חוסם את הצ'ק אין.
+  if (stage === "waiting_details") {
+    return wa(phone, p + (he
+      ? `כמעט סיימנו! עוד כמה פרטים קטנים שיעזרו לנו לארח אתכם כמו שצריך (אפשר לכתוב הכל בהודעה אחת, או פשוט לכתוב *דלג*):\n\n` +
+        `• כמה אורחים תהיו?\n` +
+        `• בסביבות איזו שעה תגיעו?\n` +
+        `• אם הגעתם ברכב — מספר הרכב, לחניה\n` +
+        `• בקשה מיוחדת? (קומה גבוהה, מיטה זוגית, חדר שקט…)`
+      : `Almost there! A few small details that help us host you properly (feel free to put it all in one message, or just type *skip*):\n\n` +
+        `• How many guests will you be?\n` +
+        `• Roughly what time will you arrive?\n` +
+        `• If you're coming by car — the licence plate, for parking\n` +
+        `• Any special request? (a high floor, a double bed, a quiet room…)`), { lang });
+  }
+
   if (stage === "waiting_id") {
     return wa(phone, p + (he
       ? `🪪 כדי להשלים את הצ'ק אין נדרש *אימות זהות*.\n\nאשמח לתמונה של *תעודת הזהות או הדרכון* — צילום ברור שבו כל הפרטים קריאים.`
@@ -1280,6 +1313,13 @@ async function ensureDepositLink(phone, lang) {
         // עוברים אל ההזמנה כדי שיישמרו ב-DB וישרדו ריסטארט.
         stay:  s.pendingStay || null,
         terms: { version: s.termsVersion || null, acceptedAt: s.termsAcceptedAt || null },
+        // פרטי הצ'ק אין הנוספים (אורחים / ETA / רכב / בקשות) — אופציונליים.
+        details: {
+          guests:   s.pendingGuests   ?? null,
+          eta:      s.pendingEta       ?? null,
+          vehicle:  s.pendingVehicle   ?? null,
+          requests: s.pendingRequests  ?? null,
+        },
       }
     );
     return paymentUrl;
@@ -1402,8 +1442,8 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
     }
 
     if (isAffirmative(input)) {
-      patchSession(phone, { checkinStage: "waiting_id", idAttempts: 0 });
-      await promptStage(phone, "waiting_id", lang, {
+      patchSession(phone, { checkinStage: "waiting_details" });
+      await promptStage(phone, "waiting_details", lang, {
         prefix: (lang === "he" ? `✅ *תאריכי השהייה נקלטו:*\n` : `✅ *Your stay dates are set:*\n`)
           + formatStayDates(session.pendingStay, lang),
       });
@@ -1412,6 +1452,29 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
 
     await promptStage(phone, "waiting_dates_confirm", lang, {
       prefix: hint("dates_confirm", input ? "unclear" : "empty", lang),
+    });
+    return;
+  }
+
+  // ── פרטים נוספים (אופציונלי) ─────────────────────────
+  // כל השדות אופציונליים; כל תשובה מתקדמת (לא חוסמים על חוסר פרטים).
+  // מחלץ best-effort מהודעה חופשית אחת ושומר בסשן — יגיע להזמנה ולסיכום.
+  if (stage === "waiting_details") {
+    const d = parseCheckinDetails(input);
+    patchSession(phone, {
+      checkinStage:    "waiting_id",
+      idAttempts:      0,
+      pendingGuests:   d.guests   ?? null,
+      pendingEta:      d.eta      ?? null,
+      pendingVehicle:  d.vehicle  ?? null,
+      pendingRequests: d.requests ?? null,
+    });
+    // אישור חם וקצר של מה שנקלט (רק אם נמסר משהו) — מראה לאורח שהוקשב לו.
+    const summary = formatCheckinDetails(d, lang);
+    await promptStage(phone, "waiting_id", lang, {
+      prefix: summary
+        ? (lang === "he" ? `רשמתי, תודה 🙏\n${summary}` : `Noted, thank you 🙏\n${summary}`)
+        : "",
     });
     return;
   }
@@ -1466,7 +1529,7 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
   // אחרת מאתחלים לשם — האורח תמיד מקבל מענה ולא נתקע.
   console.error(`⚠️ handleCheckin: שלב לא מזוהה "${stage}" (${phone.slice(-8)}) — משדרים מחדש כדי לא להשתיק את הבוט.`);
   const known = new Set(["waiting_name", "waiting_reservation", "waiting_dates",
-    "waiting_dates_confirm", "waiting_id", "waiting_terms", "waiting_payment"]);
+    "waiting_dates_confirm", "waiting_details", "waiting_id", "waiting_terms", "waiting_payment"]);
   if (known.has(stage)) {
     await promptStage(phone, stage, lang);
   } else {
@@ -1660,8 +1723,15 @@ async function startCheckout(phone, lang) {
 // שלב 2 — מבצע בפועל: מחייב מהפיקדון לפי שלושת המקרים
 async function confirmCheckout(phone, session, lang) {
   try {
-    await processCheckout(phone, session.reservationId || null, lang);
-    patchSession(phone, { stage: "checked_out", checkinStage: null, checkoutStage: null });
+    const res = await processCheckout(phone, session.reservationId || null, lang);
+    patchSession(phone, {
+      stage: "checked_out", checkinStage: null, checkoutStage: null,
+      // ── משוב: מסמנים שממתינים למשוב האורח (ההודעה הבאה שלו) ──
+      feedbackPending:       true,
+      feedbackReservationId: res?.id || session.reservationId || null,
+    });
+    // בקשת משוב עדינה — הודעה נפרדת אחרי אישור הצ'ק אאוט, לא דחפנית.
+    await promptFeedback(phone, lang);
   } catch (e) {
     console.error("Checkout error:", e.message);
     patchSession(phone, { checkoutStage: null });
@@ -1669,6 +1739,67 @@ async function confirmCheckout(phone, session, lang) {
       ? "לא מצאתי הזמנה פעילה על שמך. אפשר לפנות לקבלה בשלוחה 0 ונשמח לסייע."
       : "I couldn't find an active reservation in your name. Reception is available at Ext. 0 and will be glad to help.", { lang });
   }
+}
+
+// ── משוב האורח — בקשה נעימה ולא מעיקה ─────────────────
+async function promptFeedback(phone, lang) {
+  await wa(phone, lang === "he"
+    ? `לפני שניפרד — נשמח מאוד לשמוע איך הייתה השהייה 🌟\n` +
+      `אפשר לדרג מ-*1 עד 5*, או לכתוב מילה קצרה. וכמובן — מוזמנים פשוט לכתוב *דלג*.`
+    : `Before you go — we'd love to hear how your stay was 🌟\n` +
+      `Feel free to rate it *1 to 5*, or drop a quick note. Or just type *skip*, of course.`, { lang });
+}
+
+// מטפל בהודעת המשוב של האורח: מחלץ דירוג (1–5) ו/או טקסט, שומר על
+// ההזמנה, מודה בחום ומעדכן את ההנהלה. משוב הוא אופציונלי — "דלג" מסיים.
+async function handleFeedback(phone, text, lang) {
+  const s   = getSession(phone);
+  const he  = lang === "he";
+  const raw = String(text || "").trim();
+  // שומרים את מזהה ההזמנה *לפני* הניקוי (patchSession מאפס אותו על אותו אובייקט).
+  const rid = s.feedbackReservationId || s.reservationId || null;
+
+  patchSession(phone, { feedbackPending: false, feedbackReservationId: null });
+
+  // דילוג — פרידה חמה בלי לשמור משוב.
+  if (isSkipWord(raw)) {
+    await wa(phone, he
+      ? "בשמחה, אין צורך 🙏 תודה ששהיתם איתנו — נסיעה טובה ולהתראות! 🌟"
+      : "Of course, no problem 🙏 Thank you for staying with us — safe travels and see you again! 🌟", { lang });
+    return;
+  }
+
+  // דירוג 1–5 אם צוין (ספרה בודדת או "5/5"), והטקסט כמשוב מילולי.
+  const m = raw.match(/\b([1-5])\s*(?:\/\s*5|כוכבים|stars?)?\b/);
+  const rating = m ? +m[1] : null;
+  if (rid) {
+    try { saveFeedback(rid, { rating, text: raw }); }
+    catch (e) { console.error("saveFeedback failed:", e?.message || e); }
+  }
+
+  // עדכון ההנהלה/קבלה — כדי שמשוב (ובמיוחד דירוג נמוך) לא ייעלם.
+  try {
+    await notifyStaff({
+      dept: "reception",
+      roomNumber: s.roomNumber,
+      guestName: s.guestName,
+      message:
+        `⭐ *משוב אורח בצ'ק אאוט*\n` +
+        (rating ? `דירוג: ${rating}/5\n` : "") +
+        `"${raw.slice(0, 400)}"`,
+      priority: rating && rating <= 2 ? "high" : "normal",
+    });
+  } catch (e) { console.error("feedback notify failed:", e?.message || e); }
+
+  // תודה חמה — מותאמת לדירוג אם ניתן.
+  const warm = rating && rating <= 3
+    ? (he
+        ? "תודה על הכנות — כל מילה עוזרת לנו להשתפר 🙏 נשמח לארח אתכם שוב ולתת חוויה טובה עוד יותר."
+        : "Thank you for your honesty — every word helps us improve 🙏 We'd love to host you again and do even better.")
+    : (he
+        ? "תודה רבה על המילים החמות! 🌟 שמחנו מאוד לארח אתכם, ומחכים לראותכם שוב."
+        : "Thank you so much for the kind words! 🌟 It was a pleasure hosting you, and we can't wait to welcome you back.");
+  await wa(phone, warm, { lang });
 }
 
 // ════════════════════════════════════════════════════════
@@ -1829,6 +1960,18 @@ async function processIncoming(phone, text, media = null) {
       const welcome = hotelConfig.welcome[lang] || hotelConfig.welcome.en;
       await wa(phone, welcome, { lang });
       pushHistory(phone, "assistant", welcome);
+      return;
+    }
+  }
+
+  // ── משוב צ'ק אאוט — ההודעה הראשונה אחרי הפרידה ────────
+  // אחרי צ'ק אאוט ביקשנו משוב; ההודעה הבאה של האורח מטופלת כמשוב —
+  // אלא אם היא בקשה חדשה (צ'ק אין/אאוט) שגוברת ומאפסת את ההמתנה למשוב.
+  if (session.feedbackPending && body) {
+    if (isCheckinIntent(body) || isCheckoutIntent(body)) {
+      patchSession(phone, { feedbackPending: false, feedbackReservationId: null });
+    } else {
+      await handleFeedback(phone, body, lang);
       return;
     }
   }

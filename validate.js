@@ -369,6 +369,109 @@ export function validateTermsConfirmation(raw) {
   return { ok: false, reason: "unclear" };
 }
 
+// ── פרטי צ'ק אין נוספים (אורחים / ETA / רכב / בקשות) ──
+// כל השדות *אופציונליים* — האורח יכול לדלג. מטרת השלב: לאסוף בעדינות
+// את מה שמלון אמיתי מבקש, בלי לחסום את הצ'ק אין אם משהו חסר. הפרסור
+// best-effort: מחלץ מה שאפשר מהודעה חופשית אחת, והשאר → בקשות מיוחדות.
+
+// מילים שמשמעותן "אין לי מה להוסיף / דלג".
+const SKIP_WORDS = new Set([
+  "דלג", "דלגו", "דלוג", "לדלג", "אין", "איןלי", "לא", "לאצריך", "אחר כך", "בהמשך",
+  "skip", "none", "no", "nothing", "later", "n/a", "na", "-", "–", "—", "pass",
+]);
+
+export function isSkipWord(raw) {
+  const t = String(raw ?? "").replace(/['’‘`״׳.!,?]/g, "").replace(/\s+/g, "").trim().toLowerCase();
+  if (!t) return true;
+  return SKIP_WORDS.has(t);
+}
+
+// שעת הגעה משוערת — מזהה "15:00", "15.00", "3pm", "3 pm", "בסביבות 20:00".
+// מחזיר מחרוזת מנורמלת ("15:00" / "3pm") או null.
+function extractEta(text) {
+  const m24 = text.match(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/);
+  if (m24) return `${m24[1].padStart(2, "0")}:${m24[2]}`;
+  const m12 = text.match(/\b(1[0-2]|0?[1-9])\s*([ap])\.?\s*m\.?\b/i);
+  if (m12) return `${m12[1]}${m12[2].toLowerCase()}m`;
+  return null;
+}
+
+// מספר רכב ישראלי — 7–8 ספרות, לרוב עם מקפים (12-345-67 / 123-45-678),
+// או ספרות ברצף ליד מילת רכב. מחזיר את המחרוזת כפי שנמסרה, או null.
+function extractVehicle(text) {
+  const dashed = text.match(/\b\d{2,3}-\d{2,3}-\d{2,3}\b/);
+  if (dashed) return dashed[0];
+  // רצף 7–8 ספרות רק אם יש הקשר של רכב/חניה — כדי לא לתפוס מספר הזמנה/טלפון.
+  if (/\b(רכב|מכונית|רישוי|חניה|חנייה|car|vehicle|plate|licen[cs]e\s*plate|parking)\b/i.test(text)) {
+    const run = text.match(/\b(\d[\d-]{5,9}\d)\b/);
+    if (run) return run[1];
+  }
+  return null;
+}
+
+// מספר אורחים — "2 אורחים", "שני אנשים", "for 3", "we are 4", או מספר בודד קטן.
+function extractGuests(text) {
+  const near = text.match(/(\d{1,2})\s*(?:אורחים|אורח|אנשים|נפשות|מבוגרים|סועדים|guests?|people|persons?|adults?|pax)/i);
+  if (near) { const n = +near[1]; if (n >= 1 && n <= 20) return n; }
+  const phrase = text.match(/(?:אנחנו|נהיה|נהייה|נגיע|נהיו|party of|table of|we\s*(?:are|'?re)|for)\s*(\d{1,2})\b/i);
+  if (phrase) { const n = +phrase[1]; if (n >= 1 && n <= 20) return n; }
+  const words = { "אחד": 1, "אחת": 1, "יחיד": 1, "שניים": 2, "שני": 2, "שתיים": 2, "זוג": 2,
+                  "שלושה": 3, "שלוש": 3, "ארבעה": 4, "ארבע": 4, "חמישה": 5, "חמש": 5,
+                  "one": 1, "single": 1, "two": 2, "couple": 2, "three": 3, "four": 4, "five": 5 };
+  for (const [w, n] of Object.entries(words)) {
+    if (new RegExp(`(?:^|[^A-Za-z֐-׿])${w}(?:[^A-Za-z֐-׿]|$)`, "i").test(text)) return n;
+  }
+  return null;
+}
+
+// מילות מילוי/מפתח שאינן "בקשה מיוחדת" — מסוננות מהשארית כדי שהבקשה
+// שתישאר תהיה נקייה ("קומה גבוהה", לא "אנחנו זוג מגיעים … קומה גבוהה").
+const DETAILS_FILLER = new Set([
+  // הקשר רכב / הגעה
+  "רכב", "מכונית", "רישוי", "חניה", "חנייה", "car", "vehicle", "plate", "parking", "eta",
+  "הגעה", "נגיע", "נגיעה", "מגיעים", "מגיע", "מגיעה", "arriving", "arrive", "arrival",
+  "בסביבות", "בערך", "בשעה", "בשעות", "around", "about", "at",
+  // אורחים / מספרים במילים
+  "אורחים", "אורח", "אנשים", "נפשות", "מבוגרים", "סועדים", "אנחנו", "we", "are", "re",
+  "people", "persons", "person", "adults", "adult", "pax", "guest", "guests", "for",
+  "זוג", "שניים", "שתיים", "שני", "יחיד", "אחד", "אחת", "שלושה", "שלוש",
+  "ארבעה", "ארבע", "חמישה", "חמש", "couple", "single", "two", "three", "four", "five",
+]);
+
+// מפרק הודעת פרטים חופשית לשדות. שום שדה אינו חובה. skipped=true אם
+// האורח ביקש לדלג / ההודעה ריקה. requests = מה שנשאר אחרי חילוץ השדות
+// המזוהים (אם נותר טקסט משמעותי) — למשל "קומה גבוהה, מיטה זוגית".
+export function parseCheckinDetails(raw) {
+  const text = String(raw ?? "").replace(/\s+/g, " ").trim();
+  if (isSkipWord(text)) return { guests: null, eta: null, vehicle: null, requests: null, skipped: true };
+
+  const eta     = extractEta(text);
+  const vehicle = extractVehicle(text);
+  const guests  = extractGuests(text);
+
+  // ── מה שנשאר אחרי חילוץ השדות = הבקשה המיוחדת ──────────
+  // ⚠️ \b לא עובד על עברית (מוגדר ל-[A-Za-z0-9_]) — ולכן לא מסתמכים
+  //    עליו למחיקת מילים. במקום זה מפצלים לטוקנים ומסננים מילות מילוי,
+  //    בצורה שעובדת גם בעברית וגם באנגלית.
+  let rest = text;
+  for (const hit of [eta, vehicle]) if (hit) rest = rest.split(hit).join(" ");
+
+  const tokens = rest.split(/[\s,.;·|/()-]+/).filter(Boolean);
+  const kept = tokens.filter((tk) => {
+    const t = tk.toLowerCase();
+    if (tk.length <= 1) return false;             // תו בודד (מ"ב-14:30" נשאר "ב")
+    if (DETAILS_FILLER.has(t)) return false;      // מילת מילוי/מפתח
+    if (/^\d+$/.test(t)) return false;            // מספר בודד (אורחים/שאריות)
+    if ((tk.match(/[A-Za-z֐-׿]/g) || []).length === 0) return false; // בלי אותיות
+    return true;
+  });
+  const joined  = kept.join(" ").trim();
+  const letters = (joined.match(/[A-Za-z֐-׿]/g) || []).length;
+  const requests = letters >= 2 ? joined : null;
+
+  return { guests, eta, vehicle, requests, skipped: false };
+}
+
 // סוגי תמונה שספק ה-AI (Claude vision) יודע לקרוא.
 const SUPPORTED_IMAGE_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"]);
 

@@ -94,6 +94,20 @@ export function formatStayShort(stay, lang = "he") {
     : `${fmt(stay.checkIn)} – ${fmt(stay.checkOut)} · ${n} ${n === 1 ? "night" : "nights"}`;
 }
 
+// ── תצוגת פרטי הצ'ק אין הנוספים (אורחים / ETA / רכב / בקשות) ──
+// מקור אמת אחד, בשתי השפות. מחזיר בלוק שורות מתויגות או "" אם אין פרט.
+// משמש בהודעת האישור לאורח (בשפתו) ובהתראה לצוות (תמיד עברית).
+export function formatStayExtras(res, lang = "he") {
+  if (!res) return "";
+  const he = lang === "he";
+  const lines = [];
+  if (res.guestsCount)     lines.push(he ? `👥 אורחים: ${res.guestsCount}`           : `👥 Guests: ${res.guestsCount}`);
+  if (res.eta)             lines.push(he ? `🕐 הגעה משוערת: ${res.eta}`               : `🕐 Estimated arrival: ${res.eta}`);
+  if (res.vehiclePlate)    lines.push(he ? `🚗 רכב (לחניה): ${res.vehiclePlate}`       : `🚗 Vehicle (for parking): ${res.vehiclePlate}`);
+  if (res.specialRequests) lines.push(he ? `📝 בקשה מיוחדת: ${res.specialRequests}`    : `📝 Special request: ${res.specialRequests}`);
+  return lines.join("\n");
+}
+
 // שולף את פרטי השהייה מתוך הזמנה (הם שמורים שטוחים על ההזמנה).
 export function stayOf(res) {
   return res?.stayCheckIn && res?.stayCheckOut
@@ -163,6 +177,7 @@ export async function startCheckin(phone, nameInput, reservationId, opts = {}) {
   const id      = uuidv4();
   const DEPOSIT = depositAmount();
   const stay    = opts.stay || null;
+  const details = opts.details || {};
   // מספר הלילות מגיע מהאורח. אם משום מה אין (זרימה ישנה/חריגה) — לילה
   // אחד, שמרני: עדיף כרטיס חדר קצר מדי שמאריכים בקבלה, מאשר חדר שנשאר
   // פתוח ימים מיותרים.
@@ -178,6 +193,12 @@ export async function startCheckin(phone, nameInput, reservationId, opts = {}) {
     stayCheckOut: stay?.checkOut || null,
     termsVersion:    opts.terms?.version    || null,
     termsAcceptedAt: opts.terms?.acceptedAt || null,
+    // ── פרטי צ'ק אין נוספים (אופציונליים) — נאספו בשלב waiting_details ──
+    guestsCount:     details.guests   ?? null,   // מספר אורחים
+    eta:             details.eta       || null,  // שעת הגעה משוערת
+    vehiclePlate:    details.vehicle   || null,  // מספר רכב (לחניה)
+    specialRequests: details.requests  || null,  // בקשות מיוחדות
+    feedback:        null,                        // משוב האורח (נאסף בצ'ק אאוט)
     checkoutDate: null, // רגע הצ'ק אאוט בפועל — נקבע ב-completeCheckin
     currency: PAYMENT_CURRENCY,
     folio: [],
@@ -280,12 +301,14 @@ export async function completeCheckin(reservationId, roomNumber) {
   const svc  = (key) => cfg.services[key]?.[lang] || cfg.services[key]?.en || {};
   const bf   = svc("breakfast"), pool = svc("pool"), rs = svc("room_service");
   const stayLines = formatStayDates(stayOf(res), lang);
+  const extras    = formatStayExtras(res, lang);
 
   await wa(res.phone, he
     ? `✅ *צ'ק אין אושר!*\n\n` +
       `ברוכים הבאים, *${name}*! 🌟\n\n` +
       `🚪 *חדר:* ${res.roomNumber}\n` +
       (stayLines ? `${stayLines}\n` : "") +
+      (extras ? `${extras}\n` : "") +
       `🔑 *כרטיס החדר מחכה לך מוכן בקבלה* — אפשר לאסוף אותו בכל שעה, והוא מתוקף לכל משך השהייה\n\n` +
       `${depositExplainer("he")}\n\n` +
       `📶 WiFi: ${cfg.wifi.name} | ${cfg.wifi.password}\n` +
@@ -297,6 +320,7 @@ export async function completeCheckin(reservationId, roomNumber) {
       `Welcome, *${name}*! 🌟\n\n` +
       `🚪 *Room:* ${res.roomNumber}\n` +
       (stayLines ? `${stayLines}\n` : "") +
+      (extras ? `${extras}\n` : "") +
       `🔑 *Your room key is ready and waiting at reception* — please pick it up; it's valid for your entire stay\n\n` +
       `${depositExplainer("en")}\n\n` +
       `📶 WiFi: ${cfg.wifi.name} | ${cfg.wifi.password}\n` +
@@ -321,6 +345,7 @@ export async function completeCheckin(reservationId, roomNumber) {
       `✅ צ'ק אין דיגיטלי הושלם | פיקדון ${shekels(res.deposit)} מאושר\n` +
       (stayShort ? `📆 שהייה: ${stayShort}\n` : `🌙 לילות: ${nights}\n`) +
       `📅 צ'ק אאוט: ${checkoutStr}\n` +
+      (formatStayExtras(res, "he") ? `${formatStayExtras(res, "he")}\n` : "") +
       (res.termsAcceptedAt ? `📝 תנאי שהייה: אושרו ע"י האורח (נוסח ${res.termsVersion || "—"})\n` : "") +
       `🗣️ שפת האורח: ${he ? "עברית" : "אנגלית"}\n` +
       `⏳ *תקף את הכרטיס לכל משך השהייה* (עד ${checkoutStr}) — לא ליום אחד`,
@@ -374,11 +399,33 @@ export function formatFolio(res, lang = "he", { settled = false } = {}) {
         `💚 ${settled ? "Nothing was charged" : "Nothing to deduct — no charge will be made"} — the ${shekels(deposit)} hold will be released by your card issuer within 3–5 business days`;
   }
 
-  const lines = res.folio.map(item => {
-    const cat  = FOLIO_CATEGORIES[item.category] || FOLIO_CATEGORIES.OTHER;
-    const name = he ? cat.he : cat.en;
-    return `${cat.icon} ${item.description || name}    ₪${(item.amount/100).toFixed(2)}`;
-  }).join("\n");
+  // ── חשבונית מפורטת ומקובצת לפי קטגוריה ────────────────
+  // כל קטגוריה (מיני בר, מסעדה, ספא…) מוצגת בנפרד עם הפריטים שלה, ואם
+  // יש בה יותר מפריט אחד — גם סכום ביניים. כך "מיני בר בנפרד" מתקבל
+  // מאליו, והאורח רואה חשבון ברור במקום רשימה שטוחה.
+  const order = Object.keys(FOLIO_CATEGORIES);
+  const groups = new Map();
+  for (const item of res.folio) {
+    const key = FOLIO_CATEGORIES[item.category] ? item.category : "OTHER";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  const money = (a) => `₪${(a / 100).toFixed(2)}`;
+  const lines = [...groups.keys()]
+    .sort((a, b) => order.indexOf(a) - order.indexOf(b))
+    .map((key) => {
+      const cat   = FOLIO_CATEGORIES[key];
+      const items = groups.get(key);
+      const subtotal = items.reduce((s, it) => s + it.amount, 0);
+      const head  = `${cat.icon} *${he ? cat.he : cat.en}*`;
+      const rows  = items.map(it => `  • ${it.description || (he ? cat.he : cat.en)} — ${money(it.amount)}`).join("\n");
+      // סכום ביניים רק כשיש יותר מפריט אחד בקטגוריה (אחרת מיותר).
+      const sub   = items.length > 1
+        ? `\n  _${he ? "סה\"כ" : "Subtotal"} ${he ? cat.he : cat.en}: ${money(subtotal)}_`
+        : "";
+      return `${head}\n${rows}${sub}`;
+    })
+    .join("\n\n");
 
   const totalStr   = (total/100).toFixed(2);
   const depositStr = (deposit/100).toFixed(2);
@@ -733,6 +780,17 @@ export function markPaid(reservationId) {
   const res = reservations[reservationId];
   if (!res) return null;
   res.paidAt = new Date().toISOString();
+  persist(res);
+  return res;
+}
+
+// ── משוב האורח בצ'ק אאוט ──────────────────────────────
+// נשמר על ההזמנה (שורד ריסטארט) כדי שהנהלת המלון תוכל לעקוב אחר שביעות
+// הרצון. rating (1–5) ו/או טקסט חופשי — שניהם אופציונליים.
+export function saveFeedback(reservationId, { rating = null, text = null } = {}) {
+  const res = reservations[reservationId];
+  if (!res) return null;
+  res.feedback = { rating: rating ?? null, text: text || null, at: new Date().toISOString() };
   persist(res);
   return res;
 }
