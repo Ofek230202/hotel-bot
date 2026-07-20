@@ -112,8 +112,14 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
   Stripe key, `new Stripe(undefined)` / `startCheckin` fails.
 - **Email routing not implemented** — goal #4 wants email + WhatsApp to departments; only WhatsApp
   exists.
-- **Safety/emergency flow not implemented** — no 101/מד"א instruction, no guaranteed human
-  escalation, no structured incident log. This is a hard requirement and is currently absent.
+- ~~Safety/emergency flow not implemented~~ **DONE** — `emergency.js`: זיהוי דטרמיניסטי (לא תלוי
+  ב-AI, רץ לפני כל זרימה אחרת) → הנחיית 101/102/100 לאורח → הסלמה כפולה לביטחון *ולקבלה* →
+  `logIncident` מובנה ומתמיד. **זיהוי דו-דרגתי** (`HARD`/`SOFT` + `isInquiry`): מילה חד-משמעית
+  ("שריפה", "נפצעתי", "unconscious") מפעילה תמיד — גם בתוך שאלה; מילה דו-משמעית ("אש", "smoke",
+  "police", "dangerous") לא מפעילה כששואלים עליה ("Can I smoke on the balcony?" / "איפה יציאת
+  החירום?"). **מיקום:** בלי מספר חדר האורח נשאל איפה הוא, ההתראה אומרת "מיקום לא ידוע — התקשרו
+  עכשיו", והתשובה הבאה מועברת לביטחון מיד (`emergencyAwaitLocation`) ולא ל-AI.
+  ⚠️ עדיין חסר: אישור-קבלה מהצוות (ack), re-send, וסגירת אירוע — ההסלמה נשלחת אך איש לא מאשר קבלה.
 - **Check-out intent never fires** — it requires `session.stage === "checked_in"`, but check-in
   sets that flag on the *reservation* object, never on the *session*. So checkout is unreachable
   via chat.
@@ -129,7 +135,7 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
   saved on the reservation, escalated to management (low ratings → high priority). Still lacks:
   formal invoice/receipt PDF, minibar check, luggage storage, late-checkout offer.
 - No logging/monitoring, no rate-limiting, no Twilio request validation (security).
-- ~~No tests~~ **PARTIAL** — `e2e.test.mjs` (103 tests, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
+- ~~No tests~~ **PARTIAL** — `e2e.test.mjs` + `places.test.mjs` + `safety.test.mjs` (141 tests, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
   תגים, זהות, **מדיניות סוגי מסמכים, תאריכי שהייה, אישור תנאים, עקביות שפה מקצה לקצה**
   (כולל רינדור עמוד האישור), **המידע המובנה שמגיע ל-AI (system prompt), ומיזוג/שמירת הקונפיג**
   (כולל ריסטארט אמיתי בתהליך נפרד), **וזרימת הצ'ק אאוט המלאה** (הצגת חשבון → אישור → שלושת
@@ -275,7 +281,7 @@ Priority order (to be decided together):
       **stay-date parsing (every HE/EN phrasing + the ambiguous cases) + date confirmation +
       truncated-tag leak + deposit wording** / **check-out state machine (bill preview →
       confirm → all three deposit outcomes + cancel + HE/EN consistency)**
-      (`e2e.test.mjs`, 103 tests, `npm test`). Still missing: the isolated payment provider layer
+      (`e2e.test.mjs`/`places.test.mjs`/`safety.test.mjs`, 141 tests, `npm test`). Still missing: the isolated payment provider layer
       itself.
 
 ### שפה — עקביות מקצה לקצה (ממומש)

@@ -337,6 +337,7 @@ export async function completeCheckin(reservationId, roomNumber) {
   // תמיד בעברית — צוות המלון עובד בעברית, ללא קשר לשפת האורח.
   const stayShort = formatStayShort(stayOf(res), "he");
   await notifyStaff({
+    phone: res.phone,
     dept: "reception",
     roomNumber: res.roomNumber,
     guestName: res.guestName,
@@ -615,7 +616,7 @@ export async function processCheckout(phone, reservationId, lang = "he") {
     // הסלמה *פעילה* לקבלה (וואטסאפ + מייל), לא רק לוג בדשבורד — חיוב מעל
     // הפיקדון הוא אירוע שקבלה צריכה לדעת עליו בזמן אמת.
     await notifyStaff({
-      dept: "reception", roomNumber: res.roomNumber, guestName: res.guestName,
+      dept: "reception", phone: res.phone, roomNumber: res.roomNumber, guestName: res.guestName,
       message: `⚠️ חיובים ₪${totalStr} מעל פיקדון | הפרש ₪${balanceStr} חויב מכרטיס הפיקדון | הוצעה החלפת כרטיס`,
       priority: "high",
     });
@@ -625,7 +626,7 @@ export async function processCheckout(phone, reservationId, lang = "he") {
   // notifyStaff (ולא logAlert בלבד) — כדי שמשק הבית באמת יקבל וואטסאפ+מייל
   // ויכין את החדר לאורח הבא, בדיוק כמו שהקבלה מקבלת התראה בצ'ק אין.
   await notifyStaff({
-    dept: "housekeeping", roomNumber: res.roomNumber, guestName: res.guestName,
+    dept: "housekeeping", phone: res.phone, roomNumber: res.roomNumber, guestName: res.guestName,
     message: `🧹 חדר ${res.roomNumber} פנוי — ניקיון מלא נדרש`,
     priority: "normal",
   });
@@ -655,7 +656,7 @@ export async function switchOverageToAlternateCard(reservationId, lang = "he") {
   );
 
   await logAlert({
-    dept: "reception", roomNumber: res.roomNumber, guestName: res.guestName,
+    dept: "reception", phone: res.phone, roomNumber: res.roomNumber, guestName: res.guestName,
     message: `🔁 חדר ${res.roomNumber}: הפרש ₪${balanceStr} הועבר לכרטיס אחר (לבקשת האורח)`,
     priority: "normal",
   });
@@ -735,12 +736,12 @@ export async function autoChargeOnNoShow(reservationId, lang = "he") {
   // הסלמה פעילה (וואטסאפ + מייל) — no-show הוא אירוע שקבלה ומשק הבית
   // חייבים לדעת עליו בזמן אמת, לא רק כרשומה בדשבורד.
   await notifyStaff({
-    dept: "reception", roomNumber: res.roomNumber, guestName: res.guestName,
+    dept: "reception", phone: res.phone, roomNumber: res.roomNumber, guestName: res.guestName,
     message: `🏃 *NO-SHOW* חדר ${res.roomNumber} · ${res.guestName} — לא בוצע צ'ק אאוט; חויב אוטומטית ₪${totalStr}`,
     priority: "high",
   });
   await notifyStaff({
-    dept: "housekeeping", roomNumber: res.roomNumber, guestName: res.guestName,
+    dept: "housekeeping", phone: res.phone, roomNumber: res.roomNumber, guestName: res.guestName,
     message: `🧹 חדר ${res.roomNumber} פנוי (no-show) — ניקיון מלא נדרש`,
     priority: "normal",
   });

@@ -85,7 +85,11 @@ function israelTime() {
   return { time, date, full: `${date}, ${time}` };
 }
 
-export async function notifyStaff({ dept, roomNumber, guestName, message, priority = "normal" }) {
+// כל התראה חייבת להיות *ניתנת לפעולה*: מחלקה שמקבלת בקשה בלי מספר חדר
+// ובלי דרך להשיג את האורח לא יכולה לעשות דבר. לכן `phone` נכנס לכל
+// התראה, וכשמספר החדר לא ידוע ההתראה אומרת זאת במפורש ומורה ליצור קשר —
+// במקום מקף שקט שנראה כאילו המידע פשוט חסר.
+export async function notifyStaff({ dept, roomNumber, guestName, message, phone, priority = "normal" }) {
   const numberMap = {
     housekeeping: hotelConfig.housekeeping_number,
     reception:    hotelConfig.reception_number,
@@ -107,7 +111,14 @@ export async function notifyStaff({ dept, roomNumber, guestName, message, priori
   const deptLabel = dept.replace(/_/g, " ").toUpperCase();
   const urgency = priority === "high" ? "🚨 *דחוף* 🚨\n" : "";
   const { full } = israelTime();
-  const body = `${urgency}${emoji} *${deptLabel}*\n\n👤 אורח: ${guestName || "—"}\n🚪 חדר: ${roomNumber || "—"}\n📝 ${message}\n⏰ ${full}`;
+  // מספר חדר חסר אינו "—" שקט: הוא הוראת פעולה. הצוות חייב לדעת שאין
+  // מיקום ושצריך להתקשר לאורח, אחרת ההתראה פשוט לא ניתנת לביצוע.
+  const roomLine = roomNumber
+    ? `🚪 חדר: ${roomNumber}`
+    : `🚪 חדר: *לא ידוע* — יש ליצור קשר עם האורח לבירור המיקום`;
+  // הטלפון נכנס לכל התראה: זו הדרך היחידה של הצוות להשיג את האורח.
+  const phoneLine = phone ? `\n📱 ${String(phone).replace(/^whatsapp:/, "")}` : "";
+  const body = `${urgency}${emoji} *${deptLabel}*\n\n👤 אורח: ${guestName || "—"}\n${roomLine}${phoneLine}\n📝 ${message}\n⏰ ${full}`;
 
   // ── ערוץ 1: וואטסאפ ──────────────────────────────────
   const to = numberMap[dept];
@@ -118,7 +129,7 @@ export async function notifyStaff({ dept, roomNumber, guestName, message, priori
   // ── ערוץ 2: מייל (דרך שכבת המייל המבודדת) ────────────
   const toEmail = emailMap[dept];
   if (toEmail) {
-    const subject = `${priority === "high" ? "🚨 דחוף — " : ""}${deptLabel} | חדר ${roomNumber || "—"} | ${guestName || "—"}`;
+    const subject = `${priority === "high" ? "🚨 דחוף — " : ""}${deptLabel} | ${roomNumber ? `חדר ${roomNumber}` : "חדר לא ידוע"} | ${guestName || "—"}`;
     try {
       await email.send({ to: toEmail, subject, body, dept, priority, meta: { roomNumber, guestName, message } });
     } catch (e) { console.error("Staff notify (email) failed:", e.message); }
@@ -1116,7 +1127,11 @@ async function submitConciergeRequest(payload, session, phone) {
 // ולכן קרו *שני* דברים רעים בבת אחת: הבקשה של האורח לא הועברה לאף
 // אחד, והטקסט "[CONCIERGE:restaurant|" נשלח אליו כהודעה.
 // עכשיו התג נתפס, הבקשה עוברת לאדם (מסומנת כחלקית), והטקסט מוסר.
-const ACTION_TAG_RE = /\[(HK_URGENT|HK|MAINTENANCE|ROOMSERVICE|CONCIERGE|RECEPTION|SECURITY|EMERGENCY):([^\]]*?)(\]|$)/g;
+// הנקודתיים אופציונליות: תג בלי payload ("[HK]") נוצר בפועל כשה-AI מקצר.
+// בגרסה הקודמת הוא *סונן* מהתשובה אך *לא נותב* לאיש — הבקשה נעלמה בשקט,
+// והאורח עוד קיבל "העברתי לצוות המתאים". עכשיו הוא מנותב עם סימון מפורש
+// שחסרים פרטים, כדי שאדם ייצור קשר עם האורח.
+const ACTION_TAG_RE = /\[(HK_URGENT|HK|MAINTENANCE|ROOMSERVICE|CONCIERGE|RECEPTION|SECURITY|EMERGENCY)(?::([^\]]*?))?(\]|$)/g;
 
 // ── מחלקות "בתוך החדר" — חייבות מספר חדר (Bug #3) ───────
 // ניקיון, אחזקה ושירות חדרים שולחים אדם *לחדר האורח*. בלי מספר חדר הצוות
@@ -1145,16 +1160,21 @@ async function runActions(raw, session, phone) {
   const re = new RegExp(ACTION_TAG_RE.source, "g");
   let m;
   while ((m = re.exec(raw)) !== null) {
-    const [, type, payloadRaw, closer] = m;
+    const [, type, payloadCaptured, closer] = m;
+    const payloadRaw = payloadCaptured ?? "";
     // תג בלי סוגר = התשובה נקטעה באמצע. הפרטים שנאספו חלקיים, ולכן
     // הבקשה עוברת לאדם בעדיפות גבוהה עם סימון מפורש — עדיף טלפון חוזר
     // לאורח מאשר בקשה שנעלמה בשקט.
     const truncated = closer !== "]";
+    // תג בלי פרטים כלל ("[HK]") — קודם נעלם בשקט. גם הוא עובר לאדם.
+    const noDetails = !payloadRaw.trim();
     const payload   = truncated
       ? `${payloadRaw.trim()}\n⚠️ *הבקשה נקטעה באמצע ולא נקלטה במלואה — נא ליצור קשר עם האורח להשלמת הפרטים.*`
-      : payloadRaw;
-    if (truncated) {
-      console.error(`🚨 תג ${type} נקטע באמצע (${phone.slice(-8)}) — הועבר לצוות כבקשה חלקית: ${payloadRaw.slice(0, 80)}`);
+      : noDetails
+        ? `⚠️ *בקשה למחלקה ללא פרטים* — זוהתה פנייה של האורח אך הפרטים לא נקלטו. נא ליצור קשר עם האורח בטלפון שלמעלה.`
+        : payloadRaw;
+    if (truncated || noDetails) {
+      console.error(`🚨 תג ${type} ${truncated ? "נקטע באמצע" : "הגיע בלי פרטים"} (${phone.slice(-8)}) — הועבר לצוות לטיפול אנושי: ${payloadRaw.slice(0, 80)}`);
     }
     const dept = {
       HK: "housekeeping", HK_URGENT: "housekeeping",
@@ -1163,7 +1183,7 @@ async function runActions(raw, session, phone) {
       SECURITY: "security", EMERGENCY: "security",
     }[type];
     // בקשה קטועה = פרטים חסרים = חייבת עין אנושית, יהיה הסוג אשר יהיה.
-    const priority = truncated || type.includes("URGENT") || type === "RECEPTION"
+    const priority = truncated || noDetails || type.includes("URGENT") || type === "RECEPTION"
       || type === "SECURITY" || type === "EMERGENCY"
       ? "high" : "normal";
 
@@ -1184,6 +1204,7 @@ async function runActions(raw, session, phone) {
       : payload;
 
     await notifyStaff({
+      phone,
       dept,
       roomNumber: session.roomNumber,
       guestName: session.guestName,
@@ -1436,6 +1457,7 @@ async function ensureDepositLink(phone, lang) {
     console.error("Deposit link creation failed:", e?.message || e);
     // הסלמה לאדם — האורח לא נשאר תקוע בלי טיפול.
     await notifyStaff({
+      phone,
       dept: "reception",
       roomNumber: s.roomNumber,
       guestName: s.guestName,
@@ -1687,6 +1709,7 @@ async function handleTermsDeclined(phone, lang) {
   const he = lang === "he";
 
   await notifyStaff({
+    phone,
     dept: "reception",
     roomNumber: s.roomNumber,
     guestName: s.guestName,
@@ -1775,6 +1798,7 @@ async function handleIdStage(phone, media, lang) {
     // אחרי 3 ניסיונות — הסלמה לאדם, אבל האורח עדיין יכול לנסות שוב.
     if (attempts >= 3) {
       await notifyStaff({
+        phone,
         dept: "reception",
         roomNumber: s.roomNumber,
         guestName,
@@ -1802,6 +1826,7 @@ async function handleIdStage(phone, media, lang) {
   // ── התראה לקבלה: וואטסאפ + מייל (Bug #8) ─────────────
   // כוללת שם אורח, מספר חדר (אם כבר הוקצה) והיכן נשמר המסמך.
   await notifyStaff({
+    phone,
     dept: "reception",
     roomNumber: s.roomNumber || null,
     guestName,
@@ -1924,6 +1949,7 @@ async function handleFeedback(phone, text, lang) {
   // עדכון ההנהלה/קבלה — כדי שמשוב (ובמיוחד דירוג נמוך) לא ייעלם.
   try {
     await notifyStaff({
+      phone,
       dept: "reception",
       roomNumber: s.roomNumber,
       guestName: s.guestName,
@@ -1958,22 +1984,34 @@ async function handleFeedback(phone, text, lang) {
 // ════════════════════════════════════════════════════════
 async function handleEmergency(phone, text, lang, kind) {
   const raw = String(text ?? "").trim();
+  const s   = getSession(phone);
+
+  // מיקום האורח — הדבר הקריטי ביותר בהתראת חירום. הסשן הוא המקור הראשון,
+  // אבל סשן שאופס/אורח שעשה צ'ק אין בקבלה עדיין יכול להיות מקושר להזמנה
+  // פעילה — ולכן נופלים אליה לפני שמוותרים.
+  let roomNumber = s.roomNumber;
+  if (!roomNumber) {
+    try { roomNumber = getActiveReservation(phone)?.roomNumber || null; } catch { /* לא חוסם */ }
+  }
+  const guestName = s.guestName || (() => {
+    try { return getActiveReservation(phone)?.guestName || null; } catch { return null; }
+  })();
 
   // 1) האורח מקבל את ההנחיה *מיד* — הדבר הראשון, לפני כל דבר שעלול לזרוק.
+  //    אם אין מספר חדר, ההנחיה כוללת גם בקשת מיקום.
+  const guestMsg = emergencyGuestMessage(kind, lang, { locationKnown: !!roomNumber });
   try {
-    await wa(phone, emergencyGuestMessage(kind, lang), { lang });
+    await wa(phone, guestMsg, { lang });
   } catch (e) {
     console.error("🚨 כשל בשליחת הנחיית החירום לאורח:", e?.message || e);
   }
-
-  const s = getSession(phone);
 
   // 2) תיעוד מובנה של האירוע (לא חוסם — נכשל בשקט ללוג בלבד).
   try {
     logIncident({
       phone,
-      roomNumber:  s.roomNumber,
-      guestName:   s.guestName,
+      roomNumber,
+      guestName,
       kind,
       description: `[${kind}] ${raw.slice(0, 300)}`,
       channel:     "whatsapp",
@@ -1985,14 +2023,18 @@ async function handleEmergency(phone, text, lang, kind) {
   // 3) הסלמה מובטחת לצוות הביטחון (אדם) — בעדיפות גבוהה, בעברית.
   try {
     await notifyStaff({
+      phone,
       dept:       "security",
-      roomNumber: s.roomNumber,
-      guestName:  s.guestName,
+      roomNumber,
+      guestName,
       message:
         `🚨 *חירום — ${emergencyKindHe(kind)}*\n` +
         `האורח דיווח: "${raw.slice(0, 400)}"\n` +
         `📱 ${phone}\n` +
         `🗣️ שפת האורח: ${lang === "en" ? "אנגלית" : "עברית"}\n` +
+        (roomNumber
+          ? `📍 מיקום: חדר ${roomNumber}\n`
+          : `📍 *מיקום לא ידוע* — האורח אינו משויך לחדר. התקשרו אליו *עכשיו* למספר שלמעלה; נשלחה אליו בקשה לציין מיקום, וכל תשובה תועבר אליכם.\n`) +
         `📞 האורח קיבל הנחיה להתקשר ${emergencyDial(kind)} (וכל מספרי החירום).\n` +
         `⏱️ נדרש טיפול אנושי *מיידי* — ביטחון/מנהל תורן.`,
       priority: "high",
@@ -2005,9 +2047,10 @@ async function handleEmergency(phone, text, lang, kind) {
   //     ביטחון בודד שאולי לא מאויש באותו רגע. שני אנשים מקבלים התראה.
   try {
     await notifyStaff({
+      phone,
       dept:       "reception",
-      roomNumber: s.roomNumber,
-      guestName:  s.guestName,
+      roomNumber,
+      guestName,
       message:
         `🚨 *גיבוי חירום — ${emergencyKindHe(kind)}* (הסלמה מקבילה לביטחון)\n` +
         `האורח דיווח: "${raw.slice(0, 400)}"\n📱 ${phone}\n` +
@@ -2018,11 +2061,19 @@ async function handleEmergency(phone, text, lang, kind) {
     console.error("🚨 כשל בהסלמת גיבוי החירום לקבלה:", e?.message || e);
   }
 
+  // 3ג) אם אין מיקום — ההודעה הבאה של האורח היא תשובת המיקום, והיא
+  //     מועברת לביטחון מיד (הטיפול ב-processIncoming), ולא ל-AI.
+  try {
+    patchSession(phone, { emergencyAwaitLocation: roomNumber ? null : kind });
+  } catch (e) {
+    console.error("🚨 כשל בסימון המתנה למיקום:", e?.message || e);
+  }
+
   // 4) שמירת ההקשר בהיסטוריה — כדי שהמשך השיחה ("הלו?", עדכון) יגיע
   //    ל-AI עם ההקשר המלא ולא כאילו כלום לא קרה.
   try {
     if (raw) pushHistory(phone, "user", raw);
-    pushHistory(phone, "assistant", emergencyGuestMessage(kind, lang));
+    pushHistory(phone, "assistant", guestMsg);
   } catch (e) {
     console.error("🚨 כשל בשמירת היסטוריית החירום:", e?.message || e);
   }
@@ -2046,6 +2097,7 @@ export async function handleIncoming(phone, text, media = null) {
 
     try {
       await notifyStaff({
+        phone,
         dept: "reception",
         roomNumber: sessions[phone]?.roomNumber,
         guestName: sessions[phone]?.guestName,
@@ -2093,6 +2145,41 @@ async function processIncoming(phone, text, media = null) {
   const emergency = detectEmergency(text);
   if (emergency) {
     await handleEmergency(phone, text, lang, emergency.kind);
+    return;
+  }
+
+  // ── תשובת המיקום שביקשנו באירוע חירום ────────────────
+  // באירוע חירום בלי מספר חדר ביקשנו מהאורח לציין איפה הוא. ההודעה הבאה
+  // היא התשובה — והיא חייבת להגיע לביטחון *מיד*, ולא להיבלע ע"י ה-AI או
+  // ע"י מכונת הצ'ק אין. בלי זה ההבטחה "הם בדרך אליכם" חסרת משמעות.
+  if (session.emergencyAwaitLocation) {
+    const kind = session.emergencyAwaitLocation;
+    const room = extractRoomNumber(body);
+    patchSession(phone, {
+      emergencyAwaitLocation: null,
+      ...(room ? { roomNumber: room } : {}),
+    });
+    try {
+      await notifyStaff({
+        phone,
+        dept:       "security",
+        roomNumber: room,
+        guestName:  session.guestName,
+        message:
+          `📍 *עדכון מיקום לאירוע החירום (${emergencyKindHe(kind)})*\n` +
+          `האורח מסר: "${String(body).slice(0, 300)}"\n` +
+          `⏱️ המשיכו לטפל *עכשיו*.`,
+        priority: "high",
+      });
+    } catch (e) {
+      console.error("🚨 כשל בהעברת מיקום החירום לצוות:", e?.message || e);
+    }
+    const ack = lang === "he"
+      ? "קיבלתי, והעברתי את המיקום לצוות הביטחון — הם בדרך.\nאם המצב מחמיר, התקשרו שוב למוקד החירום. אני כאן."
+      : "Got it — I've passed your location to the security team and they're on their way.\nIf anything gets worse, call the emergency services again. I'm here.";
+    await wa(phone, ack, { lang });
+    pushHistory(phone, "user", String(body));
+    pushHistory(phone, "assistant", ack);
     return;
   }
 

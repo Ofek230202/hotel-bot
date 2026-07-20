@@ -173,7 +173,7 @@ function successPage(reservation, roomNumber, lang = "he") {
   const T = he
     ? { title: "צ'ק אין הושלם", heading: `ברוכים הבאים,<br>${name}!`, sub: "הצ'ק אין הושלם בהצלחה",
         room: "חדר", stay: "שהייה", checkout: "צ'ק אאוט", deposit: "פיקדון",
-        breakfast: "ארוחת בוקר", pool: "בריכה", wifiPass: "סיסמה", back: "💬 חזור לצ'אט" }
+        breakfast: "ארוחת בוקר", pool: "בריכה", wifiPass: "סיסמה", back: "💬 חזרה לצ'אט" }
     : { title: "Check-in complete", heading: `Welcome,<br>${name}!`, sub: "Your check-in is complete",
         room: "Room", stay: "Stay", checkout: "Check-out", deposit: "Deposit",
         breakfast: "Breakfast", pool: "Pool", wifiPass: "Password", back: "💬 Back to chat" };
@@ -229,7 +229,7 @@ function errorPage(kind, lang = "he") {
     lang, title: t.title, icon: "❌", accent: "rgba(239,68,68,0.2)",
     body: `<h1>${t.title}</h1>
   <p class="welcome">${t.body}</p>
-  <a href="https://wa.me/14155238886" class="back-btn">${lang === "he" ? "💬 חזור לצ'אט" : "💬 Back to chat"}</a>`,
+  <a href="https://wa.me/14155238886" class="back-btn">${lang === "he" ? "💬 חזרה לצ'אט" : "💬 Back to chat"}</a>`,
   });
 }
 
@@ -294,8 +294,8 @@ function paymentPage(rid, reservation, lang = "he") {
         cvv: "CVV",
         idNumber: "תעודת זהות של בעל הכרטיס",
         idPh: "9 ספרות",
-        pay: `אשר פיקדון ₪${amount}`,
-        processing: "מאשר פיקדון…",
+        pay: `אישור פיקדון ₪${amount}`,
+        processing: "מאשרים פיקדון…",
         secure: "🔒 הקפאה מוצפנת ומאובטחת — לא מבוצע חיוב",
         invalid: "נא למלא את כל השדות כנדרש",
       }
@@ -458,7 +458,7 @@ function balancePage(rid, reservation, lang = "he") {
         note: "💡 ההפרש כבר חויב מכרטיס הפיקדון. בהזנת כרטיס כאן — ההפרש יועבר לכרטיס זה במקום.",
         cardName: "שם בעל הכרטיס", cardNamePh: "כפי שמופיע על הכרטיס",
         cardNumber: "מספר כרטיס", expiry: "תוקף", cvv: "CVV",
-        pay: `שלם ₪${amount} בכרטיס זה`, processing: "מעבד…",
+        pay: `תשלום ₪${amount} בכרטיס זה`, processing: "מעבדים…",
         secure: "🔒 מאובטח — דמו, לא מבוצע חיוב אמיתי", invalid: "נא למלא את כל השדות כנדרש",
       }
     : {
@@ -584,7 +584,7 @@ function balancePaidPage(amount, lang = "he") {
   <p class="welcome">${he
       ? `ההפרש (${amount}) חויב מהכרטיס החדש שהזנת, במקום מכרטיס הפיקדון.<br>תודה!`
       : `The difference (${amount}) was charged to the new card you entered, instead of your deposit card.<br>Thank you!`}</p>
-  <a href="https://wa.me/14155238886" class="back-btn">${he ? "💬 חזור לצ'אט" : "💬 Back to chat"}</a>`,
+  <a href="https://wa.me/14155238886" class="back-btn">${he ? "💬 חזרה לצ'אט" : "💬 Back to chat"}</a>`,
   });
 }
 
@@ -598,7 +598,7 @@ function balanceSkipPage(lang = "he") {
   <p class="welcome">${he
       ? "ההפרש נשאר מחויב מכרטיס הפיקדון שהזנת בצ'ק אין.<br>אפשר לפנות לקבלה בכל שאלה."
       : "The difference remains charged to the card you entered at check-in.<br>Reception is happy to help with any question."}</p>
-  <a href="https://wa.me/14155238886" class="back-btn">${he ? "💬 חזור לצ'אט" : "💬 Back to chat"}</a>`,
+  <a href="https://wa.me/14155238886" class="back-btn">${he ? "💬 חזרה לצ'אט" : "💬 Back to chat"}</a>`,
   });
 }
 
@@ -611,7 +611,7 @@ function cancelPage(lang = "he") {
   <p class="welcome">${he
       ? "לא בוצעה הקפאת פיקדון ולא בוצע חיוב.<br>אפשר לחזור לוואטסאפ ולנסות שוב, או לפנות לקבלה."
       : "No deposit hold was placed and nothing was charged.<br>Head back to WhatsApp to try again, or contact reception."}</p>
-  <a href="https://wa.me/14155238886" class="back-btn">${he ? "💬 חזור לצ'אט" : "💬 Back to chat"}</a>`,
+  <a href="https://wa.me/14155238886" class="back-btn">${he ? "💬 חזרה לצ'אט" : "💬 Back to chat"}</a>`,
   });
 }
 

@@ -39,8 +39,42 @@ function groupPrefixed(words) {
   return new RegExp(`${B}[והבכלמש]{0,2}(?:${words.join("|")})${E}`, "i");
 }
 
+// ════════════════════════════════════════════════════════
+//  שתי דרגות — דיווח מול שאלה
+//  ----------------------------------------------------------
+//  נצפה בבדיקה: "Can I smoke on the balcony?" הפעיל פינוי שריפה,
+//  "where is the nearest police station" הזעיק את הביטחון, ו-
+//  "האם יש אש במטבח הפתוח?" שלח את האורח לצאת מהחדר. אורח ש*שואל*
+//  שאלה תמימה אינו מדווח על חירום — וזאב שקורא לשווא גורם לצוות
+//  להתעלם מהאמיתי.
+//
+//  לכן כל קטגוריה מפוצלת לשתיים:
+//  • HARD — מילים שאין להן פירוש תמים ("שריפה", "נפצעתי", "unconscious",
+//    "stabbed"). מפעילות חירום *תמיד*, גם בתוך שאלה — "Is there a fire?!"
+//    חייב להפעיל.
+//  • SOFT — מילים דו-משמעיות ("אש", "גז", "smoke", "police", "dangerous",
+//    "emergency"). מפעילות רק כשההודעה אינה שאלה אינפורמטיבית.
+//
+//  ⚠️ כלל בטיחות: בספק — מפעילים. הסינון חל *רק* על הדרגה הרכה, ורק
+//  כשההודעה מנוסחת במפורש כשאלה. דיווח ("there is smoke in the hallway")
+//  לעולם אינו שאלה ולכן לעולם אינו מסונן.
+// ════════════════════════════════════════════════════════
+const INQUIRY_STARTER = /^\s*(?:can|could|may|might|should|would|will|is|are|am|do|does|did|where|what|when|how|which|why|who|any|האם|איפה|מתי|כמה|איך|אפשר|מה)\b/i;
+const INQUIRY_INSIDE  = /(?:^|[^A-Za-zא-ת])(?:can|could|may|is|are|do|does|where|what|when|how|which|why|who|any|האם|איפה|מתי|כמה|איך|אפשר|מה|יש לכם|יש אצלכם)(?:$|[^A-Za-zא-ת])/i;
+
+// האם ההודעה היא שאלה אינפורמטיבית (ולא דיווח)?
+function isInquiry(t) {
+  if (INQUIRY_STARTER.test(t)) return true;          // "Can I…" / "האם יש…"
+  return t.includes("?") && INQUIRY_INSIDE.test(t);  // "…exit where?"
+}
+
 // ── רפואי / פציעה → 101 (מד"א) ─────────────────────────
 const MEDICAL_STRICT = groupStrict(["דם"]);
+// "יש לי אלרגיה לבוטנים" הוא מידע תזונתי ולא אנפילקסיס — ולכן "אלרגיה"
+// לבדה אינה מפעילה חירום בשום דרגה. תגובה אלרגית *ממשית* נתפסת בדרגה
+// הקשה ("תגובה אלרגית", "אנפילקטי", "allergic reaction"), וגם התסמינים
+// שמלווים אותה ("לא נושם", "נחנק") — כך שאורח בסכנה עדיין מכוסה.
+const MEDICAL_SOFT = groupPrefixed(["מכה", "חבלה", "הרעלה"]);
 const MEDICAL = groupPrefixed([
   // עברית
   "פצוע", "פצועה", "פצועים", "נפצע", "נפצעה", "נפצעו", "פציעה", "פצע",
@@ -49,14 +83,16 @@ const MEDICAL = groupPrefixed([
   "דימום", "מדמם", "מדממת", "מכה רצינית", "חבלה", "נחבלתי",
   "לא נושם", "לא נושמת", "לא מגיב", "לא מגיבה", "לא בהכרה", "בלי הכרה",
   "מחוסר הכרה", "מחוסרת הכרה", "איבד הכרה", "איבדה הכרה",
-  "התעלף", "התעלפה", "עילפון", "מעולף",
+  // גוף ראשון/שלישי מלא: ‎E חוסם סיומת, ולכן "התעלפתי" לא נתפס ע"י "התעלף".
+  "התעלף", "התעלפה", "התעלפתי", "עילפון", "מעולף",
+  "התמוטט", "התמוטטה", "התמוטטתי", "התמוטטו", "קרס", "קרסה",
   "התקף לב", "התקף", "שבץ", "אירוע מוחי", "פרכוס", "פרכוסים", "עוויתות",
   "נחנק", "נחנקת", "חנק", "נחנקים",
   "טובע", "טובעת", "טובעים", "טביעה",
   "קוצר נשימה", "כאב בחזה", "כאבים בחזה", "לחץ בחזה",
-  "אלרגיה", "תגובה אלרגית", "אנפילקטי", "אנפילקסיס",
+  "תגובה אלרגית", "אלרגית", "אנפילקטי", "אנפילקסיס",
   "נפל מהמדרגות", "נפלה", "שבר יד", "שבר רגל", "שברתי", "שבר ברגל",
-  "אמבולנס", "מדא", 'מד"א', "עזרה רפואית", "חירום רפואי", "הרעלה",
+  "אמבולנס", "מדא", 'מד"א', "עזרה רפואית", "חירום רפואי",
   // English
   "injured", "injury", "bleeding", "bleed", "not breathing",
   "can't breathe", "cant breathe", "unconscious", "unresponsive",
@@ -66,28 +102,39 @@ const MEDICAL = groupPrefixed([
 ]);
 
 // ── אש / גז / עשן → 102 (כבאות) ────────────────────────
+// דרגה רכה: "אש"/"גז"/"עשן"/"smoke" — קיימות גם בשאלות תמימות
+// ("מטבח על האש", "חדר מעשנים", "can I smoke").
 const FIRE_STRICT = groupStrict(["אש", "גז", "עשן"]);
+// "smoking" לא נכלל: הוא כמעט תמיד "smoking room/area" ולא דיווח על עשן.
+const FIRE_SOFT   = groupPrefixed(["smoke", "burning"]);
 const FIRE = groupPrefixed([
   // עברית
   "שריפה", "שריפות", "להבות", "להבה", "בוער", "בוערת", "בוערים",
   "ריח גז", "דליפת גז", "דליפה של גז", "פיצוץ", "התפוצצות",
   // English
-  "fire", "burning", "flames", "on fire", "smoke", "gas smell",
+  "fire", "flames", "on fire", "gas smell",
   "smell of gas", "smell gas", "gas leak", "explosion",
 ]);
 
 // ── סכנה / ביטחון / אלימות → 100 (משטרה) ───────────────
 const SECURITY_STRICT = groupStrict(["ירי", "יריה", "יריות"]);
+// דרגה רכה: "משטרה"/"police"/"emergency"/"סכנה"/"dangerous"/"אקדח" —
+// כולן מופיעות בשאלות תמימות ("איפה יציאת החירום?", "is the beach
+// dangerous?", "where is the nearest police station").
+const SECURITY_SOFT = groupPrefixed([
+  "סכנה", "מסוכן", "בסכנה", "איום", "מאיים", "איימו", "אקדח", "משטרה",
+  "emergency", "danger", "dangerous", "police", "gun", "weapon", "threatened",
+]);
 const SECURITY = groupPrefixed([
   // עברית
-  "סכנה", "מסוכן", "בסכנה", "תקיפה", "תוקף", "מתקיף", "תקפו", "הותקפתי",
-  "אלימות", "אלים", "אלימה", "פורץ", "פריצה", "פרצו", "שוד", "נשדד", "שדדו",
-  "איום", "מאיים", "איימו", "אונס", "אנס", "דקירה", "דקר", "נדקר",
-  "אקדח", "משטרה בבקשה",
+  "תקיפה", "תוקף", "מתקיף", "תקפו", "הותקפתי",
+  "אלימות", "אלים", "אלימה", "פורץ", "פריצה", "פרצו",
+  "שוד", "נשדד", "נשדדתי", "נשדדנו", "שדדו", "שודדים",
+  "אונס", "אנס", "דקירה", "דקר", "נדקר", "נדקרתי", "משטרה בבקשה",
   // English
-  "emergency", "danger", "dangerous", "attacked", "assault", "intruder",
-  "break-in", "breaking in", "robbery", "robbed", "police", "gun",
-  "weapon", "threatened", "stabbed", "shooting",
+  "attacked", "attacking", "assault", "intruder",
+  "break-in", "breaking in", "broke into", "broke in",
+  "robbery", "robbed", "stabbed", "shooting", "someone in my room",
 ]);
 
 // ── סדר עדיפויות: אש/גז (פינוי) → רפואי → ביטחון ───────
@@ -96,9 +143,18 @@ const SECURITY = groupPrefixed([
 export function detectEmergency(text) {
   const t = String(text ?? "");
   if (!t.trim()) return null;
-  if (FIRE.test(t)     || FIRE_STRICT.test(t))     return { kind: "fire" };
-  if (MEDICAL.test(t)  || MEDICAL_STRICT.test(t))  return { kind: "medical" };
-  if (SECURITY.test(t) || SECURITY_STRICT.test(t)) return { kind: "security" };
+
+  // דרגה קשה — מפעילה תמיד, גם בתוך שאלה ("Is there a fire?!").
+  if (FIRE.test(t))     return { kind: "fire" };
+  if (MEDICAL.test(t))  return { kind: "medical" };
+  if (SECURITY.test(t)) return { kind: "security" };
+
+  // דרגה רכה — מדלגים רק כשההודעה היא שאלה אינפורמטיבית מפורשת.
+  if (isInquiry(t)) return null;
+
+  if (FIRE_SOFT.test(t)     || FIRE_STRICT.test(t))     return { kind: "fire" };
+  if (MEDICAL_SOFT.test(t)  || MEDICAL_STRICT.test(t))  return { kind: "medical" };
+  if (SECURITY_SOFT.test(t) || SECURITY_STRICT.test(t)) return { kind: "security" };
   return null;
 }
 
@@ -110,8 +166,16 @@ export function emergencyKindHe(kind) {
 // ההנחיה שהאורח מקבל *מיד* — קבועה, ברורה, ובשפת השיחה. שלושה חלקים:
 // (1) המספר הרלוונטי למצב, בולט; (2) כל שלושת מספרי החירום תמיד;
 // (3) הבהרה שאיננו נותנים הנחיות רפואיות + שהביטחון הוזעק.
-export function emergencyGuestMessage(kind, lang = "he") {
+// locationKnown=false → מוסיפים בקשת מיקום. בלי מספר חדר צוות הביטחון
+// לא יודע לאן לרוץ, וההבטחה "הם בדרך אליכם" הופכת לחסרת משמעות. הבקשה
+// מגיעה *אחרי* מספרי החירום, כדי שלא תעכב את הפעולה החשובה באמת.
+export function emergencyGuestMessage(kind, lang = "he", { locationKnown = true } = {}) {
   const he = lang !== "en";
+
+  const askLocationHe = locationKnown ? "" :
+    `\n📍 *איפה אתם נמצאים עכשיו?* מספר חדר, קומה או אזור במלון — כדי שהצוות יגיע ישירות אליכם.\n`;
+  const askLocationEn = locationKnown ? "" :
+    `\n📍 *Where are you right now?* Room number, floor, or area of the hotel — so the team can reach you directly.\n`;
 
   const leadHe = {
     fire:     `🔥 חשוב מאוד — התקשרו *עכשיו ל-102 (כבאות והצלה)*, צאו מהחדר מיד והתרחקו למקום פתוח ובטוח.`,
@@ -133,7 +197,8 @@ export function emergencyGuestMessage(kind, lang = "he") {
       `🚑 מד"א — *101* (רפואי / פציעה)\n` +
       `🚒 כבאות — *102* (אש / גז / עשן)\n` +
       `🚓 משטרה — *100*\n\n` +
-      `הזעקתי *ברגע זה* את צוות הביטחון של המלון, והם בדרך אליכם.\n\n` +
+      `הזעקתי *ברגע זה* את צוות הביטחון של המלון, והם בדרך אליכם.\n` +
+      askLocationHe + `\n` +
       `⚠️ איני מוסמך לתת הנחיות רפואיות או עזרה ראשונה — פעלו אך ורק לפי ההנחיות של מוקד החירום.\n` +
       `אני נשאר איתכם כאן — עדכנו אותי בכל שינוי.`
     );
@@ -146,7 +211,8 @@ export function emergencyGuestMessage(kind, lang = "he") {
     `🚑 Magen David Adom — *101* (medical / injury)\n` +
     `🚒 Fire & Rescue — *102* (fire / gas / smoke)\n` +
     `🚓 Police — *100*\n\n` +
-    `I've alerted the hotel's security team *right now*, and they are on their way to you.\n\n` +
+    `I've alerted the hotel's security team *right now*, and they are on their way to you.\n` +
+    askLocationEn + `\n` +
     `⚠️ I'm not qualified to give medical or first-aid instructions — please follow the emergency dispatcher's guidance only.\n` +
     `I'm staying with you here — tell me if anything changes.`
   );
