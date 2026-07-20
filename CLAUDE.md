@@ -56,7 +56,7 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
 | `state.js` | **In-memory state** (`sessions`, `staffAlerts`, `stats`). `getSession`, `pushHistory`, `patchSession`, `logAlert`. Comment even says "swap for Redis/DB in production". | Works, NOT persistent, NOT multi-tenant |
 | `config.js` | **Single hotel** config: `DEFAULTS` (in code) + `overrides` (persisted in DB, table `config`) → `hotelConfig = deepMerge(DEFAULTS, overrides)`. Identity, dept numbers/emails, times, WiFi, **detailed services** (spa treatments+prices, restaurant, gym, room service, laundry, pool, bar, breakfast), parking, **`local_area`** (concierge knowledge *outside* the hotel: nearby restaurants, attractions, tours, nightlife, shopping, transport), FAQ, welcome, `deposit_amount`, `terms`. `updateConfig` deep-merges + persists. ⚠️ All service/price/policy/area data is **sample data** — every hotel replaces it. | Works for 1 hotel only |
 | `concierge/` | שכבת בקשות הקונסיירז' המבודדת. `ConciergeProvider` — הממשק + `REQUEST_TYPES` (taxi/restaurant/spa/tour/transfer/rental/gift/other); `MockConciergeProvider` — מקצה אסמכתא (`CNG-XXXXXX`) ומחזיר `status:"received"`, **לא מזמין כלום בפועל** — הביצוע הוא של הקונסיירז' האנושי שמקבל את ההתראה. נקודת החלפה אחת: `concierge/index.js`. | Works (mock) |
-| `places/` | שכבת **חיפוש מקומות אמיתיים** מבודדת (Google Places API New — Text Search). `PlacesProvider` — הממשק + `PLACE_CATEGORIES` (מיפוי קטגוריה→`includedType`); `GooglePlacesProvider` — קורא ל-`places:searchText` עם `X-Goog-Api-Key` מ-`process.env.GOOGLE_PLACES_API_KEY` (**המפתח לעולם לא בקוד/לוג/גוף בקשה**), מנרמל שם/כתובת/דירוג/מחיר ומחשב מרחק (haversine); `MockPlacesProvider` — תוצאות דמו בלי רשת/מפתח, פורמט זהה. `util.js` — haversine + פורמט מרחק/מחיר. נקודת החלפה אחת: `places/index.js` (בוחר Google אם יש מפתח, אחרת mock; `PLACES_PROVIDER=mock` כופה mock). ה-AI מקבל את הכלי `search_nearby_places` (tool-use) ומכבד בקשה מדויקת (בשרי/כשר/טבעוני) דרך שדה `query`. | Works |
+| `places/` | שכבת **חיפוש מקומות אמיתיים** מבודדת (Google Places API New — Text Search). `PlacesProvider` — הממשק + `PLACE_CATEGORIES` (מיפוי קטגוריה→`includedType`); `GooglePlacesProvider` — קורא ל-`places:searchText` עם `X-Goog-Api-Key` מ-`process.env.GOOGLE_PLACES_API_KEY` (**המפתח לעולם לא בקוד/לוג/גוף בקשה**), מנרמל שם/כתובת/דירוג/מחיר ומחשב מרחק (haversine); `MockPlacesProvider` — תוצאות דמו בלי רשת/מפתח, פורמט זהה. `util.js` — haversine + פורמט מרחק/מחיר. נקודת החלפה אחת: `places/index.js` (בוחר Google אם יש מפתח, אחרת mock; `PLACES_PROVIDER=mock` כופה mock). ה-AI מקבל את הכלי `search_nearby_places` (tool-use) ומכבד בקשה מדויקת (בשרי/כשר/טבעוני) דרך שדה `query`. **אומת חי מול Google — ראה §7.1.** | Works (verified live) |
 | `i18n.js` | `detectLang` / `detectLangSignal` (Hebrew unicode heuristic), `detectLanguageRequest` + `stripLanguageRequest` (בקשת מעבר שפה), `t` helper. | Works |
 | `validate.js` | אימות קלט האורח: שם (דוחה גם *מילות פקודה* כמו "I want to check in"), מספר הזמנה, תמונת ת"ז, **תאריכי שהייה** (`validateStayDates` — פרסור חופשי HE/EN **מבוסס-תפקיד**: "עד"/"until" לפני תאריך = עזיבה) ו**אישור תנאים** (`validateTermsConfirmation` — דורש נוסח מפורש). + `stripInternalTags` (כולל תג **קטוע**). | Works |
 | `idverify/` | שכבת אימות זהות מבודדת. `vision.js` — בדיקת Claude vision אמיתית **ומחמירה** (בודקת `shows_document`: סלפי/צילום מסך/תמונה אקראית → `is_id=false`; סף ביטחון 0.7); `MockIdProvider` — אוכף `ACCEPTED_DOC_TYPES = {id_card, passport}` **בקוד** (לא רק ב-prompt), ושומר את המסמך **מוצפן at-rest** (`crypto.js`, AES-256-GCM, קובץ `.enc`) — דמו מקומי, לא plaintext. הסבר הדחייה לאורח **גנרי** (לא נוקב בשם המסמך שנשלח). נקודת החלפה אחת: `idverify/index.js` (שם גם ה-hand-off העתידי ל-PMS). | Works |
@@ -72,7 +72,8 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
   (hotel-vetted) *and* **live Google Places search** (`places/`, tool `search_nearby_places`) for
   real nearby places when the curated list doesn't cover the exact request. The bot honours the
   exact ask (meat/kosher/dairy/vegan/cuisine) via the tool's `query`, and still may name *only*
-  places one of those two sources actually returned — never invents. Arranging requests (taxi,
+  places one of those two sources actually returned — never invents. **החיפוש החי אומת מול Google
+  עם מפתח אמיתי, כולל השוואת הכתובות שהבוט מסר מול הפלט הגולמי — ראה §7.1.** Arranging requests (taxi,
   table, spa, tour, rental, gifts/special requests) via `[CONCIERGE:<type>|<details>]` →
   `concierge/` layer, and proactive luxury-hotel closing offers.
   The prompt forbids promising a booking is *done* — the mock only passes the request to a human,
@@ -333,6 +334,28 @@ Priority order (to be decided together):
   `ID_ENCRYPTION_KEY` (32 בייט hex/base64 להצפנת מסמכי זיהוי; בלעדיו — מפתח דמו נגזר, לא לפרודקשן).
 - AI model in use: `claude-sonnet-4-6` (`bot.js`). הקונסיירז' רץ עם tool-use — הכלי
   `search_nearby_places` (`places/`) זמין לו בכל תור להמלצות מקומות אמיתיים.
+
+### 7.1 Google Places — אימות חי (20.07.2026) ✅
+
+החיבור **נבדק חי מול Google Places API (New)** עם מפתח אמיתי, ולא רק ביחידה/מוק.
+
+- **השאילתה:** `"מסעדת בשר"`, `category=restaurant`, `languageCode=he`, `locationBias` סביב
+  מיקום המלון בקונפיג (הירקון ת"א, `32.09 / 34.77`).
+- **התוצאה:** `ok=true`, 6 תוצאות, **655ms**. מסעדות תל אביביות אמיתיות עם כתובות מדויקות,
+  דירוגים ומספרי מדרגים: הלבנטיני (בן יהודה 170 · 4.6 · 440 מ׳), מיטבר (שדרות ח"ן 52 · 4.5),
+  M25 שוק הכרמל (סמטת הכרמל 30 · 4.5), B12 TLV (קרליבך 12 · 4.6), טריגר (מונטיפיורי 21 · 4.3),
+  מקום של בשר (שבזי 64 · 4.5). מיון לפי מרחק עובד, `distanceText`/`priceSymbol`/`mapsUri` תקינים.
+- **מקצה לקצה:** הורצה שיחה מלאה דרך `handleIncoming` עם Claude אמיתי + Places אמיתי, בעברית
+  ובאנגלית. **הכתובות שהבוט מסר זהות בדיוק לפלט הגולמי של ה-API** — לא המציא ולא שינה. במקביל
+  הוא שילב מקום מ-`config.local_area` וציין שהוא כשר, כלומר שני המקורות עובדים יחד כמתוכנן.
+- המפתח הועבר כמשתנה סביבה לפקודה בודדת — **לא נכתב לשום קובץ**, ואומת אחר כך שחיפוש תבנית
+  המפתח על כל הריפו מחזיר אפס תוצאות ו-`git status` נקי.
+
+⚠️ **מלכודת תפעולית שהתגלתה:** `places/index.js` בוחר את הספק החי לפי **קיום** המפתח בלבד
+(`!!process.env.GOOGLE_PLACES_API_KEY`). מפתח **שגוי/לא מופעל/חסום** עדיין נבחר, כל חיפוש חוזר
+`400` מ-Google, והבוט אומר בנימוס "אבדוק ואחזור" — **בלי שום סימן חיצוני שמשהו שבור**.
+לכן לפני כל הדגמה/דיפלוי יש לוודא בלוג ההפעלה: `🗺️ Places: Google Places API (live) פעיל`,
+ולהריץ חיפוש אחד אמיתי. שיפור עתידי: smoke-check בהפעלה שמסמן מפתח פסול בקול.
 
 > Rule for future work: payments change in ONE place (the provider abstraction). Never re-couple
 > business logic to a specific payment vendor.
