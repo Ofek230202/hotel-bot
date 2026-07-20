@@ -530,7 +530,22 @@ test("תיקון 3: הודעת מספר ההזמנה היא משפט נקי וע
 
   const [greeting, ask] = lastBody().split("\n\n");
   assert.match(greeting, /Thank you, \*John Smith\*/, "הפנייה בשם — בשורה נפרדת משלה");
-  assert.equal(ask, "And what is your *reservation number*? (digits only)");
+  assert.equal(ask, "And what is your *reservation number*? (it appears on your booking confirmation)");
+});
+
+// ── מספר הזמנה אלפאנומרי — אישורי הזמנה אמיתיים מכילים אותיות ──
+// "RES12345" נדחה בעבר ("ספרות בלבד") והצ'ק אין נתקע לצמיתות.
+test("מספר הזמנה עם אותיות (RES12345) מתקבל", async () => {
+  const { validateReservationNumber } = await import("./validate.js");
+  for (const code of ["RES12345", "12345", "BK-8842-QT", "res12345", "#A1B2C3"]) {
+    assert.equal(validateReservationNumber(code).ok, true, `${code} אמור להתקבל`);
+  }
+  assert.equal(validateReservationNumber("RES12345").value, "RES12345");
+  assert.equal(validateReservationNumber("מספר ההזמנה שלי הוא RES12345").value, "RES12345");
+  // ...ועדיין דוחה טקסט חופשי, כדי שקלט של שלב אחר לא ייבלע כקוד.
+  for (const junk of ["10 יותר נוח לי בעברית", "4 לילות 19.7", "אני מאשר את התנאים", "abc"]) {
+    assert.equal(validateReservationNumber(junk).ok, false, `${junk} אמור להידחות`);
+  }
 });
 
 // ════════════════════════════════════════════════════════
@@ -2114,6 +2129,82 @@ test("מגדר: פרידת הצ'ק אאוט + המשוב עקביים בלשון
   // בלי צורות רבים ("אתכם"/"לראותכם") שסותרות את "לראותך" בצ'ק אאוט
   assert.ok(!/אתכם|לראותכם|ששהיתם/.test(thanks), `ערבוב יחיד/רבים בפרידה: ${thanks}`);
   assert.match(thanks, /לראותך|אותך/, "לשון יחיד נטולת-מין");
+});
+
+// ════════════════════════════════════════════════════════
+//  מולטי-טננט — בידוד אנשי הקשר בין מלונות
+// ════════════════════════════════════════════════════════
+test("מולטי-טננט: אנשי הקשר נשלפים לפי מלון, בלי דליפה בין מלונות", async () => {
+  const { departmentContacts, DEPARTMENTS, checkDepartmentContacts } = await import("./config.js");
+  const { db, DEFAULT_HOTEL_ID } = await import("./db.js");
+
+  // מלון שני עם מספרים ומיילים משלו — נכתב לאותה טבלה, hotel_id אחר.
+  db.prepare(`INSERT INTO config (hotel_id, data, updated_at) VALUES (?, ?, ?)
+              ON CONFLICT(hotel_id) DO UPDATE SET data = excluded.data`)
+    .run("hotel-b", JSON.stringify({
+      housekeeping_number: "whatsapp:+972999000111",
+      housekeeping_email:  "hk@hotel-b.co.il",
+    }), new Date().toISOString());
+
+  const a = departmentContacts("housekeeping", DEFAULT_HOTEL_ID);
+  const b = departmentContacts("housekeeping", "hotel-b");
+
+  assert.notEqual(a.whatsapp, b.whatsapp, "כל מלון — מספר וואטסאפ משלו");
+  assert.notEqual(a.email,    b.email,    "כל מלון — מייל משלו");
+  assert.equal(b.whatsapp, "whatsapp:+972999000111");
+  assert.equal(b.email,    "hk@hotel-b.co.il");
+
+  // מלון שלא הגדיר מחלקה — נופל לברירות המחדל שבקוד, לא לערכים של מלון א'.
+  assert.ok(departmentContacts("security", "hotel-b").email, "יש ברירת מחדל, לא ריק");
+
+  // כל המחלקות של מלון הדמו מוגדרות — אחרת בקשות נעלמות בשקט.
+  const check = checkDepartmentContacts(DEFAULT_HOTEL_ID);
+  assert.equal(check.ok, true, `חסרים אנשי קשר: ${check.missing.join(", ")}`);
+  assert.equal(DEPARTMENTS.length, 6);
+});
+
+// ════════════════════════════════════════════════════════
+//  ניקוי פורמט לוואטסאפ — markdown שוואטסאפ לא יודע להציג
+// ════════════════════════════════════════════════════════
+test("פורמט: קו מפריד '---' לעולם לא מגיע לאורח", async () => {
+  const p = "whatsapp:+972500000099";
+  sent.length = 0;
+  aiReply = "המלצה ראשונה\n\n---\n\nהמלצה שנייה\n\n### כותרת\n\n\n\nסוף";
+  await bot.handleIncoming(p, "מה יש באזור?");
+  const body = sent.filter(s => s.to === p).map(s => s.body).join("\n");
+  assert.ok(!/^\s*[-_*]{3,}\s*$/m.test(body), `קו מפריד דלף לאורח:\n${body}`);
+  assert.ok(!/^#{1,6}\s/m.test(body), "כותרת markdown דלפה לאורח");
+  assert.ok(!/\n{3,}/.test(body), "שלוש שורות ריקות ברצף");
+  assert.match(body, /\*כותרת\*/, "כותרת markdown הומרה להדגשה של וואטסאפ");
+});
+
+test("פורמט: הדגשה '**טקסט**' מומרת לכוכבית אחת (וואטסאפ)", async () => {
+  const p = "whatsapp:+972500777098";
+  sent.length = 0;
+  aiReply = "הייתי ממליץ על **האש** — מסעדת גריל, ועל **מיטבר** גם.";
+  await bot.handleIncoming(p, "המלצה?");
+  const body = sent.filter(s => s.to === p).map(s => s.body).join("\n");
+  assert.ok(!body.includes("**"), `כוכבית כפולה דלפה לאורח:\n${body}`);
+  assert.match(body, /\*האש\*/);
+  assert.match(body, /\*מיטבר\*/);
+});
+
+// ════════════════════════════════════════════════════════
+//  אישור תנאים — משפט טבעי, לא מחרוזת מדויקת
+// ════════════════════════════════════════════════════════
+test("תנאים: 'אני מאשר את התנאים' מתקבל, שלילה נדחית", async () => {
+  const { validateTermsConfirmation } = await import("./validate.js");
+  for (const yes of ["אני מאשר", "אני מאשר את התנאים", "מאשרת את התנאים",
+                     "אני מסכים לתנאים", "אני מאשר/ת", "I confirm", "I agree to the terms"]) {
+    assert.equal(validateTermsConfirmation(yes).ok, true, `"${yes}" אמור להתקבל`);
+  }
+  for (const no of ["אני לא מאשר", "לא מסכים לתנאים", "I do not agree", "I decline"]) {
+    const r = validateTermsConfirmation(no);
+    assert.equal(r.ok, false, `"${no}" אמור להידחות`);
+    assert.equal(r.reason, "declined", `"${no}" הוא סירוב, לא קלט לא ברור`);
+  }
+  // "כן" עדיין אינו אישור משפטי לתנאים.
+  assert.equal(validateTermsConfirmation("כן").reason, "not_explicit");
 });
 
 // ניקוי קובץ ה-DB הזמני

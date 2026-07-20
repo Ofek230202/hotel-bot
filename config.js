@@ -74,17 +74,17 @@ const DEFAULTS = {
   //   ב-Google Maps, לחיצה ימנית על הסיכה → הקואורדינטות מועתקות.
   // • search_radius_m — רדיוס החיפוש במטרים (ברירת מחדל 4000 = 4 ק״מ).
   //
-  // ⚠️ הקואורדינטות למטה הן דוגמה (אזור טיילת תל אביב) התואמת ל-local_area
-  //    הבדיוני. אין להשאירן בפרודקשן — כל מלון מזין את המיקום שלו.
-  // ⚠️ נתוני דוגמה של David Kempinski Tel Aviv — המלון על טיילת חוף הים
-  //    בתל אביב (רחוב הירקון / טיילת תל אביב, ליד גן העצמאות). כל מלון
-  //    אמיתי חייב להחליף את הכתובת והקואורדינטות במיקום המדויק שלו.
+  // 🔴 הקואורדינטות כאן היו שגויות ב-1.7 ק״מ (32.09 / 34.77 — אזור נמל
+  //    תל אביב, לא המלון). המשמעות: כל המלצה "בקרבת מקום" של הקונסיירז'
+  //    נמדדה ממקום אחר, ואורח נשלח למסעדה שהמרחק אליה שגוי לחלוטין.
+  //    אומת מול העמוד הרשמי של Kempinski, Google Maps ו-OSM:
+  //    המלון נמצא ברחוב הירקון 51, תל אביב-יפו, מיקוד 6343203.
   location: {
-    address:         "HaYarkon Street, Tel Aviv-Yafo, Israel (David Kempinski Tel Aviv — demo)",
-    address_he:      "רחוב הירקון, תל אביב-יפו — דוד קמפינסקי תל אביב (דמו)",
-    lat:             32.0900,
-    lng:             34.7700,
-    search_radius_m: 4000,
+    address:         "51 HaYarkon Street, Tel Aviv-Yafo 6343203, Israel (The David Kempinski Tel Aviv)",
+    address_he:      "רחוב הירקון 51, תל אביב-יפו — מלון דוד קמפינסקי תל אביב",
+    lat:             32.0746,
+    lng:             34.7661,
+    search_radius_m: 3000,
   },
 
   // ── Building / layout (מבנה המלון) ───────────────────
@@ -754,6 +754,7 @@ export function updateConfig(patch) {
   persistStmt.run(HOTEL, JSON.stringify(nextOverrides), new Date().toISOString());
   overrides   = nextOverrides;
   hotelConfig = deepMerge(structuredClone(DEFAULTS), overrides);
+  configCache.delete(HOTEL);
   return hotelConfig;
 }
 
@@ -763,10 +764,72 @@ export function resetConfig() {
   db.prepare(`DELETE FROM config WHERE hotel_id = ?`).run(HOTEL);
   overrides   = {};
   hotelConfig = deepMerge(structuredClone(DEFAULTS), overrides);
+  configCache.delete(HOTEL);
   return hotelConfig;
 }
 
 // ה-overrides בלבד (מה שנערך מעל הקוד) — לצורכי דיבוג/דשבורד.
 export function configOverrides() {
   return structuredClone(overrides);
+}
+
+// ════════════════════════════════════════════════════════
+//  מחלקות ואנשי קשר — **נקודת ההפרדה בין מלונות**
+//  ----------------------------------------------------------
+//  זו הנקודה היחידה בקוד שיודעת לאיזה מספר וואטסאפ ולאיזה מייל
+//  נשלחת התראה של מחלקה. `notifyStaff` (bot.js) קורא רק לכאן.
+//
+//  למה זה חשוב למולטי-טננט: כל עוד השליפה פזורה כ-
+//  `hotelConfig.housekeeping_number` בתוך הלוגיקה, כל מלון נוסף
+//  דורש נגיעה בכל מקום שמתריע. עכשיו מלון נוסף = שורת קונפיג
+//  נוספת ב-DB (`config.hotel_id`), והלוגיקה לא משתנה בכלל:
+//  ההתראה נשלחת עם `hotelId`, ומכאן חוזרים אנשי הקשר של *אותו*
+//  מלון בלבד. אין שום מסלול שבו בקשה של מלון א' מגיעה למחלקה
+//  של מלון ב' — כי אין יותר גלובל אחד שכולם קוראים ממנו.
+// ════════════════════════════════════════════════════════
+export const DEPARTMENTS = [
+  "reception", "housekeeping", "maintenance", "concierge", "security", "room_service",
+];
+
+// קונפיג מלא של מלון מסוים. המלון הנוכחי מוחזר מהזיכרון; כל מלון
+// אחר נטען מה-DB (אותה טבלה, hotel_id אחר) ונשמר ב-cache.
+const configCache = new Map();
+export function configFor(hotelId = HOTEL) {
+  if (hotelId === HOTEL) return hotelConfig;
+  if (!configCache.has(hotelId)) {
+    let ov = {};
+    try {
+      const row = db.prepare(`SELECT data FROM config WHERE hotel_id = ?`).get(hotelId);
+      const parsed = row?.data ? JSON.parse(row.data) : null;
+      if (isPlainObject(parsed)) ov = parsed;
+    } catch (e) {
+      console.error(`⚠️ טעינת הקונפיג של המלון "${hotelId}" נכשלה:`, e?.message || e);
+    }
+    configCache.set(hotelId, deepMerge(structuredClone(DEFAULTS), ov));
+  }
+  return configCache.get(hotelId);
+}
+
+// אנשי הקשר של מחלקה, במלון מסוים.
+export function departmentContacts(dept, hotelId = HOTEL) {
+  const cfg = configFor(hotelId);
+  return {
+    whatsapp: cfg[`${dept}_number`] || null,
+    email:    cfg[`${dept}_email`]  || null,
+  };
+}
+
+// ── בדיקת שלמות בהפעלה ─────────────────────────────────
+// מחלקה בלי מספר או בלי מייל **לא מתריעה בכלל** — והכשל שקט לגמרי:
+// האורח מקבל "העברתי את הבקשה", ואף אחד לא מקבל כלום. זו בדיוק תקלת
+// ההדגמה שאי אפשר לראות עד שמישהו שואל "למה לא הגיע?".
+// לכן בודקים את זה בעלייה ומדווחים בקול.
+export function checkDepartmentContacts(hotelId = HOTEL) {
+  const missing = [];
+  for (const dept of DEPARTMENTS) {
+    const { whatsapp, email } = departmentContacts(dept, hotelId);
+    if (!whatsapp) missing.push(`${dept}_number`);
+    if (!email)    missing.push(`${dept}_email`);
+  }
+  return { ok: missing.length === 0, missing, hotelId };
 }

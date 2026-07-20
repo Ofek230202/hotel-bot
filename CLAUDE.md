@@ -373,5 +373,29 @@ Priority order (to be decided together):
 
 שלושת המסלולים אומתו בהרצת `node server.js` אמיתית (מפתח תקין / מפתח פסול / בלי מפתח).
 
+### 7.3 סימולציית הדגמה — `simulate.mjs` ✅
+
+`node --experimental-test-module-mocks simulate.mjs [תרחיש]` מריץ את **כל** הזרימות
+מקצה לקצה עם Claude אמיתי, Places אמיתי (אם יש מפתח) ו-DB זמני, ומדפיס בדיוק את מה
+שהאורח רואה ואת מה שכל מחלקה מקבלת (וואטסאפ + מייל). רק שני דברים מוחלפים: טוויליו
+(אין שליחה אמיתית) ואימות הזהות (דורש URL מדיה אמיתי של טוויליו).
+
+תרחישים: `checkin`, `concierge`, `emergency`, `checkout`, `english`, `routing`, `followups`.
+בלי ארגומנט — הכול. משמש לבדיקה לפני הדגמה מול לקוח, כשאי אפשר לבדוק בוואטסאפ.
+
+### 7.4 מולטי-טננט — נקודת ההפרדה בין מלונות
+
+`notifyStaff` **אינו** קורא יותר ל-`hotelConfig.<dept>_number` ישירות. כל אנשי הקשר
+נשלפים דרך `departmentContacts(dept, hotelId)` ב-`config.js` — הנקודה **היחידה** בקוד
+שיודעת לאיזה מספר/מייל הולכת התראה. `configFor(hotelId)` טוען קונפיג מלא של מלון
+מסוים מטבלת `config` (מפתח `hotel_id`) מעל ה-`DEFAULTS` שבקוד, עם cache.
+
+לכן מלון נוסף = **שורה נוספת ב-DB**, בלי שינוי בלוגיקה: ההתראה נשלחת עם `hotelId`,
+ומכאן חוזרים אנשי הקשר של אותו מלון בלבד. אין מסלול שבו בקשה של מלון א' מגיעה
+למחלקה של מלון ב' — כי אין יותר גלובל אחד שכולם קוראים ממנו. מה שעוד **חסר** כדי
+להריץ מלונות במקביל: זיהוי הטננט מהמספר הנכנס (`To` של טוויליו → `hotelId`) והעברתו
+דרך הסשן לכל הקריאות. `checkDepartmentContacts()` רץ ב-`server.js` בעלייה ומתריע
+בקול על מחלקה בלי מספר או בלי מייל — אחרת הבקשה נעלמת בשקט.
+
 > Rule for future work: payments change in ONE place (the provider abstraction). Never re-couple
 > business logic to a specific payment vendor.

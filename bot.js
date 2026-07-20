@@ -4,7 +4,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import twilio    from "twilio";
 import dotenv    from "dotenv";
-import { hotelConfig }                                    from "./config.js";
+import { hotelConfig, departmentContacts }                 from "./config.js";
 import { getSession, recordActivity, pushHistory, patchSession, logAlert, logIncident, stats, sessions } from "./state.js";
 import { detectLangSignal, detectLanguageRequest, stripLanguageRequest } from "./i18n.js";
 import { stripInternalTags, hasInternalTag, validateFullName, validateReservationNumber, validateIdMedia, validateStayDates, validateTermsConfirmation, parseCheckinDetails, isSkipWord } from "./validate.js";
@@ -62,13 +62,32 @@ const FALLBACK_MSG = {
 //    גם אם הקוד שמעל פספס — כאן זה נעצר, ונרשם ללוג כדי שנדע.
 // 2. הודעה ריקה לא נשלחת לטוויליו (שזורק שגיאה על body ריק ומשתיק את
 //    הבוט) — במקומה נשלחת הודעת גיבוי (Bug #2).
+// ── ניקוי פורמט אחרון לפני וואטסאפ ──────────────────────
+// ה-prompt כבר אוסר markdown שוואטסאפ לא יודע להציג, אבל prompt הוא
+// בקשה, לא ערובה. נצפה בשטח: הבוט הפריד בין המלצות בקו "---", ווואטסאפ
+// הציג שלושה מקפים ערומים באמצע הודעה של מלון 5 כוכבים.
+// כאן זה נעצר דטרמיניסטית — בדיוק כמו סינון התגים הפנימיים.
+function tidyForWhatsApp(text) {
+  return String(text ?? "")
+    // שורה שכולה קו מפריד (---, ___, ***, ═══) — נמחקת לגמרי
+    .replace(/^[ \t]*(?:-{3,}|_{3,}|\*{3,}|={3,}|—{2,}|─{2,})[ \t]*$/gm, "")
+    // כותרת markdown (### כותרת) → טקסט מודגש, כמו שוואטסאפ מבין
+    .replace(/^[ \t]*#{1,6}[ \t]+(.+?)[ \t]*$/gm, "*$1*")
+    // הדגשה בסגנון markdown (**טקסט**) → כוכבית אחת. וואטסאפ מדגיש עם
+    // כוכבית *אחת*, ולכן שתיים מוצגות לאורח כתווים ערומים: **האש**.
+    .replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, "*$1*")
+    // שלוש שורות ריקות ומעלה → שורה ריקה אחת
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export async function wa(to, body, { lang = "he" } = {}) {
   const raw = String(body ?? "");
   if (hasInternalTag(raw)) {
     console.error(`🚨 תג פנימי נתפס לפני שליחה לאורח (${to.slice(-8)}) — סונן: ${raw.slice(0, 120)}`);
   }
 
-  let text = stripInternalTags(raw);
+  let text = tidyForWhatsApp(stripInternalTags(raw));
   if (!text) {
     console.error(`🚨 הודעה ריקה נחסמה לפני שליחה (${to.slice(-8)}) — נשלחת הודעת גיבוי. raw="${raw.slice(0, 120)}"`);
     text = FALLBACK_MSG[lang === "he" ? "he" : "en"];
@@ -89,23 +108,10 @@ function israelTime() {
 // ובלי דרך להשיג את האורח לא יכולה לעשות דבר. לכן `phone` נכנס לכל
 // התראה, וכשמספר החדר לא ידוע ההתראה אומרת זאת במפורש ומורה ליצור קשר —
 // במקום מקף שקט שנראה כאילו המידע פשוט חסר.
-export async function notifyStaff({ dept, roomNumber, guestName, message, phone, priority = "normal" }) {
-  const numberMap = {
-    housekeeping: hotelConfig.housekeeping_number,
-    reception:    hotelConfig.reception_number,
-    maintenance:  hotelConfig.maintenance_number,
-    concierge:    hotelConfig.concierge_number,
-    security:     hotelConfig.security_number,
-    room_service: hotelConfig.room_service_number,
-  };
-  const emailMap = {
-    housekeeping: hotelConfig.housekeeping_email,
-    reception:    hotelConfig.reception_email,
-    maintenance:  hotelConfig.maintenance_email,
-    concierge:    hotelConfig.concierge_email,
-    security:     hotelConfig.security_email,
-    room_service: hotelConfig.room_service_email,
-  };
+// `hotelId` הוא הפרמטר שהופך את זה למולטי-טננט: אנשי הקשר נשלפים
+// לפי המלון, מנקודה אחת (config.js), ולא מגלובל משותף.
+export async function notifyStaff({ dept, roomNumber, guestName, message, phone, priority = "normal", hotelId }) {
+  const { whatsapp: to, email: toEmail } = departmentContacts(dept, hotelId);
   const emoji = { housekeeping: "🧹", reception: "🏨", maintenance: "🔧", concierge: "⭐", security: "🚨", room_service: "🛎️" }[dept] || "🔔";
   // שם המחלקה בכותרת ההתראה — קריא לצוות (room_service → ROOM SERVICE).
   const deptLabel = dept.replace(/_/g, " ").toUpperCase();
@@ -120,14 +126,17 @@ export async function notifyStaff({ dept, roomNumber, guestName, message, phone,
   const phoneLine = phone ? `\n📱 ${String(phone).replace(/^whatsapp:/, "")}` : "";
   const body = `${urgency}${emoji} *${deptLabel}*\n\n👤 אורח: ${guestName || "—"}\n${roomLine}${phoneLine}\n📝 ${message}\n⏰ ${full}`;
 
+  // מחלקה בלי שום ערוץ = בקשה שנעלמת בשקט. לא מרשים לזה לקרות בלי לצעוק.
+  if (!to && !toEmail) {
+    console.error(`🚨 למחלקה "${dept}" אין מספר וואטסאפ ואין מייל בקונפיג — ההתראה לא נשלחה לאיש!`);
+  }
+
   // ── ערוץ 1: וואטסאפ ──────────────────────────────────
-  const to = numberMap[dept];
   if (to) {
     try { await wa(to, body); } catch (e) { console.error("Staff notify (WhatsApp) failed:", e.message); }
   }
 
   // ── ערוץ 2: מייל (דרך שכבת המייל המבודדת) ────────────
-  const toEmail = emailMap[dept];
   if (toEmail) {
     const subject = `${priority === "high" ? "🚨 דחוף — " : ""}${deptLabel} | ${roomNumber ? `חדר ${roomNumber}` : "חדר לא ידוע"} | ${guestName || "—"}`;
     try {
@@ -517,8 +526,12 @@ function buildPrompt(session, lang) {
 - ⛔ אל תעתיק ניסוחים מההוראות האלה. הרשימות כאן אומרות לך *מה* לדעת ומה
   לעשות — לא *איך* לנסח. נסח כל משפט מחדש, במילים שלך, כמשפט מלא.
   כך נולד המשפט השבור "אגיד לי לאיזה יום ושעה": פריט מרשימה הודבק כמו
-  שהוא לתוך משפט. הצורות הנכונות: "תוכל לומר לי לאיזה יום ושעה?",
-  "לאיזו שעה נוח לך?".
+  שהוא לתוך משפט. הצורות הנכונות: "לאיזה יום ושעה לתאם?",
+  "אשמח לדעת לאיזו שעה".
+- ⛔ צירופים שגויים שחוזרים — אל תכתוב אותם לעולם:
+  "בהקרוב" (הנכון: *בקרוב*), "בהקדם האפשרי" מול "בהקדם" — שניהם תקינים,
+  אבל "בהכי מהר" אינו. "אני אעביר" → "אעביר". "יביאו לך" בלי לדעת מין →
+  "יגיעו לחדר". מספר חדר נכתב תמיד כ"חדר 304", לא "בחדר ה-304".
 - פנייה לאורח: בגוף שני, בנימוס טבעי. אל תמציא צורות פועל.
 - אל תדביק את מה שהאורח כתב לתוך משפט שלך. הפנייה בשם היא משפט נפרד.
 - ⛔ *מין ומספר — חוק ברזל, זה מה שגורם לך להישמע כמו בן אדם אמיתי.*
@@ -529,11 +542,27 @@ function buildPrompt(session, lang) {
      (נקבה) מול "אני *עייף*", "*הזמנתי*" בצורת זכר. אם האורח כתב בלשון נקבה
      — פנה אליו בנקבה ("את", "לך" בהגייה נקבית, "תרצי", "מוזמנת"). אם בזכר
      — בזכר ("אתה", "תרצה", "מוזמן"). זה ההבדל בין בוט מדויק לבוט מביך.
-  2. *כשמין האורח אינו ידוע* (עדיין לא כתב דבר שמסגיר אותו) — העדף ניסוח
-     *נטול-מין* שנכון לשניהם: פעלים בעבר בגוף שני ("הגעת", "ביקשת" —
-     נכתבים זהה לזכר ולנקבה), שמות עצם ("בשמחה", "לרשותך", "אשמח לעזור"),
-     ופנייה בשם. הימנע מפועל עתיד/הווה גוף שני שמחייב מין ("תרצה"/"תרצי")
-     כשאינך יודע — או השתמש ב"אפשר…?" / "נשמח…" במקום.
+  2. *כשמין האורח אינו ידוע* (עדיין לא כתב דבר שמסגיר אותו) — חובה ניסוח
+     *נטול-מין*. זו לא העדפה; פנייה בזכר ל"סתם אורח" היא טעות.
+     מותר: פעלים בעבר בגוף שני ("הגעת", "ביקשת" — נכתבים זהה לזכר ולנקבה),
+     שמות עצם ("בשמחה", "לרשותך", "אשמח לעזור"), ופנייה בשם.
+     ⛔ אסור: פועל עתיד/הווה בגוף שני שמחייב מין, וכינוי גוף שמחייב מין.
+     החלף תמיד — אלה ההמרות המדויקות:
+       "כמה מגבות תרצה?"        → "כמה מגבות להביא?"
+       "האם תרצה עוד משהו?"     → "אפשר לעזור בעוד משהו?"
+       "אתה מוזמן"              → "בהחלט אפשר" / "לרשותך"
+       "אם אתה זקוק"            → "אם יש צורך"
+       "הישאר בחדרך"            → "נא להישאר בחדר"
+       "תוכל לומר לי"           → "אשמח לדעת"
+     רק אחרי שהאורח הסגיר את מינו — עוברים לצורה המתאימה ונשארים בה.
+     ⛔ גם ציווי הוא גוף שני ומחייב מין: "ספר לי" / "בחר" / "תגיד" אסורים.
+     במקומם: "אשמח לשמוע", "אפשר לבחור", "מה מתאים?".
+  2ב. *אתה עצמך — תמיד בגוף ראשון ניטרלי.* אל תתאר את עצמך בצורה שנושאת
+     מין: ⛔ "שמחה לעזור" / "אני זמינה" / "שמח לעזור". ✅ "אשמח לעזור",
+     "אני כאן", "לרשותך", "בשמחה". הבוט אינו גבר ואינו אישה.
+  2ג. *מספר ומין במניין* — "שתי" לנקבה, "שני" לזכר, והם חייבים להתאים
+     לשם העצם: ⛔ "שתי כיוונים", "שני אפשרויות". ✅ "שני כיוונים",
+     "שתי אפשרויות". הכי בטוח: לוותר על המניין ופשוט למנות את הפריטים.
   3. *עקביות מוחלטת* — בחר צורה אחת ואל תתחלף באמצע השיחה בין זכר לנקבה,
      בין "לכם" ל"לכן", או בין יחיד לרבים. לפני *כל* הודעה, קרא אותה שוב
      וודא שכל הפעלים, התארים וכינויי הגוף מתאימים זה לזה במין ובמספר.
@@ -674,6 +703,10 @@ function buildPrompt(session, lang) {
   ערימת קווים ו-| במקום מידע. לעולם אל תכתוב שורות כמו |---|---| או
   | שם | מחיר |. זה חל על *כל* תשובה, גם כשמדובר בעשרה טיפולים עם מחירים.
 - ⛔ בלי כותרות markdown (#), בלי קישורים בסוגריים מרובעים, בלי בלוקי קוד.
+- ⛔ בלי קו מפריד ("---" / "___" / "***"). וואטסאפ מציג אותו כתווים ערומים
+  באמצע ההודעה. הפרדה בין נושאים = *שורה ריקה אחת*, וזהו.
+- ⛔ אל תכריז על מספר שאתה לא מספק. אם כתבת "יש לי שתי המלצות" — חייבות
+  להופיע שתיים. עדיף לא לנקוב במספר כלל: "הנה מה שהייתי ממליץ".
 - רשימת פריטים = שורה אחת לכל פריט, בפורמט הזה:
   • *שם הפריט* (משך) — מחיר
   לדוגמה:
@@ -755,6 +788,12 @@ ${faqs}
 דוגמאות ניתוב: "בא לי קפה לחדר" → [ROOMSERVICE]. "נשפך חלב על השטיח" → [HK].
 "נשברה נורה" / "המזגן לא עובד" → [MAINTENANCE]. "צריך עוד מגבות" → [HK].
 "מסתובב פה מישהו חשוד" → [SECURITY]. "נפצעתי" / "יש אש" → [EMERGENCY].
+
+⛔ אל תחקור את האורח בשאלות. בקשה עמומה — *ענה עליה* והצע את שתי האפשרויות
+במשפט אחד, במקום לשאול שאלה ריקה. דוגמה: "אני רוצה לאכול" → אל תשאל "מה בא
+לך?"; תן מיד את פרטי שירות החדרים מהמידע שלמעלה (שעות, זמן הגעה, טווח
+מחירים) *וגם* הצע המלצה על מסעדה באזור, ואז שאלה קצרה אחת שסוגרת את העניין.
+כלל: לכל היותר שאלה אחת בהודעה, ורק אחרי שכבר נתת ערך.
 
 פקודות פנימיות (הוסף בסוף תגובתך בשורה נפרדת, האורח לא יראה אותן):
 [HK:<תיאור>] — בקשת משק בית (ניקיון, מגבות, מצעים, משהו שנשפך)
@@ -949,6 +988,10 @@ Rules:
   pile of dashes and pipes instead of information. Never write rows like |---|---| or
   | Name | Price |. This applies to *every* reply, including ten treatments with prices.
 - ⛔ No markdown headings (#), no bracketed links, no code blocks.
+- ⛔ No horizontal rules ("---" / "___" / "***"). WhatsApp renders them as bare
+  characters in the middle of the message. Separate topics with *one blank line*.
+- ⛔ Never announce a count you don't then deliver. If you write "I have two
+  recommendations", two must follow. Better not to give a number at all.
 - A list of items = one line per item, in this format:
   • *Item name* (duration) — price
   For example:
@@ -1265,9 +1308,10 @@ const INPUT_HINTS = {
   },
   reservation: {
     empty:       { he: "לא קיבלתי מספר הזמנה.", en: "I didn't catch a reservation number." },
-    not_numeric: { he: "מספר ההזמנה מורכב מספרות בלבד.", en: "A reservation number contains digits only." },
-    extra_text:  { he: "מספר ההזמנה מורכב מספרות בלבד.", en: "A reservation number contains digits only." },
+    not_numeric: { he: "לא זיהיתי מספר הזמנה — הוא מופיע באישור ההזמנה ששלחנו.", en: "I couldn't find a reservation number — it appears on the confirmation we sent." },
+    extra_text:  { he: "אשמח למספר ההזמנה עצמו, כפי שהוא מופיע באישור.", en: "Just the reservation number itself, exactly as it appears on your confirmation." },
     ambiguous:   { he: "קיבלתי כמה מספרים — אשמח למספר ההזמנה בלבד.", en: "I received several numbers — just the reservation number please." },
+    too_short:   { he: "מספר ההזמנה קצר מהצפוי.", en: "That reservation number is shorter than expected." },
     too_long:    { he: "מספר ההזמנה ארוך מהצפוי.", en: "That reservation number is longer than expected." },
   },
   id: {
@@ -1336,8 +1380,8 @@ async function promptStage(phone, stage, lang, { prefix = "", brief = false, wit
 
   if (stage === "waiting_reservation") {
     return wa(phone, p + (he
-      ? `ומה *מספר ההזמנה* שלך? (ספרות בלבד)`
-      : `And what is your *reservation number*? (digits only)`), { lang });
+      ? `ומה *מספר ההזמנה* שלך? (מופיע באישור ההזמנה)`
+      : `And what is your *reservation number*? (it appears on your booking confirmation)`), { lang });
   }
 
   if (stage === "waiting_dates") {
@@ -1521,7 +1565,7 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
     return;
   }
 
-  // ── מספר הזמנה — ספרות בלבד (Bug #3) ─────────────────
+  // ── מספר הזמנה — קוד אלפאנומרי מאישור ההזמנה (Bug #3) ─
   if (stage === "waiting_reservation") {
     const v = validateReservationNumber(input);
     if (!v.ok) {
@@ -1715,7 +1759,7 @@ async function handleTermsDeclined(phone, lang) {
     guestName: s.guestName,
     message:
       `📜 *האורח לא אישר את תנאי השהייה* בצ'ק אין הדיגיטלי\n` +
-      `👤 ${s.guestName || "—"}\n📱 ${phone}\n🔖 הזמנה: ${s.pendingReservation || "—"}\n` +
+      `👤 ${s.guestName || "—"}\n🔖 הזמנה: ${s.pendingReservation || "—"}\n` +
       `⛔ הצ'ק אין נעצר לפני הפיקדון. נדרשת פנייה אנושית לאורח.`,
     priority: "high",
   });
@@ -1730,6 +1774,13 @@ async function handleTermsDeclined(phone, lang) {
 }
 
 // שלב תעודת הזהות — הופרד כי הוא הכי עשיר: אימות אמיתי מול ה-AI,
+// סוג המסמך בהתראה לצוות — בעברית. המפתח הפנימי ("id_card") הוא שם
+// שדה בקוד, לא טקסט לקריאת אדם; הצוות קיבל "סוג מסמך: id_card".
+function docTypeHe(type) {
+  return { id_card: "תעודת זהות", passport: "דרכון", drivers_license: "רישיון נהיגה" }[type]
+    || type || "—";
+}
+
 // דחייה מנומסת, שמירה, והתראה לקבלה.
 async function handleIdStage(phone, media, lang) {
   const he = lang === "he";
@@ -1804,7 +1855,7 @@ async function handleIdStage(phone, media, lang) {
         guestName,
         message:
           `🪪 *אימות זהות נכשל ${attempts} פעמים* בצ'ק אין הדיגיטלי\n` +
-          `👤 אורח: ${guestName}\n📱 ${phone}\n🔖 הזמנה: ${reservationNumber || "—"}\n` +
+          `👤 אורח: ${guestName}\n🔖 הזמנה: ${reservationNumber || "—"}\n` +
           `📸 המסמך שנשלח אינו מזוהה כתעודה. נדרש טיפול אנושי.`,
         priority: "high",
       });
@@ -1837,7 +1888,7 @@ async function handleIdStage(phone, media, lang) {
       `👤 אורח: ${guestName}\n` +
       `🔖 הזמנה: ${reservationNumber || "—"}\n` +
       `🏠 חדר: ${s.roomNumber || "יוקצה בשלב הפיקדון"}\n` +
-      `📄 סוג מסמך: ${result.documentType || "—"}\n` +
+      `📄 סוג מסמך: ${docTypeHe(result.documentType)}\n` +
       (result.storedPath
         ? `📸 המסמך נשמר: ${result.storedPath}\n   ⚠️ אחסון דמו מקומי — בפרודקשן: אחסון מאובטח ומוצפן\n`
         : `📸 המסמך לא נשמר\n`) +
@@ -2030,7 +2081,6 @@ async function handleEmergency(phone, text, lang, kind) {
       message:
         `🚨 *חירום — ${emergencyKindHe(kind)}*\n` +
         `האורח דיווח: "${raw.slice(0, 400)}"\n` +
-        `📱 ${phone}\n` +
         `🗣️ שפת האורח: ${lang === "en" ? "אנגלית" : "עברית"}\n` +
         (roomNumber
           ? `📍 מיקום: חדר ${roomNumber}\n`
@@ -2053,7 +2103,7 @@ async function handleEmergency(phone, text, lang, kind) {
       guestName,
       message:
         `🚨 *גיבוי חירום — ${emergencyKindHe(kind)}* (הסלמה מקבילה לביטחון)\n` +
-        `האורח דיווח: "${raw.slice(0, 400)}"\n📱 ${phone}\n` +
+        `האורח דיווח: "${raw.slice(0, 400)}"\n` +
         `ודאו שצוות הביטחון/המנהל התורן מטפל *עכשיו*.`,
       priority: "high",
     });

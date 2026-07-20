@@ -5,7 +5,7 @@ import express   from "express";
 import dotenv    from "dotenv";
 import { handleIncoming, wa, notifyStaff } from "./bot.js";
 import { allSessions, sessions, staffAlerts, incidents, stats, deleteSession, clearAllSessions } from "./state.js";
-import { hotelConfig, updateConfig, resetConfig } from "./config.js";
+import { hotelConfig, updateConfig, resetConfig, checkDepartmentContacts, DEPARTMENTS } from "./config.js";
 import { reservations, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES, autoChargeOnNoShow, findNoShowReservations } from "./checkin.js";
 import checkinRouter from "./checkin-routes.js";
 import { smokePlaces } from "./places/index.js";
@@ -261,4 +261,16 @@ app.listen(PORT, () => {
   // הדגמה מול לקוח. לא ממתינים לו — השרת כבר מקבל בקשות; הכשל מטופל
   // בתוך smokePlaces ולעולם לא מפיל את התהליך.
   smokePlaces(hotelConfig.location).catch(() => {});
+
+  // מחלקה בלי מספר/מייל = בקשות אורחים שנעלמות בשקט. מדווחים בעלייה.
+  const contacts = checkDepartmentContacts();
+  if (contacts.ok) {
+    console.log(`✅  אנשי קשר של כל ${DEPARTMENTS.length} המחלקות מוגדרים (וואטסאפ + מייל)`);
+  } else {
+    console.error(
+      `\n🚨 חסרים אנשי קשר של מחלקות במלון "${contacts.hotelId}":\n` +
+      contacts.missing.map(k => `   • ${k}`).join("\n") +
+      `\n   בקשה שתנותב למחלקה כזו לא תגיע לאיש. יש להשלים ב-config.js.\n`
+    );
+  }
 });

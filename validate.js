@@ -100,26 +100,50 @@ const RESERVATION_FILLER = new Set([
   "ref", "my", "is", "it", "its", "the", "id",
 ]);
 
-// מספר הזמנה: ספרות בלבד (עד 12). מקבלים גם "#1234" או "מספר ההזמנה שלי 1234",
-// אבל *לא* טקסט חופשי כמו "10 יותר נוח לי בעברית" — שם נבקש שוב.
+// מספר הזמנה: קוד **אלפאנומרי**, לא ספרות בלבד.
+//
+// 🔴 למה זה שונה ממה שהיה: הגרסה הקודמת קיבלה ספרות בלבד, ולכן דחתה
+// "RES12345" — בדיוק הפורמט של אישורי הזמנה אמיתיים (Kempinski, Booking,
+// Expedia כולם מנפיקים קוד עם אותיות). אורח שהקליד את הקוד שבאישור
+// שלו קיבל "מספר ההזמנה מורכב מספרות בלבד" שוב ושוב, בלי שום דרך
+// להתקדם — הצ'ק אין נתקע לצמיתות.
+//
+// הכלל עכשיו: אסימון אחד שמכיל *לפחות ספרה אחת*, מאותיות לטיניות/ספרות
+// (ומקפים פנימיים — "BK-8842-QT"), באורך 3–16. מילות מילוי מוכרות סביבו
+// מותרות ("מספר ההזמנה שלי הוא 1234"), וכל שאר הטקסט החופשי עדיין נדחה,
+// כך ש-"10 יותר נוח לי בעברית" או "4 לילות 19.7" לא נבלעים כמספר הזמנה.
+const RESERVATION_CODE = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/;
+
 export function validateReservationNumber(raw) {
   const text = String(raw ?? "").trim();
   if (!text) return { ok: false, reason: "empty" };
 
-  const tokens = text.split(/[^0-9A-Za-z֐-׿]+/).filter(Boolean);
-  const digitTokens = tokens.filter(tk => /^\d+$/.test(tk));
-  const wordTokens  = tokens.filter(tk => !/^\d+$/.test(tk));
+  // מפרידים על רווחים/פיסוק, אבל **לא** על מקף — הוא חלק לגיטימי מהקוד.
+  const tokens = text.split(/[^0-9A-Za-z֐-׿-]+/).filter(t => t.replace(/-/g, ""));
 
-  if (digitTokens.length === 0) return { ok: false, reason: "not_numeric" };
-  if (digitTokens.length > 1)   return { ok: false, reason: "ambiguous" };
+  const codeTokens = [];
+  const wordTokens = [];
+  for (const tk of tokens) {
+    // אסימון קוד = אותיות לטיניות/ספרות (+מקפים) עם לפחות ספרה אחת.
+    if (/\d/.test(tk) && RESERVATION_CODE.test(tk)) codeTokens.push(tk);
+    else wordTokens.push(tk);
+  }
 
-  // כל מה שאינו הספרות חייב להיות מילת מילוי מוכרת — אחרת זה טקסט חופשי.
-  if (wordTokens.some(tk => !RESERVATION_FILLER.has(tk.toLowerCase()))) {
+  if (codeTokens.length === 0) {
+    // אין שום ספרה בטקסט → לא נראה כמו קוד הזמנה בכלל.
+    return { ok: false, reason: /\d/.test(text) ? "extra_text" : "not_numeric" };
+  }
+  if (codeTokens.length > 1) return { ok: false, reason: "ambiguous" };
+
+  // כל מה שאינו הקוד חייב להיות מילת מילוי מוכרת — אחרת זה טקסט חופשי.
+  if (wordTokens.some(tk => !RESERVATION_FILLER.has(tk.replace(/-/g, "").toLowerCase()))) {
     return { ok: false, reason: "extra_text" };
   }
 
-  const value = digitTokens[0];
-  if (value.length > 12) return { ok: false, reason: "too_long" };
+  // אין מינימום אורך: מלונות מנפיקים גם קודים קצרים, ובדמו משתמשים
+  // במספרים כמו "10". הסינון של טקסט חופשי נעשה כבר על ידי wordTokens.
+  const value = codeTokens[0].toUpperCase();
+  if (value.length > 16) return { ok: false, reason: "too_long" };
 
   return { ok: true, value };
 }
@@ -347,25 +371,37 @@ export function validateStayDates(raw, now = new Date()) {
 // ── אישור תנאי שהייה ───────────────────────────────────
 // דורש נוסח *מפורש*. "כן"/"ok" אינם אישור משפטי לתנאים — מבקשים
 // מהאורח לכתוב "אני מאשר" / "I confirm", וזה מה שנשמר על ההזמנה.
-const TERMS_CONFIRM = new Set([
-  "אני מאשר", "אני מאשרת", "אני מאשר/ת", "מאשר", "מאשרת", "מאשר/ת",
-  "אני מסכים", "אני מסכימה", "מסכים", "מסכימה",
-  "i confirm", "confirm", "confirmed", "i agree", "agree", "agreed",
-]);
-const TERMS_VAGUE    = new Set(["כן", "אוקיי", "אוקי", "בסדר", "סבבה", "yes", "yep", "yeah", "ok", "okay", "sure", "y", "👍"]);
+const TERMS_VAGUE   = new Set(["כן", "אוקיי", "אוקי", "בסדר", "סבבה", "yes", "yep", "yeah", "ok", "okay", "sure", "y", "👍"]);
 const TERMS_DECLINED = new Set(["לא", "לא מאשר", "לא מאשרת", "לא מסכים", "לא מסכימה", "ביטול", "בטל", "no", "nope", "cancel", "i decline", "decline", "disagree"]);
+
+// מילות אישור מפורשות, כמילה בודדת בתוך המשפט.
+const TERMS_CONFIRM_WORDS = ["מאשר", "מאשרת", "מאשרים", "מסכים", "מסכימה", "מסכימים",
+  "confirm", "confirmed", "agree", "agreed", "accept", "accepted"];
+// שלילה שהופכת את המשמעות — נבדקת *לפני* מילות האישור, אחרת
+// "אני לא מאשר" היה נקרא כאישור (הוא מכיל "מאשר").
+const TERMS_NEGATION = /(^|\s)(לא|איני|אינני|no|not|dont|don t|do not|doesnt|wont|will not|refuse|decline|declined|disagree|cancel)(\s|$)/;
 
 export function validateTermsConfirmation(raw) {
   const t = String(raw ?? "")
-    .replace(/['’‘`״׳.!,]/g, "")
+    .replace(/['’‘`״׳.!,?]/g, "")
+    .replace(/[/\-–—]/g, " ")   // "מאשר/ת" → "מאשר ת"
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
 
   if (!t) return { ok: false, reason: "empty" };
-  if (TERMS_CONFIRM.has(t))  return { ok: true, value: true };
-  if (TERMS_DECLINED.has(t)) return { ok: false, reason: "declined" };
-  if (TERMS_VAGUE.has(t))    return { ok: false, reason: "not_explicit" };
+
+  // 🔴 אישור הוא *משפט*, לא מחרוזת מדויקת. הבדיקה הקודמת דרשה התאמה
+  // מלאה לרשימה סגורה, ולכן "אני מאשר את התנאים" — הניסוח הכי טבעי
+  // שאורח כותב — נדחה, והצ'ק אין נתקע בדיוק לפני הפיקדון.
+  const words = t.split(" ");
+  const hasConfirmWord = words.some(w => TERMS_CONFIRM_WORDS.includes(w));
+
+  // שלילה גוברת תמיד על מילת אישור באותו משפט.
+  if (TERMS_NEGATION.test(` ${t} `)) return { ok: false, reason: "declined" };
+  if (TERMS_DECLINED.has(t))         return { ok: false, reason: "declined" };
+  if (hasConfirmWord)                return { ok: true, value: true };
+  if (TERMS_VAGUE.has(t))            return { ok: false, reason: "not_explicit" };
   return { ok: false, reason: "unclear" };
 }
 
