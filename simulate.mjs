@@ -133,6 +133,18 @@ const scenarios = {
     await guest("אני מאשר את התנאים");
   },
 
+  async dates() {
+    header("תרחיש 8 — תאריכים שכבר עברו / לא הגיוניים");
+    for (const t of ["10.7 - 13.7", "25.7 - 23.7", "32.13 - 35.14", "1.1.2050 - 5.1.2050", "עוד שבוע, 3 לילות"]) {
+      reset();
+      await bot.handleIncoming(GUEST, "צק אין");
+      await bot.handleIncoming(GUEST, "ישראל ישראלי");
+      await bot.handleIncoming(GUEST, "RES12345");
+      log.length = 0;
+      await guest(t);
+    }
+  },
+
   async concierge() {
     header("תרחיש 2 — קונסיירז' בעברית (מסעדת בשר)");
     reset();

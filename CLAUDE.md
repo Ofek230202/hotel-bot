@@ -136,7 +136,7 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
   saved on the reservation, escalated to management (low ratings → high priority). Still lacks:
   formal invoice/receipt PDF, minibar check, luggage storage, late-checkout offer.
 - No logging/monitoring, no rate-limiting, no Twilio request validation (security).
-- ~~No tests~~ **PARTIAL** — `e2e.test.mjs` + `places.test.mjs` + `safety.test.mjs` (141 tests, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
+- ~~No tests~~ **PARTIAL** — `e2e.test.mjs` + `places.test.mjs` + `safety.test.mjs` (176 tests, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
   תגים, זהות, **מדיניות סוגי מסמכים, תאריכי שהייה, אישור תנאים, עקביות שפה מקצה לקצה**
   (כולל רינדור עמוד האישור), **המידע המובנה שמגיע ל-AI (system prompt), ומיזוג/שמירת הקונפיג**
   (כולל ריסטארט אמיתי בתהליך נפרד), **וזרימת הצ'ק אאוט המלאה** (הצגת חשבון → אישור → שלושת
@@ -282,7 +282,7 @@ Priority order (to be decided together):
       **stay-date parsing (every HE/EN phrasing + the ambiguous cases) + date confirmation +
       truncated-tag leak + deposit wording** / **check-out state machine (bill preview →
       confirm → all three deposit outcomes + cancel + HE/EN consistency)**
-      (`e2e.test.mjs`/`places.test.mjs`/`safety.test.mjs`, 141 tests, `npm test`). Still missing: the isolated payment provider layer
+      (`e2e.test.mjs`/`places.test.mjs`/`safety.test.mjs`, 176 tests, `npm test`). Still missing: the isolated payment provider layer
       itself.
 
 ### שפה — עקביות מקצה לקצה (ממומש)
@@ -372,6 +372,34 @@ Priority order (to be decided together):
 ההבחנה הזו אי אפשר לדעת מתי לצעוק ומתי רק להזהיר. המפתח לעולם לא מודפס בלוג — יש בדיקה על כך.
 
 שלושת המסלולים אומתו בהרצת `node server.js` אמיתית (מפתח תקין / מפתח פסול / בלי מפתח).
+
+### 7.2.1 תאריכים שכבר עברו / לא הגיוניים ✅
+
+`validateStayDates` מתנהג כמו פקיד קבלה: לעולם לא רושם הזמנה לא הגיונית, ותמיד אומר
+*מה בדיוק* הבעיה (הודעה שגויה מבלבלת יותר מאשר לא לענות).
+
+| קלט | תוצאה |
+|---|---|
+| הגעה שעברה (`10.7` ביולי 20) | `past` — נדחה |
+| אתמול | **קביל** — אורח שמאחר בלילה |
+| תאריך בלי שנה, עמוק בעבר (`10.5`) | מתפרש כשנה הבאה, ומאושר מול האורח עם השנה המלאה |
+| עזיבה לפני הגעה (`25.7 - 23.7`) | `not_after` |
+| אותו יום (`25.7 - 25.7`) | `not_after` (אפס לילות אינה שהייה) |
+| `28.12 - 3.1` | **תקין** — שהייה שחוצה את השנה |
+| `32.13`, `30.2` | `bad_date` |
+| `1.1.2050` | `too_far` (אופק `MAX_AHEAD_DAYS` = שנתיים) |
+| `25.7.2026 - 28.7.2027` | `too_long` (זו באמת שהייה ארוכה) |
+| היום / מחר / מחרתיים / עוד שבוע / בעוד N ימים / today / tomorrow / in a week / next week / in N days | מחושבים לפי שעון ישראל |
+
+שתי מלכודות שתוקנו ומכוסות בבדיקות:
+1. **`not_after` מול `too_long`** — בטווח הפוך בלי שנה (`25.7 - 23.7`) השנה גולגלה קדימה
+   והשהייה הפכה ל-363 לילות, ולכן האורח קיבל "שהייה ארוכה מ-60 לילות". `resolveToken`
+   מחזיר עכשיו `rolled`, וכך מבחינים בין טווח הפוך לשהייה שחוצה את השנה.
+2. **ביטוי יחסי אחד בלבד** — `findRelToken` החזיר את הראשון בלבד, ולכן "מהיום עד מחר"
+   נקרא כתאריך יחיד. הוחלף ב-`findRelTokens` (רבים) עם `REL_PATTERNS`.
+
+**שעת הגעה (ETA):** תצוגה בלבד — נשמרת כהערה לצוות ואינה משפיעה על תאריכים, תוקף כרטיס
+או no-show. שעה שעברה אינה חוסמת; שעה לא חוקית (`25:00`) פשוט אינה נקלטת.
 
 ### 7.3 סימולציית הדגמה — `simulate.mjs` ✅
 

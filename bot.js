@@ -1318,6 +1318,7 @@ const INPUT_HINTS = {
     not_after:  { he: "תאריך העזיבה חייב להיות אחרי תאריך ההגעה.", en: "The departure date must be after the arrival date." },
     past:       { he: "לפי מה שקיבלתי, ההגעה יוצאת בתאריך שכבר עבר.", en: "From what I have, the arrival works out to a date that has already passed." },
     too_long:   { he: "שהייה ארוכה מ-60 לילות מתואמת ישירות מול הקבלה.", en: "Stays longer than 60 nights are arranged directly with reception." },
+    too_far:    { he: "התאריך שקיבלתי רחוק מאוד בעתיד — הזמנות נפתחות עד שנתיים מראש.", en: "That date is very far in the future — bookings open up to two years ahead." },
     unclear:    { he: "לא הצלחתי לקרוא את התאריכים.", en: "I couldn't read those dates." },
     // שתי הסיבות האלה נוספו יחד עם הפרסור מבוסס-התפקיד: עדיף לשאול שוב
     // מאשר לנחש איזה תאריך הוא ההגעה ואיזה העזיבה.
