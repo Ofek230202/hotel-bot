@@ -401,6 +401,11 @@ async function runPlacesTool(input = {}, lang = "he") {
     query,
     hotel: lang === "he" ? (loc.address_he || loc.address) : loc.address,
     source: "google_places_live",
+    // ⚠️ שעות פתיחה: Google לא תמיד יודע אם מקום פתוח. כשאין נתון —
+    // השדה *נשמט לגמרי* במקום להישלח כ-null, כי null בתוך JSON מזמין
+    // את ה-AI לנחש, ואורח שנשלח 1.5 ק״מ ברגל למסעדה סגורה הוא כישלון
+    // שירות אמיתי. אין נתון → אין אמירה על פתיחה.
+    note: "openNow appears only when Google actually reported it. If a place has no openNow field, never say whether it is open or closed — just don't mention opening status for it.",
     results: res.results.map((r) => ({
       name:        r.name,
       address:     r.address,
@@ -408,7 +413,7 @@ async function runPlacesTool(input = {}, lang = "he") {
       rating:      r.rating,
       ratingCount: r.ratingCount,
       price:       r.priceSymbol,
-      openNow:     r.openNow,
+      ...(typeof r.openNow === "boolean" ? { openNow: r.openNow } : {}),
       distance:    r.distanceText,
     })),
   });
@@ -620,6 +625,10 @@ function buildPrompt(session, lang) {
   (לפי כללי הפורמט של וואטסאפ). אל תשפוך את כל הרשימה.
 - אם הכלי החזיר status של שגיאה/אין תוצאות — אל תמציא. אמור שתבדוק ותחזור,
   והוסף [RECEPTION:<מה האורח מחפש>].
+- 🕐 *שעות פתיחה*: אמור "פתוח עכשיו" *רק* אם השדה openNow חזר עם true לאותו
+  מקום. אם השדה לא מופיע בכלל — גוגל לא יודע, ולכן גם אתה לא: אל תכתוב שהוא
+  פתוח, אל תכתוב שהוא סגור, פשוט אל תזכיר שעות. אורח שילך 1.5 ק״מ ברגל
+  למסעדה סגורה בגלל ניחוש שלך — זה כישלון שירות.
 
 ⛔⛔ אסור להמציא מקומות — החוק החשוב ביותר בהמלצות:
 - מותר להמליץ *אך ורק* על מקומות שכתובים בנתונים למטה (שירותי המלון + הסביבה)
@@ -895,6 +904,10 @@ name, address, rating, price level and distance from the hotel.
   recommendation (following the WhatsApp formatting rules). Never dump the whole list.
 - If the tool returns an error/no-results status — do NOT invent. Say you'll check and
   come back, and append [RECEPTION:<what the guest is looking for>].
+- 🕐 *Opening hours*: say "open now" *only* if that place came back with openNow: true.
+  If the field is absent, Google doesn't know — and neither do you: don't say it's open,
+  don't say it's closed, just don't mention hours at all. A guest walking 1.5 km to a
+  closed restaurant because you guessed is a real service failure.
 
 ⛔⛔ NEVER INVENT A PLACE — the most important rule in recommendations:
 - You may recommend *only* places written in the data below (hotel services + the area)
@@ -1368,6 +1381,21 @@ function formatCheckinDetails(d, lang = "he") {
 // טקסט שהאורח הקליד — כך נולד "I want to check in, please enter your
 // reservation number": השם הקודם הודבק כפנייה בתחילת המשפט הבא.
 // פנייה בשם, אם יש, מגיעה כ-prefix בשורה נפרדת משלה.
+// דוגמת תאריכים לשלב השהייה — תמיד מחר + 4 לילות, לפי שעון ישראל.
+// מוחזרת כ-DD/MM/YYYY, הפורמט שהאורח מקליד ושהפרסור מבין.
+function exampleStayDates(now = new Date()) {
+  const ymd = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(now);
+  const today = new Date(`${ymd}T00:00:00Z`);
+  const fmt = (d) => {
+    const p = (n) => String(n).padStart(2, "0");
+    return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
+  };
+  const DAY = 86_400_000;
+  return [fmt(new Date(today.getTime() + DAY)), fmt(new Date(today.getTime() + 5 * DAY))];
+}
+
 async function promptStage(phone, stage, lang, { prefix = "", brief = false, withExample = false } = {}) {
   const he = lang === "he";
   const p  = prefix ? prefix + "\n\n" : "";
@@ -1393,9 +1421,13 @@ async function promptStage(phone, stage, lang, { prefix = "", brief = false, wit
     const ask = he
       ? `📅 מתי מתוכננת השהייה שלך — תאריך הגעה ותאריך עזיבה?`
       : `📅 When is your stay — an arrival date and a departure date?`;
+    // 🔴 הדוגמה חייבת להיות *עתידית*, ולכן היא מחושבת מהיום ולא כתובה
+    // קשיח. דוגמה קבועה ("19/07/2026") הופכת לתאריך שעבר ברגע שהתאריך
+    // חולף — והבוט מציע לאורח בדיוק את הקלט שהוא עצמו ידחה כ"תאריך שעבר".
+    const [exFrom, exTo] = exampleStayDates();
     const example = he
-      ? `\n\n_אפשר גם הגעה ומספר לילות. למשל: «19/07/2026 עד 23/07/2026» או «19/07/2026, 4 לילות»._`
-      : `\n\n_You can also give an arrival date and the number of nights. E.g. «19/07/2026 to 23/07/2026» or «19/07/2026, 4 nights»._`;
+      ? `\n\n_אפשר גם הגעה ומספר לילות. למשל: «${exFrom} עד ${exTo}» או «${exFrom}, 4 לילות»._`
+      : `\n\n_You can also give an arrival date and the number of nights. E.g. «${exFrom} to ${exTo}» or «${exFrom}, 4 nights»._`;
     return wa(phone, p + ask + (withExample ? example : ""), { lang });
   }
 

@@ -69,7 +69,8 @@ for (const query of queries) {
     console.log(`${String(i + 1).padStart(2)}. ${r.name}`);
     console.log(`    📍 ${r.address}`);
     console.log(`    ⭐ ${r.rating ?? "—"}${r.ratingCount ? ` (${r.ratingCount} מדרגים)` : ""}` +
-                `${r.priceSymbol ? ` · ${r.priceSymbol}` : ""} · ${r.distanceText}`);
+                `${r.priceSymbol ? ` · ${r.priceSymbol}` : ""} · ${r.distanceText}` +
+                ` · פתוח עכשיו: ${r.openNow === true ? "כן" : r.openNow === false ? "לא" : "אין נתון"}`);
     if (r.mapsUri) console.log(`    🔗 ${r.mapsUri}`);
     console.log("");
   });

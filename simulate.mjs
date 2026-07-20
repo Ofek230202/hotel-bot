@@ -107,6 +107,17 @@ function reset() {
 
 const FAKE_ID = { url: "https://example.com/id.jpg", contentType: "image/jpeg" };
 
+// תאריך הגעה עתידי, מחושב מהיום — תאריך קבוע בקוד הופך לתאריך שעבר
+// והבוט דוחה אותו בצדק, מה שנראה כמו תקלה בסימולציה.
+const STAY_TEXT = (() => {
+  const ymd = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+  const d = new Date(`${ymd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return `4 לילות ${d.getUTCDate()}.${d.getUTCMonth() + 1}`;
+})();
+
 const scenarios = {
   async checkin() {
     header("תרחיש 1 — צ׳ק-אין מלא בעברית");
@@ -115,7 +126,7 @@ const scenarios = {
     await guest("אני רוצה לעשות צ'ק אין");
     await guest("ישראל ישראלי");
     await guest("RES12345");
-    await guest("4 לילות 19.7");
+    await guest(STAY_TEXT);
     await guest("כן");
     await guest("2 אורחים, מגיעים ב-16:00");
     await guest("הנה תעודת הזהות שלי", FAKE_ID);
@@ -127,6 +138,7 @@ const scenarios = {
     reset();
     patchSession(GUEST, { lang: "he", roomNumber: "304", guestName: "ישראל ישראלי" });
     await guest("אני מחפש מסעדת בשר טובה באזור");
+    await guest("ואם בא לי סושי?");
   },
 
   async emergency() {
@@ -145,7 +157,7 @@ const scenarios = {
     await bot.handleIncoming(GUEST, "צ'ק אין");
     await bot.handleIncoming(GUEST, "ישראל ישראלי");
     await bot.handleIncoming(GUEST, "RES99999");
-    await bot.handleIncoming(GUEST, "4 לילות 19.7");
+    await bot.handleIncoming(GUEST, STAY_TEXT);
     await bot.handleIncoming(GUEST, "כן");
     await bot.handleIncoming(GUEST, "דלג");
     await bot.handleIncoming(GUEST, "ת\"ז", FAKE_ID);
