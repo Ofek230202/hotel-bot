@@ -97,7 +97,16 @@ export class GooglePlacesProvider extends PlacesProvider {
     if (!resp.ok) {
       // מדפיסים סטטוס בלבד — לעולם לא את גוף התשובה או המפתח.
       console.error(`Places(Google) HTTP ${resp.status} for query="${textQuery.slice(0, 60)}"`);
-      return { ok: false, results: [], reason: resp.status === 429 ? "rate_limited" : "unavailable", provider: "google" };
+      // מפרידים בין תקלה *קבועה בהגדרות* לבין תקלה *חולפת*:
+      // 400/403 = מפתח לא תקין / ה-API לא מופעל בפרויקט / המפתח מוגבל —
+      // כאלה לא יתקנו את עצמן, וכל חיפוש עתידי ייכשל באותה צורה. הבחנה זו
+      // היא מה שמאפשר ל-smoke-check בהפעלה לצעוק על מפתח פסול במקום
+      // להיראות כמו תקלת רשת רגעית.
+      const reason =
+        resp.status === 429                          ? "rate_limited" :
+        (resp.status === 400 || resp.status === 403) ? "invalid_key"  :
+                                                       "unavailable";
+      return { ok: false, results: [], reason, provider: "google" };
     }
 
     let data;

@@ -198,3 +198,94 @@ test("PLACE_CATEGORIES: קטגוריות המפתח ממופות ל-includedType
   assert.equal(PLACE_CATEGORIES.attraction, "tourist_attraction");
   assert.equal(PLACE_CATEGORIES.nightlife, "night_club");
 });
+
+// ── מפתח פסול מול תקלה חולפת (smoke-check בהפעלה) ──────
+// הבחנה קריטית: 400/403 = תקלת *הגדרות* שלא תתקן את עצמה (מפתח שגוי /
+// Places API (New) לא מופעל / מפתח מוגבל). 429/500/רשת = תקלה *חולפת*.
+// בלי ההפרדה הזו, smoke-check לא יכול לדעת מתי לצעוק ומתי רק להזהיר.
+test("google: HTTP 400 → invalid_key (תקלת הגדרות קבועה, לא 'לא זמין')", async () => {
+  const g = new GooglePlacesProvider("BAD_KEY");
+  stubFetch(() => ({ ok: false, status: 400, json: async () => ({}) }));
+  const res = await g.searchNearby({ query: "x", location: HOTEL });
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "invalid_key");
+});
+
+test("google: HTTP 403 → invalid_key (API לא מופעל / מפתח מוגבל)", async () => {
+  const g = new GooglePlacesProvider("BAD_KEY");
+  stubFetch(() => ({ ok: false, status: 403, json: async () => ({}) }));
+  const res = await g.searchNearby({ query: "x", location: HOTEL });
+  assert.equal(res.reason, "invalid_key");
+});
+
+test("google: 429/500 נשארים תקלה חולפת — לא מסומנים כמפתח פסול", async () => {
+  const g = new GooglePlacesProvider("KEY");
+  stubFetch(() => ({ ok: false, status: 429, json: async () => ({}) }));
+  assert.equal((await g.searchNearby({ query: "x", location: HOTEL })).reason, "rate_limited");
+  stubFetch(() => ({ ok: false, status: 503, json: async () => ({}) }));
+  assert.equal((await g.searchNearby({ query: "x", location: HOTEL })).reason, "unavailable");
+});
+
+// ── smoke-check בהפעלה ─────────────────────────────────
+// המפתח נקרא ב-import time, לכן מגדירים אותו לפני הייבוא הדינמי.
+// מגדירים זמנית ומשחזרים מיד אחרי הייבוא — אחרת שאר הבדיקות בקובץ
+// (שבונות GooglePlacesProvider בלי ארגומנט) יראו מפתח ויישברו.
+const _savedKey  = process.env.GOOGLE_PLACES_API_KEY;
+const _savedForce = process.env.PLACES_PROVIDER;
+process.env.GOOGLE_PLACES_API_KEY = "SMOKE_TEST_KEY";
+delete process.env.PLACES_PROVIDER;
+const { smokePlaces } = await import("./places/index.js");
+if (_savedKey === undefined) delete process.env.GOOGLE_PLACES_API_KEY; else process.env.GOOGLE_PLACES_API_KEY = _savedKey;
+if (_savedForce !== undefined) process.env.PLACES_PROVIDER = _savedForce;
+
+// לוכד console כדי לוודא שהכשל באמת *רועש* ולא נבלע.
+function captureConsole(fn) {
+  const logs = [];
+  const [e, w, l] = [console.error, console.warn, console.log];
+  console.error = (...a) => logs.push(["error", a.join(" ")]);
+  console.warn  = (...a) => logs.push(["warn",  a.join(" ")]);
+  console.log   = (...a) => logs.push(["log",   a.join(" ")]);
+  return fn().finally(() => { console.error = e; console.warn = w; console.log = l; })
+             .then(r => ({ result: r, logs }));
+}
+
+test("smoke-check: מפתח תקין → עובר ומדווח בלוג", async () => {
+  stubFetch(() => ({ ok: true, status: 200, json: async () => ({
+    places: [{ displayName: { text: "Some Cafe" }, formattedAddress: "St 1", location: { latitude: 32.075, longitude: 34.767 } }],
+  }) }));
+  const { result, logs } = await captureConsole(() => smokePlaces(HOTEL));
+  assert.equal(result.ok, true);
+  assert.match(logs.map(l => l[1]).join("\n"), /smoke-check עבר/);
+});
+
+test("smoke-check: מפתח פסול → שגיאה רועשת עם מה לבדוק (לא אזהרה שקטה)", async () => {
+  stubFetch(() => ({ ok: false, status: 400, json: async () => ({}) }));
+  const { result, logs } = await captureConsole(() => smokePlaces(HOTEL));
+  assert.equal(result.reason, "invalid_key");
+  const errors = logs.filter(l => l[0] === "error").map(l => l[1]).join("\n");
+  assert.match(errors, /המפתח נדחה/, "הכשל חייב להופיע כשגיאה, לא כאזהרה");
+  assert.match(errors, /Places API \(New\)/, "חייב להסביר מה לבדוק");
+  assert.doesNotMatch(errors, /SMOKE_TEST_KEY/, "🔴 המפתח דלף ללוג");
+});
+
+test("smoke-check: תקלה חולפת → אזהרה בלבד, בלי להקים רעש על מפתח", async () => {
+  stubFetch(() => ({ ok: false, status: 503, json: async () => ({}) }));
+  const { result, logs } = await captureConsole(() => smokePlaces(HOTEL));
+  assert.equal(result.reason, "unavailable");
+  // הספק עצמו מדפיס שורת סטטוס — לגיטימי. מה שאסור הוא בלוק "המפתח נדחה".
+  const errors = logs.filter(l => l[0] === "error").map(l => l[1]).join("\n");
+  assert.doesNotMatch(errors, /המפתח נדחה/, "תקלה חולפת סומנה בטעות כמפתח פסול");
+  assert.match(logs.map(l => l[1]).join("\n"), /חולפת/);
+});
+
+test("smoke-check: רשת נפלה → לא זורק ולא מפיל את השרת", async () => {
+  stubFetch(() => { throw new Error("network down"); });
+  const { result } = await captureConsole(() => smokePlaces(HOTEL));
+  assert.equal(result.ok, false);
+});
+
+test("smoke-check: אין קואורדינטות → דילוג מסודר", async () => {
+  const { result } = await captureConsole(() => smokePlaces(null));
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, "no_location");
+});

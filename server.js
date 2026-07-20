@@ -8,6 +8,7 @@ import { allSessions, sessions, staffAlerts, incidents, stats, deleteSession, cl
 import { hotelConfig, updateConfig, resetConfig } from "./config.js";
 import { reservations, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES, autoChargeOnNoShow, findNoShowReservations } from "./checkin.js";
 import checkinRouter from "./checkin-routes.js";
+import { smokePlaces } from "./places/index.js";
 
 dotenv.config();
 
@@ -255,4 +256,9 @@ app.listen(PORT, () => {
   console.log(`📊  Dashboard → http://localhost:${PORT}`);
   console.log(`🔄  Reset session: /reset/+972XXXXXXXXX?token=${PASS}`);
   console.log(`🔄  Reset all: /reset-all?token=${PASS}\n`);
+
+  // חיפוש אמיתי אחד מול Google, כדי שמפתח פסול יתגלה *עכשיו* ולא באמצע
+  // הדגמה מול לקוח. לא ממתינים לו — השרת כבר מקבל בקשות; הכשל מטופל
+  // בתוך smokePlaces ולעולם לא מפיל את התהליך.
+  smokePlaces(hotelConfig.location).catch(() => {});
 });
