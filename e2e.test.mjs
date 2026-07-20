@@ -2275,6 +2275,30 @@ test("מקומות: openNow חסר לא מגיע ל-AI כ-null (שלא ינחש 
   }
 });
 
+// ════════════════════════════════════════════════════════
+//  "אין חדר" — שני מצבים שונים, שני נוסחים שונים
+// ════════════════════════════════════════════════════════
+test("התראה: חדר שטרם הוקצה בצ'ק אין ≠ אורח שמיקומו לא ידוע", async () => {
+  // (א) אמצע צ'ק אין — החדר טרם הוקצה. זה מהלך תקין, לא תקלה.
+  const p = await checkinUpTo("waiting_id");
+  sent.length = 0;
+  await bot.handleIncoming(p, "", { url: "https://x/id.jpg", contentType: "image/jpeg" });
+  const idAlert = sent.filter(s => s.to !== p).map(s => s.body).join("\n");
+  assert.match(idAlert, /טרם הוקצה/, `נוסח החדר בצ'ק אין: ${idAlert}`);
+  assert.ok(!/יש ליצור קשר עם האורח לבירור המיקום/.test(idAlert),
+    "אסור להציג צ'ק אין תקין כאילו איבדנו את האורח");
+
+  // (ב) אורח שמבקש שירות ואיננו יודעים איפה הוא — כן תקלה, וכן צריך לצלצל.
+  const p2 = "whatsapp:+972500777096";
+  sent.length = 0;
+  await bot.notifyStaff({
+    dept: "housekeeping", roomNumber: null, guestName: "אורח", phone: p2, message: "מגבות",
+  });
+  const lost = sent.map(s => s.body).join("\n");
+  assert.match(lost, /לא ידוע/, "מיקום לא ידוע נשאר מסומן ככזה");
+  assert.match(lost, /יש ליצור קשר/, "והוא עדיין הוראת פעולה לצוות");
+});
+
 // ניקוי קובץ ה-DB הזמני
 process.on("exit", () => {
   for (const suffix of ["", "-wal", "-shm"]) {

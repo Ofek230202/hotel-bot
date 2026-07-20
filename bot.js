@@ -110,21 +110,31 @@ function israelTime() {
 // במקום מקף שקט שנראה כאילו המידע פשוט חסר.
 // `hotelId` הוא הפרמטר שהופך את זה למולטי-טננט: אנשי הקשר נשלפים
 // לפי המלון, מנקודה אחת (config.js), ולא מגלובל משותף.
-export async function notifyStaff({ dept, roomNumber, guestName, message, phone, priority = "normal", hotelId }) {
+export async function notifyStaff({ dept, roomNumber, guestName, message, phone, priority = "normal", hotelId, roomNote }) {
   const { whatsapp: to, email: toEmail } = departmentContacts(dept, hotelId);
   const emoji = { housekeeping: "🧹", reception: "🏨", maintenance: "🔧", concierge: "⭐", security: "🚨", room_service: "🛎️" }[dept] || "🔔";
   // שם המחלקה בכותרת ההתראה — קריא לצוות (room_service → ROOM SERVICE).
   const deptLabel = dept.replace(/_/g, " ").toUpperCase();
   const urgency = priority === "high" ? "🚨 *דחוף* 🚨\n" : "";
   const { full } = israelTime();
-  // מספר חדר חסר אינו "—" שקט: הוא הוראת פעולה. הצוות חייב לדעת שאין
-  // מיקום ושצריך להתקשר לאורח, אחרת ההתראה פשוט לא ניתנת לביצוע.
+  // מספר חדר חסר אינו "—" שקט: הוא הוראת פעולה.
+  //
+  // אבל יש *שני* מצבים שונים לגמרי של "אין חדר", והם דורשים נוסח שונה:
+  //  • אורח שמבקש משהו ואיננו יודעים איפה הוא → תקלה. צריך להתקשר אליו.
+  //  • אורח באמצע צ'ק אין, שהחדר שלו פשוט טרם הוקצה → תקין לחלוטין.
+  // הנוסח האחיד הקודם ("לא ידוע — יש ליצור קשר לבירור המיקום") הופיע גם
+  // בהתראת אימות הזהות, וגרם לזה להיראות כמו כשל בזמן שהכול תקין.
+  // `roomNote` נותן לקורא לומר במפורש מה המצב.
   const roomLine = roomNumber
     ? `🚪 חדר: ${roomNumber}`
-    : `🚪 חדר: *לא ידוע* — יש ליצור קשר עם האורח לבירור המיקום`;
+    : roomNote
+      ? `🚪 חדר: ${roomNote}`
+      : `🚪 חדר: *לא ידוע* — יש ליצור קשר עם האורח לבירור המיקום`;
   // הטלפון נכנס לכל התראה: זו הדרך היחידה של הצוות להשיג את האורח.
   const phoneLine = phone ? `\n📱 ${String(phone).replace(/^whatsapp:/, "")}` : "";
-  const body = `${urgency}${emoji} *${deptLabel}*\n\n👤 אורח: ${guestName || "—"}\n${roomLine}${phoneLine}\n📝 ${message}\n⏰ ${full}`;
+  // trim: תוכן שמגיע מתג ([HK: מגבות]) נושא לרוב רווח מוביל, וההתראה
+  // יצאה עם "📝  מגבות" — רווח כפול. פרט קטן, אבל הצוות רואה את זה כל היום.
+  const body = `${urgency}${emoji} *${deptLabel}*\n\n👤 אורח: ${guestName || "—"}\n${roomLine}${phoneLine}\n📝 ${String(message ?? "").trim()}\n⏰ ${full}`;
 
   // מחלקה בלי שום ערוץ = בקשה שנעלמת בשקט. לא מרשים לזה לקרות בלי לצעוק.
   if (!to && !toEmail) {
@@ -138,7 +148,12 @@ export async function notifyStaff({ dept, roomNumber, guestName, message, phone,
 
   // ── ערוץ 2: מייל (דרך שכבת המייל המבודדת) ────────────
   if (toEmail) {
-    const subject = `${priority === "high" ? "🚨 דחוף — " : ""}${deptLabel} | ${roomNumber ? `חדר ${roomNumber}` : "חדר לא ידוע"} | ${guestName || "—"}`;
+    // נושא המייל חייב לומר את אותו דבר כמו ההתראה בוואטסאפ — אחרת אותו
+    // אירוע נראה לצוות כשתי בעיות שונות ("טרם הוקצה" מול "חדר לא ידוע").
+    const roomSubject = roomNumber
+      ? `חדר ${roomNumber}`
+      : (roomNote ? `חדר ${roomNote.split("—")[0].trim()}` : "חדר לא ידוע");
+    const subject = `${priority === "high" ? "🚨 דחוף — " : ""}${deptLabel} | ${roomSubject} | ${guestName || "—"}`;
     try {
       await email.send({ to: toEmail, subject, body, dept, priority, meta: { roomNumber, guestName, message } });
     } catch (e) { console.error("Staff notify (email) failed:", e.message); }
@@ -1536,6 +1551,7 @@ async function ensureDepositLink(phone, lang) {
       phone,
       dept: "reception",
       roomNumber: s.roomNumber,
+      roomNote: ROOM_NOTE_PENDING_CHECKIN,
       guestName: s.guestName,
       message: `⚠️ יצירת קישור הפיקדון נכשלה בצ'ק אין הדיגיטלי (${phone}). הזמנה: ${s.pendingReservation || "—"}. נדרש טיפול ידני.`,
       priority: "high",
@@ -1788,6 +1804,7 @@ async function handleTermsDeclined(phone, lang) {
     phone,
     dept: "reception",
     roomNumber: s.roomNumber,
+    roomNote: ROOM_NOTE_PENDING_CHECKIN,
     guestName: s.guestName,
     message:
       `📜 *האורח לא אישר את תנאי השהייה* בצ'ק אין הדיגיטלי\n` +
@@ -1808,6 +1825,11 @@ async function handleTermsDeclined(phone, lang) {
 // שלב תעודת הזהות — הופרד כי הוא הכי עשיר: אימות אמיתי מול ה-AI,
 // סוג המסמך בהתראה לצוות — בעברית. המפתח הפנימי ("id_card") הוא שם
 // שדה בקוד, לא טקסט לקריאת אדם; הצוות קיבל "סוג מסמך: id_card".
+// נוסחי "אין מספר חדר" לפי המצב — כדי שהצוות יבין מיד אם זו תקלה
+// (אורח שאיננו יודעים איפה הוא) או מהלך תקין (חדר שטרם הוקצה).
+const ROOM_NOTE_PENDING_CHECKIN = "טרם הוקצה — יוקצה עם אישור הפיקדון";
+const ROOM_NOTE_CHECKED_OUT     = "החדר כבר פונה (לאחר צ'ק אאוט)";
+
 function docTypeHe(type) {
   return { id_card: "תעודת זהות", passport: "דרכון", drivers_license: "רישיון נהיגה" }[type]
     || type || "—";
@@ -1884,6 +1906,7 @@ async function handleIdStage(phone, media, lang) {
         phone,
         dept: "reception",
         roomNumber: s.roomNumber,
+        roomNote: ROOM_NOTE_PENDING_CHECKIN,
         guestName,
         message:
           `🪪 *אימות זהות נכשל ${attempts} פעמים* בצ'ק אין הדיגיטלי\n` +
@@ -1912,14 +1935,14 @@ async function handleIdStage(phone, media, lang) {
     phone,
     dept: "reception",
     roomNumber: s.roomNumber || null,
+    roomNote: ROOM_NOTE_PENDING_CHECKIN,
     guestName,
     message:
       (verified
         ? `🪪 *אימות זהות הושלם בצ'ק אין הדיגיטלי*\n`
         : `⚠️ *מסמך זיהוי התקבל — לא אומת אוטומטית, נדרשת בדיקה ידנית*\n`) +
-      `👤 אורח: ${guestName}\n` +
+      // שם האורח והחדר כבר מופיעים בכותרת ההתראה — לא חוזרים עליהם כאן.
       `🔖 הזמנה: ${reservationNumber || "—"}\n` +
-      `🏠 חדר: ${s.roomNumber || "יוקצה בשלב הפיקדון"}\n` +
       `📄 סוג מסמך: ${docTypeHe(result.documentType)}\n` +
       (result.storedPath
         ? `📸 המסמך נשמר: ${result.storedPath}\n   ⚠️ אחסון דמו מקומי — בפרודקשן: אחסון מאובטח ומוצפן\n`
@@ -2035,6 +2058,7 @@ async function handleFeedback(phone, text, lang) {
       phone,
       dept: "reception",
       roomNumber: s.roomNumber,
+      roomNote: ROOM_NOTE_CHECKED_OUT,
       guestName: s.guestName,
       message:
         `⭐ *משוב אורח בצ'ק אאוט*\n` +
