@@ -543,9 +543,23 @@ function buildPrompt(session, lang) {
   // כדי שלא ישאל את האורח שאלות מגוחכות על מבנה המלון שהוא עצמו עובד בו.
   const building = renderFields(cfg.building?.[L] || cfg.building?.en || {}, L);
 
+  // ── שורת מצב: הזמנת אוכל פתוחה ─────────────────────────
+  // כלל כללי באמצע ההוראות נבלע; משפט שמתאר את המצב *ברגע זה* לא.
+  const openDish = session?.openFoodOrder?.dish;
+  const openOrderNote = openDish
+    ? (lang === "he"
+        ? `\n⚠️ *מצב עכשיו:* האורח כבר בחר *${openDish}*, וההזמנה עדיין לא נשלחה למטבח.\n` +
+          `אם יש בידך את הבחירות שהמנה דורשת — שלח את [ROOMSERVICE:...] *בהודעה הזו*.\n` +
+          `אל תאשר את המנה בלי התג, ואל תשאל שאלה נוספת במקום לשלוח.\n`
+        : `\n⚠️ *CURRENT STATE:* the guest has already chosen *${openDish}*, and the order has not gone to the kitchen yet.\n` +
+          `If you have the choices that dish requires, send [ROOMSERVICE:...] *in this message*.\n` +
+          `Do not confirm the dish without the tag, and do not ask another question instead of sending it.\n`)
+    : "";
+
   if (lang === "he") {
     return `אתה הקונסיירז׳ הדיגיטלי של ${cfg.name_he}, מלון יוקרה 5 כוכבים.
 השעה הנוכחית בישראל: ${nowFull}
+${openOrderNote}
 
 🔴 שפת השיחה: *עברית* — חוק ברזל:
 - כתוב אך ורק בעברית תקינה, חמה ואלגנטית. כל מילה. משפטים קצרים וברורים.
@@ -731,9 +745,14 @@ function buildPrompt(session, lang) {
 🍽️ *הזמנת אוכל לחדר — אתה המלצר, וההזמנה חייבת לצאת מלאה:*
 התפריט המלא של שירות החדרים נמצא בנתונים למטה (▸ שירות חדרים ← התפריט).
 זה מקור האמת היחיד שלך למנות, למחירים ולאפשרויות הבחירה.
+שני כללים הפוכים שחייבים לחיות יחד — קרא את שניהם לפני שאתה עונה:
 - ⛔ *אסור להעביר הזמנה חלקית.* "אשמח לפסטה" אינה הזמנה — במטבח אי אפשר
   לבשל אותה. אורח שביקש פסטה וקיבל "מעביר לשירות החדרים" יקבל מנה אקראית,
   וזה בדיוק הכישלון שאנחנו מונעים.
+- ⛔ *ואסור לעכב הזמנה שלמה.* ברגע שהמנה והבחירות שהיא דורשת ידועות —
+  *אין שום הודעה שמאשרת את המנה בלי התג [ROOMSERVICE:...] באותה הודעה*.
+  אם כתבת לאורח "כריך קלאב, לחם מלא — מושלם" בלי תג, ההזמנה לא הגיעה
+  לאיש והאורח ממתין לאוכל שלא הוזמן. זו התקלה החמורה מבין השתיים.
 - קודם *מציעים*: כשהאורח נוקב בקטגוריה ("פסטה", "משהו קל", "קינוח") — הצג
   את המנות הרלוונטיות מהתפריט, עם השם והמחיר, ושאל מה מתאים.
 - אחר כך *משלימים את הפרטים החסרים* — רק אלה שבאמת חסרים למנה שנבחרה:
@@ -746,9 +765,12 @@ function buildPrompt(session, lang) {
   נמסר. מנה שאין לה אפשרויות בחירה — אין מה לשאול עליה, קח אותה כמו שהיא.
   גם כאן חלים כללי המין והמספר: כשמין האורח אינו ידוע — "איזה רוטב להביא?"
   ולא "איזה רוטב תרצה?".
-- ⛔ אל תמשיך לשאול לנצח. כשיש לך את המנה, הבחירות שלה והכמות — סגור את
-  ההזמנה. שאלה על שתייה או על שעת הגשה נשאלת *פעם אחת*, ואם האורח לא ענה
-  עליה — שולחים את ההזמנה בלעדיה.
+- ⛔ *אל תעכב הזמנה שלמה בשביל תוספת שאינה חיונית.* ברגע שיש לך את המנה
+  והבחירות שהיא דורשת — ההזמנה יוצאת *עכשיו*, באותה הודעה. שתייה, קינוח או
+  שעת הגשה הם *תוספת*, לא תנאי: מציעים אותם באותה הודעה שבה מאשרים שההזמנה
+  יצאה ("שלחתי למטבח — לצרף משהו לשתות?"), ואם האורח יבקש, שולחים תג נוסף
+  עם התוספת בלבד ומציינים שהיא מצטרפת להזמנה שכבר נשלחה. אורח שענה מה הוא
+  רוצה ונשאר בלי אוכל כי שאלת אותו על משקה — זה כישלון שירות.
 - ⛔ אל תמציא מנה, רוטב, תוספת או מחיר שאינם בתפריט. האורח ביקש משהו שאינו
   בתפריט? אמור זאת בכנות, הצע את הקרוב ביותר שכן קיים, והוסף [RECEPTION:...]
   אם צריך לברר מול המטבח.
@@ -911,6 +933,7 @@ ${faqs}
 
   return `You are the digital concierge of ${cfg.name}, a 5-star luxury hotel.
 Current time in Israel: ${nowFull}
+${openOrderNote}
 
 🔴 CONVERSATION LANGUAGE: *English* — hard rule:
 - Write in elegant, warm English only. Every word. Short, clear sentences.
@@ -1071,9 +1094,15 @@ confirmed yet. Therefore, without exception:
 🍽️ *Taking a food order — you are the waiter, and the order must go out complete:*
 The full in-room dining menu is in the data below (▸ In-Room Dining → The menu).
 That is your only source of truth for dishes, prices and choices.
+Two opposite rules that must live together — read both before you reply:
 - ⛔ *Never pass a partial order on.* "I'd like pasta" is not an order — the kitchen
   cannot cook it. A guest who asked for pasta and got "I'm passing that to room service"
   receives a random dish, and that is exactly the failure we are preventing.
+- ⛔ *And never hold a complete order back.* The moment the dish and its required choices
+  are known, *no message may confirm that dish without the [ROOMSERVICE:...] tag in that
+  same message*. If you wrote "club sandwich, wholemeal, no chips — perfect" with no tag,
+  the order reached nobody and the guest is waiting for food that was never ordered. Of
+  the two failures, this is the worse one.
 - First *offer*: when the guest names a category ("pasta", "something light", "dessert"),
   show the relevant dishes from the menu with names and prices, and ask what appeals.
 - Then *fill in what's missing* — only what is genuinely missing for the chosen dish:
@@ -1084,9 +1113,13 @@ That is your only source of truth for dishes, prices and choices.
   • A drink alongside, and when they'd like it served (now or at a set time)
 - Ask naturally, not like a form: at most two questions per message, and never ask about
   something already told to you. A dish with no choices needs no questions — take it as is.
-- ⛔ Don't keep asking forever. Once you have the dish, its choices and the quantity, close
-  the order. Ask about a drink or a serving time *once*; if the guest doesn't answer that,
-  send the order without it.
+- ⛔ *Never hold a complete order back for a non-essential extra.* The moment you have the
+  dish and the choices it requires, the order goes out *now*, in that same message. A drink,
+  a dessert or a serving time are *additions*, not conditions: offer them in the same message
+  that confirms the order has gone in ("that's with the kitchen — shall I add something to
+  drink?"), and if the guest wants one, send a further tag for the addition alone, noting it
+  joins the order already sent. A guest who told you what they wanted and got no food because
+  you asked about a drink is a service failure.
 - ⛔ Never invent a dish, a sauce, an addition or a price that isn't on the menu. If the
   guest asks for something that isn't there, say so honestly, offer the closest thing that
   does exist, and append [RECEPTION:...] if the kitchen needs to be asked.
@@ -1250,6 +1283,123 @@ Examples:
 [CONCIERGE:restaurant|Table for 2 at "Yam", tomorrow 20:30, requested upper terrace, anniversary]
 [CONCIERGE:spa|Couples massage 60 min, Friday at 16:00, for 2 people]
 [CONCIERGE:gift|Bouquet delivered to the room by 18:00 today, a surprise for his partner]`;
+}
+
+// ════════════════════════════════════════════════════════
+//  הזמנת אוכל — רשת ביטחון דטרמיניסטית
+//  ----------------------------------------------------------
+//  ה-prompt מנחה לשלוח את ההזמנה ברגע שהמנה והבחירות ידועות, אבל בהרצות
+//  חוזרות ה-AI *לא היה עקבי*: לפעמים שלח, ולפעמים ענה "כריך קלאב, לחם
+//  מלא — מושלם. לצרף משהו לשתות?" בלי תג. במקרה הזה האורח בטוח שהזמין,
+//  והמטבח לא קיבל דבר — הכישלון החמור ביותר בזרימה הזו.
+//
+//  לכן שתי שכבות מעל ה-prompt, שתיהן דטרמיניסטיות:
+//  1. *תזכורת מצב* — כשידוע שהאורח כבר נקב במנה ועדיין לא נשלחה הזמנה,
+//     ה-prompt של התור הבא נושא שורת מצב מפורשת. שורה שמתארת את המצב
+//     *הנוכחי* חזקה בהרבה מכלל כללי שנקבר באמצע ההוראות.
+//  2. *הסלמה מובטחת* — אם עברו שני תורות עם מנה ידועה ובלי הזמנה, או
+//     שה-AI אישר מנה בלי לשאול דבר ובלי תג, הבקשה עוברת לשירות החדרים
+//     כ"הזמנה חלקית" עם בקשה להתקשר לאורח. בדיוק כמו הטיפול בתג קטוע:
+//     בקשה של אורח לא נעלמת בשקט, גם כשה-AI מפספס.
+// ════════════════════════════════════════════════════════
+function menuDishNames(lang) {
+  const svc  = hotelConfig.services?.room_service || {};
+  const menu = (lang === "he" ? svc.he?.menu : svc.en?.menu) || svc.en?.menu || {};
+  return Object.values(menu).flat().map(i => i?.name).filter(Boolean);
+}
+
+// שם המנה שהאורח נקב בה, אם בכלל. מזהה גם שם חלקי ("לינגוויני" מתוך
+// "לינגוויני טרי") דרך אסימון מזהה מספיק ארוך — אורח לא מקליד שם מלא.
+export function namedDish(text, lang = "he") {
+  const t = String(text ?? "").toLowerCase();
+  if (!t) return null;
+  for (const name of menuDishNames(lang)) {
+    const n = String(name).toLowerCase();
+    if (t.includes(n)) return name;
+    for (const tok of n.split(/[^\p{L}\p{N}]+/u)) {
+      if (tok.length >= 4 && t.includes(tok)) return name;
+    }
+  }
+  return null;
+}
+
+// כל המנות שמוזכרות בטקסט (לא רק הראשונה) — לזיהוי הזמנה כפולה.
+function dishesIn(text, lang = "he") {
+  const t = String(text ?? "").toLowerCase();
+  return menuDishNames(lang).filter((name) => {
+    const n = String(name).toLowerCase();
+    if (t.includes(n)) return true;
+    return n.split(/[^\p{L}\p{N}]+/u).some(tok => tok.length >= 4 && t.includes(tok));
+  });
+}
+
+// ── הזמנה כפולה ────────────────────────────────────────
+// נצפה בהרצה חוזרת: ה-AI שלח את ההזמנה כשהאורח פירט את המנה, ואז *שוב*
+// כשהוא אמר "לא תודה, זה הכל" — ובמטבח שני כריכים. אבל להפיל את התג
+// השני בשקט מסוכן לא פחות: אולי האורח באמת הזמין עוד אחד.
+// לכן לא מוחקים ולא כופלים — *מסמנים*: המטבח מקבל את הבקשה עם אזהרה
+// לוודא מול האורח. אף בקשה לא נעלמת, ואף מנה לא מוכפלת בשקט.
+const DUPLICATE_ORDER_WINDOW_MS = 10 * 60_000;
+
+function flagDuplicateOrder(phone, session, payload) {
+  const dishes = dishesIn(payload, session.lang || "he");
+  if (!dishes.length) return payload;
+
+  const prev = session.lastRoomServiceOrder;
+  const now  = Date.now();
+  const same = prev
+    && now - prev.at < DUPLICATE_ORDER_WINDOW_MS
+    && prev.dishes.length === dishes.length
+    && prev.dishes.every(d => dishes.includes(d));
+
+  patchSession(phone, { lastRoomServiceOrder: { dishes, at: now } });
+  if (!same) return payload;
+
+  const minutes = Math.max(1, Math.round((now - prev.at) / 60_000));
+  console.error(`⚠️ הזמנת שירות חדרים כפולה אפשרית (${phone.slice(-8)}): ${dishes.join(", ")}`);
+  return `${payload}\n⚠️ *ייתכן שזו אותה הזמנה שכבר נשלחה לפני כ-${minutes} דק׳* (${dishes.join(", ")}) — נא לוודא עם האורח לפני הכנה כפולה.`;
+}
+
+// האם התשובה שואלת את האורח משהו? תשובה שמאשרת מנה, בלי תג ובלי שאלה,
+// היא מבוי סתום: האורח לא אמור לענות דבר, וההזמנה לא נשלחה לאיש.
+const ASKS_SOMETHING = /[?？]/;
+
+async function trackFoodOrder(phone, lang, { guestText, reply, sent }) {
+  const s    = sessions[phone] || getSession(phone);
+  const open = s.openFoodOrder || null;
+
+  // ההזמנה נשלחה → סוגרים את המעקב.
+  if (sent) {
+    if (open) patchSession(phone, { openFoodOrder: null });
+    return;
+  }
+
+  const dish = namedDish(guestText, lang) || open?.dish || null;
+  if (!dish) return;
+
+  const turns   = (open?.turns || 0) + 1;
+  const stalled = turns >= 2 || !ASKS_SOMETHING.test(String(reply ?? ""));
+
+  if (!stalled) {
+    patchSession(phone, { openFoodOrder: { dish, turns } });
+    return;
+  }
+
+  // הסלמה: המטבח מקבל את מה שידוע, ומתבקש לסגור מול האורח בטלפון.
+  patchSession(phone, { openFoodOrder: null });
+  console.error(`🚨 הזמנת אוכל נתקעה בלי תג (${phone.slice(-8)}) — הועברה לשירות החדרים: ${dish}`);
+  await notifyStaff({
+    phone,
+    dept: "room_service",
+    roomNumber: s.roomNumber,
+    guestName:  s.guestName,
+    message:
+      `🍽️ *הזמנה שלא נסגרה בצ'אט — נא ליצור קשר עם האורח*\n` +
+      `המנה שנבחרה: ${dish}\n` +
+      `דברי האורח: "${String(guestText ?? "").slice(0, 200)}"\n` +
+      `⚠️ האורח בחר מנה אך ההזמנה לא נשלחה במלואה. נא לוודא מולו את הפרטים ולהשלים.`,
+    priority: "high",
+  }).catch(e => console.error("food order escalation failed:", e?.message || e));
 }
 
 // ── בקשות קונסיירז' ────────────────────────────────────
@@ -1417,9 +1567,12 @@ async function runActions(raw, session, phone) {
     }
 
     // ── קונסיירז': הבקשה עוברת דרך שכבת הספק המבודדת ────
+    // ── שירות חדרים: הזמנה חוזרת מסומנת, לא מוכפלת בשקט ─
     const message = type === "CONCIERGE"
       ? await submitConciergeRequest(payload, session, phone)
-      : payload;
+      : type === "ROOMSERVICE"
+        ? flagDuplicateOrder(phone, session, payload)
+        : payload;
 
     await notifyStaff({
       phone,
@@ -2665,4 +2818,12 @@ async function processIncoming(phone, text, media = null) {
 
   await wa(phone, reply, { lang });
   pushHistory(phone, "assistant", reply);
+
+  // הזמנת אוכל שנבחרה אך לא נשלחה — נזכרת לתור הבא, ומוסלמת אם נתקעה.
+  // אחרי השליחה לאורח: מעקב לעולם לא מעכב את התשובה ולא מפיל אותה.
+  await trackFoodOrder(phone, lang, {
+    guestText: userMsg,
+    reply:     raw,
+    sent:      /\[ROOMSERVICE/i.test(raw),
+  }).catch(e => console.error("trackFoodOrder failed:", e?.message || e));
 }

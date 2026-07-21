@@ -240,13 +240,19 @@ const scenarios = {
     await guest("Room 512");
   },
 
-  // המשך-תור: בקשה עמומה שנפתרת בתור השני
+  // המשך-תור: בקשה עמומה שנפתרת בתורות הבאים.
+  // ⚠️ "אני רוצה לאכול משהו" *אינה* הזמנה, ולכן היא לא אמורה להישלח למטבח
+  //    בתור הראשון — הבוט אמור להציג תפריט ולשאול. ההזמנה יוצאת רק כשיש מנה.
   async followups() {
-    header("תרחיש 7 — בקשות עמומות: האם הן נסגרות בתור השני?");
+    header("תרחיש 7 — בקשות עמומות: האם הן נסגרות בתורות הבאים?");
     reset();
     patchSession(GUEST, { lang: "he", roomNumber: "304", guestName: "ישראל ישראלי" });
     await guest("אני רוצה לאכול משהו");
     await guest("בחדר בבקשה");
+    await guest("כריך קלאב, בלחם מלא, בלי צ'יפס");
+    // אם הבוט שאל שאלה נוספת (משקה וכו') — כאן ההזמנה חייבת לצאת סופית,
+    // בין אם ה-AI שולח את התג ובין אם רשת הביטחון מסלימה לשירות החדרים.
+    await guest("לא תודה, זה הכל");
     const staff = log.filter(l => l.to && l.to !== GUEST);
     for (const s of staff) console.log(`   ➜ נותב ל: ${(STAFF.get(s.to) || ["?"])[0]}`);
     if (!staff.length) console.log(`${C.re}   ❌ עדיין לא נותב לשום מחלקה${C.r}`);
@@ -255,17 +261,23 @@ const scenarios = {
   // ── ניתוב מחלקות — ארבע הפניות מהבקשה ──
   async routing() {
     header("תרחיש 6 — ניתוב מחלקות (4 פניות)");
+    // בקשה יכולה להיות הודעה אחת או שיחה קצרה. הזמנת אוכל *חייבת* להיות
+    // שיחה: "אני רוצה לאכול משהו" אינה הזמנה שאפשר לשלוח למטבח, והבוט
+    // אמור להציג תפריט ולשאול לפני שהוא מנתב (זה התיקון מהבדיקה החיה).
     const cases = [
-      ["נשברה נורה בחדר",        "אחזקה / MAINTENANCE"],
-      ["צריך מגבות בבקשה",       "משק בית / HOUSEKEEPING"],
-      ["אני רוצה לאכול משהו",     "שירות חדרים / ROOM SERVICE"],
-      ["יש מישהו חשוד במסדרון",   "ביטחון / SECURITY"],
+      [["נשברה נורה בחדר"],                                        "אחזקה / MAINTENANCE"],
+      [["צריך מגבות בבקשה"],                                       "משק בית / HOUSEKEEPING"],
+      // שלוש הודעות: בקשה עמומה → מנה + בחירות → סגירה. ההזמנה יוצאת
+      // לכל המאוחר בסוף השיחה — מה-AI עצמו או מרשת הביטחון.
+      [["אני רוצה לאכול משהו", "כריך קלאב בלחם מלא, בלי צ'יפס", "לא תודה, זה הכל"],
+                                                                   "שירות חדרים / ROOM SERVICE"],
+      [["יש מישהו חשוד במסדרון"],                                  "ביטחון / SECURITY"],
     ];
-    for (const [text, expect] of cases) {
+    for (const [messages, expect] of cases) {
       reset();
       patchSession(GUEST, { lang: "he", roomNumber: "304", guestName: "ישראל ישראלי" });
       console.log(`\n${C.ye}── מצופה: ${expect} ──${C.r}`);
-      await guest(text);
+      for (const text of messages) await guest(text);
       const staff = log.filter(l => l.to && l.to !== GUEST);
       const mails = log.filter(l => l.email);
       if (!staff.length) console.log(`${C.re}   ❌ לא נשלחה שום התראת צוות!${C.r}`);

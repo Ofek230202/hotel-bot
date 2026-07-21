@@ -137,7 +137,7 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
   saved on the reservation, escalated to management (low ratings → high priority). Still lacks:
   formal invoice/receipt PDF, minibar check, luggage storage, late-checkout offer.
 - No logging/monitoring, no rate-limiting, no Twilio request validation (security).
-- ~~No tests~~ **PARTIAL** — `e2e.test.mjs` + `places.test.mjs` + `safety.test.mjs` (198 tests, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
+- ~~No tests~~ **PARTIAL** — `e2e.test.mjs` + `places.test.mjs` + `safety.test.mjs` (203 tests, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
   תגים, זהות, **מדיניות סוגי מסמכים, תאריכי שהייה, אישור תנאים, עקביות שפה מקצה לקצה**
   (כולל רינדור עמוד האישור), **המידע המובנה שמגיע ל-AI (system prompt), ומיזוג/שמירת הקונפיג**
   (כולל ריסטארט אמיתי בתהליך נפרד), **וזרימת הצ'ק אאוט המלאה** (הצגת חשבון → אישור → שלושת
@@ -283,7 +283,7 @@ Priority order (to be decided together):
       **stay-date parsing (every HE/EN phrasing + the ambiguous cases) + date confirmation +
       truncated-tag leak + deposit wording** / **check-out state machine (bill preview →
       confirm → all three deposit outcomes + cancel + HE/EN consistency)**
-      (`e2e.test.mjs`/`places.test.mjs`/`safety.test.mjs`, 198 tests, `npm test`). Still missing: the isolated payment provider layer
+      (`e2e.test.mjs`/`places.test.mjs`/`safety.test.mjs`, 203 tests, `npm test`). Still missing: the isolated payment provider layer
       itself.
 
 ### שפה — עקביות מקצה לקצה (ממומש)
@@ -459,6 +459,30 @@ Priority order (to be decided together):
 - "עד איזו שעה הראשונה פתוחה?" → הבוט **קרא לכלי שוב** עם שם המקום וענה "עד 23:00"
   (זו בדיוק השאלה שקיבלה בעבר "אין לי מידע מדויק על שעות").
 - "ומה הכתובת והטלפון שלה?" → כתובת מלאה + 03-558-0425, ישירות מגוגל.
+
+### 7.2.4 הזמנת אוכל — רשת ביטחון מעל ה-AI ✅
+
+הרצת כל התרחישים מול Claude אמיתי חשפה ש**ה-prompt לבדו אינו עקבי** בהזמנות
+אוכל. באותה שיחה בדיוק, בהרצות שונות, ה-AI התנהג בשלוש דרכים: שלח את ההזמנה,
+*או* ענה "כריך קלאב, לחם מלא — מושלם. לצרף משהו לשתות?" בלי תג (האורח בטוח
+שהזמין, המטבח לא קיבל דבר), *או* שלח את אותה הזמנה **פעמיים** (שני כריכים).
+
+לכן שלוש שכבות, כמו בכל שאר הזרימות הקריטיות בפרויקט:
+
+1. **ה-prompt** — שני כללים הפוכים שחיים יחד, זה לצד זה: אסור להעביר הזמנה
+   חלקית, **ואסור לעכב הזמנה שלמה**. אין הודעה שמאשרת מנה בלי `[ROOMSERVICE:...]`
+   באותה הודעה; שתייה/קינוח/שעת הגשה הם תוספת שמציעים *אחרי* שההזמנה יצאה.
+2. **שורת מצב דינמית** (`session.openFoodOrder`) — כשהאורח כבר נקב במנה ולא
+   נשלחה הזמנה, ה-prompt של התור הבא נפתח ב"⚠️ מצב עכשיו: האורח בחר X,
+   ההזמנה לא נשלחה". תיאור המצב *הנוכחי* חזק בהרבה מכלל כללי שקבור בהוראות.
+3. **הסלמה מובטחת** (`trackFoodOrder`) — מנה ידועה + שני תורות בלי תג, או
+   אישור מנה בלי שאלה ובלי תג, → הבקשה עוברת לשירות החדרים כ"הזמנה שלא
+   נסגרה בצ'אט, נא ליצור קשר עם האורח". אורח לעולם לא ממתין לאוכל שלא הוזמן.
+
+**הזמנה כפולה** (`flagDuplicateOrder`): תג שני עם אותה מנה בתוך 10 דקות אינו
+נמחק (אולי האורח באמת רוצה עוד אחד) ואינו עובר בשקט — הוא מגיע למטבח עם
+"⚠️ ייתכן שזו אותה הזמנה שכבר נשלחה לפני כ-N דק׳ — נא לוודא לפני הכנה כפולה".
+מנה *אחרת* אינה כפילות, כדי שאורח שמוסיף קינוח יקבל אותו.
 
 ### 7.3 סימולציית הדגמה — `simulate.mjs` ✅
 
