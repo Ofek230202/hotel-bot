@@ -166,7 +166,8 @@ function normalizePlace(p, hotel, lang) {
     priceSymbol:    price ? price.symbol : null,
     openNow:        p.currentOpeningHours?.openNow ?? null,
     openingHours:   weekly,
-    todayHours:     todayHoursLine(weekly),
+    // שם היום מחושב בשפת התוצאה — סדר הימים של Google שונה בין השפות.
+    todayHours:     todayHoursLine(weekly, new Date(), lang),
     phone:          p.nationalPhoneNumber || null,
     website:        p.websiteUri || null,
     distanceMeters: meters,

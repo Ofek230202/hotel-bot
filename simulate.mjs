@@ -190,6 +190,16 @@ const scenarios = {
     await guest("ואם בא לי סושי?");
   },
 
+  // שאלת המשך על מקום — התקלה מהבדיקה החיה: "אין לי מידע מדויק על שעות"
+  async hours() {
+    header("תרחיש 12 — שאלת המשך על מקום (שעות / כתובת / טלפון)");
+    reset();
+    patchSession(GUEST, { lang: "he", roomNumber: "304", guestName: "ישראל ישראלי" });
+    await guest("אני מחפש מסעדת בשר טובה באזור");
+    await guest("עד איזו שעה הראשונה פתוחה?");
+    await guest("ומה הכתובת והטלפון שלה?");
+  },
+
   async emergency() {
     header("תרחיש 3 — חירום בעברית");
     reset();

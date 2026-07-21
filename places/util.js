@@ -63,21 +63,30 @@ export function formatRating(rating, count) {
 }
 
 // ── שעות הפתיחה *של היום* ──────────────────────────────
-// Google מחזיר את שעות השבוע כשבע שורות טקסט מוכנות
-// ("Monday: 12:00 – 23:00" / "יום שני: 12:00–23:00"), כשהראשונה היא
-// *יום שני* — כך זה מוגדר ב-Places API (New).
+// Google מחזיר את שעות השבוע כשבע שורות טקסט מוכנות, כל אחת פותחת בשם
+// היום: "Tuesday: 12:00 – 23:00" / "יום שלישי: 12:00–23:00".
 //
-// שתי מלכודות שהקוד הזה מטפל בהן:
-//  1. "היום" נקבע לפי שעון *ישראל*, לא לפי UTC. בשעה 01:00 בלילה בישראל
-//     ה-UTC עדיין אתמול — והאורח היה מקבל את שעות אתמול.
-//  2. האינדוקס מתחיל בשני, לא בראשון. חישוב "יום בשבוע" רגיל (0=ראשון)
-//     היה מזיז את כל השבוע ביום אחד — ומוסר לאורח שעות של יום אחר לגמרי,
-//     מה שגרוע יותר מלא למסור שעות בכלל.
-export function todayHoursLine(weekdayDescriptions, now = new Date(), timeZone = "Asia/Jerusalem") {
+// 🔴 מלכודת שנתפסה בבדיקה חיה מול Google עם מפתח אמיתי: **סדר הימים
+//    תלוי בשפה**. באנגלית התשובה מתחילה ביום שני (כמו שמתועד), אבל
+//    בעברית (languageCode=he) היא מתחילה ב*יום ראשון*. קוד שמניח סדר
+//    קבוע ומחשב אינדקס מסר לאורח את שעות **היום הלא נכון** — ה-M25
+//    הופיע עם "יום שני" בזמן שהיום שלישי. שעות שגויות גרועות משעות
+//    חסרות: אורח הולך למסעדה סגורה בגלל מידע שנמסר לו בביטחון.
+//
+// לכן אין כאן שום הנחה על סדר: מחשבים את שם היום *בשפת התוצאה* ומחפשים
+// את השורה שמתחילה בו. אם השם לא נמצא (שפה אחרת/פורמט אחר) — מנסים את
+// השפה השנייה, ורק אם גם זה נכשל מוותרים ומחזירים null. אף פעם לא ניחוש.
+//
+// מלכודת שנייה: "היום" נקבע לפי שעון *ישראל*, לא UTC — ב-01:00 בלילה
+// ה-UTC עדיין אתמול, והאורח היה מקבל את שעות אתמול.
+export function todayHoursLine(weekdayDescriptions, now = new Date(), lang = "he", timeZone = "Asia/Jerusalem") {
   if (!Array.isArray(weekdayDescriptions) || weekdayDescriptions.length < 7) return null;
-  const name = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "long" }).format(now);
-  const mondayFirst = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-  const idx = mondayFirst.indexOf(name);
-  if (idx === -1) return null;
-  return weekdayDescriptions[idx] || null;
+
+  const locales = lang === "he" ? ["he-IL", "en-US"] : ["en-US", "he-IL"];
+  for (const locale of locales) {
+    const name = new Intl.DateTimeFormat(locale, { timeZone, weekday: "long" }).format(now);
+    const hit = weekdayDescriptions.find(d => String(d).trim().startsWith(name));
+    if (hit) return hit;
+  }
+  return null;
 }

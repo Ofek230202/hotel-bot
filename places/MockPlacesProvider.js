@@ -19,10 +19,13 @@ const DEMO_HOURS_EN = [
   "Thursday: 12:00 – 23:30", "Friday: 12:00 – 15:00", "Saturday: Closed",
   "Sunday: 12:00 – 23:00",
 ];
+// ⚠️ בעברית Google מחזיר את השבוע החל מ*יום ראשון* (באנגלית — מיום שני).
+// המוק משקף את ההתנהגות האמיתית הזו, אחרת בדיקה שעוברת על המוק מסתירה
+// בדיוק את הבאג שנתפס בשטח.
 const DEMO_HOURS_HE = [
-  "יום שני: 12:00–23:00", "יום שלישי: 12:00–23:00", "יום רביעי: 12:00–23:00",
-  "יום חמישי: 12:00–23:30", "יום שישי: 12:00–15:00", "יום שבת: סגור",
-  "יום ראשון: 12:00–23:00",
+  "יום ראשון: 12:00–23:00", "יום שני: 12:00–23:00", "יום שלישי: 12:00–23:00",
+  "יום רביעי: 12:00–23:00", "יום חמישי: 12:00–23:30", "יום שישי: 12:00–15:00",
+  "יום שבת: סגור",
 ];
 
 // דוגמאות לפי קטגוריה — כל אחת עם היסט קטן ממיקום המלון כדי לייצר מרחק
@@ -73,7 +76,7 @@ export class MockPlacesProvider extends PlacesProvider {
         priceSymbol:    s.price ? "₪".repeat(s.price) : null,
         openNow:        true,
         openingHours:   hours,
-        todayHours:     todayHoursLine(hours),
+        todayHours:     todayHoursLine(hours, new Date(), lang),
         phone:          "03-000-0000",
         website:        null,
         distanceMeters: meters,
