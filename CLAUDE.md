@@ -54,11 +54,12 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
 | `checkin.js` | Check-in / deposit / folio (bill) / check-out logic. Stay dates (`stayCheckIn`/`stayCheckOut`/`nights`) + accepted terms version live on the reservation. Deposit amount + hotel strings come from `config.js`. | Works |
 | `checkin-routes.js` | Deposit / success / cancel / balance HTML pages + payment webhook. **All pages bilingual** — `pageLang()` picks HE/EN per guest (session → Accept-Language → HE), `shellPage()` is the shared HE/EN shell. | Works |
 | `state.js` | **In-memory state** (`sessions`, `staffAlerts`, `stats`). `getSession`, `pushHistory`, `patchSession`, `logAlert`. Comment even says "swap for Redis/DB in production". | Works, NOT persistent, NOT multi-tenant |
-| `config.js` | **Single hotel** config: `DEFAULTS` (in code) + `overrides` (persisted in DB, table `config`) → `hotelConfig = deepMerge(DEFAULTS, overrides)`. Identity, dept numbers/emails, times, WiFi, **detailed services** (spa treatments+prices, restaurant, gym, room service, laundry, pool, bar, breakfast), parking, **`local_area`** (concierge knowledge *outside* the hotel: nearby restaurants, attractions, tours, nightlife, shopping, transport), FAQ, welcome, `deposit_amount`, `terms`. `updateConfig` deep-merges + persists. ⚠️ All service/price/policy/area data is **sample data** — every hotel replaces it. | Works for 1 hotel only |
+| `config.js` | **Single hotel** config: `DEFAULTS` (in code) + `overrides` (persisted in DB, table `config`) → `hotelConfig = deepMerge(DEFAULTS, overrides)`. Identity, dept numbers/emails, times, WiFi, **detailed services** (spa treatments+prices, restaurant, gym, room service, laundry, pool, bar, breakfast), parking, **`local_area`** (concierge knowledge *outside* the hotel: nearby restaurants, attractions, tours, nightlife, shopping, transport), FAQ, welcome, `deposit_amount`, `terms`, **תפריט שירות החדרים** (`services.room_service.menu` — מנות, מחירים ואפשרויות בחירה; בלעדיו הבוט לא יכול לשאול "איזו פסטה ואיזה רוטב"), ו**טבלת הניתוב** (`TAG_DEPARTMENTS` תג→מחלקה + `routingTable`/`printRoutingTable`). `updateConfig` deep-merges + persists. ⚠️ All service/price/policy/area data is **sample data** — every hotel replaces it. | Works for 1 hotel only |
 | `concierge/` | שכבת בקשות הקונסיירז' המבודדת. `ConciergeProvider` — הממשק + `REQUEST_TYPES` (taxi/restaurant/spa/tour/transfer/rental/gift/other); `MockConciergeProvider` — מקצה אסמכתא (`CNG-XXXXXX`) ומחזיר `status:"received"`, **לא מזמין כלום בפועל** — הביצוע הוא של הקונסיירז' האנושי שמקבל את ההתראה. נקודת החלפה אחת: `concierge/index.js`. | Works (mock) |
-| `places/` | שכבת **חיפוש מקומות אמיתיים** מבודדת (Google Places API New — Text Search). `PlacesProvider` — הממשק + `PLACE_CATEGORIES` (מיפוי קטגוריה→`includedType`); `GooglePlacesProvider` — קורא ל-`places:searchText` עם `X-Goog-Api-Key` מ-`process.env.GOOGLE_PLACES_API_KEY` (**המפתח לעולם לא בקוד/לוג/גוף בקשה**), מנרמל שם/כתובת/דירוג/מחיר ומחשב מרחק (haversine); `MockPlacesProvider` — תוצאות דמו בלי רשת/מפתח, פורמט זהה. `util.js` — haversine + פורמט מרחק/מחיר. נקודת החלפה אחת: `places/index.js` (בוחר Google אם יש מפתח, אחרת mock; `PLACES_PROVIDER=mock` כופה mock). ה-AI מקבל את הכלי `search_nearby_places` (tool-use) ומכבד בקשה מדויקת (בשרי/כשר/טבעוני) דרך שדה `query`. **אומת חי מול Google — ראה §7.1.** | Works (verified live) |
+| `places/` | שכבת **חיפוש מקומות אמיתיים** מבודדת (Google Places API New — Text Search). `PlacesProvider` — הממשק + `PLACE_CATEGORIES` (מיפוי קטגוריה→`includedType`); `GooglePlacesProvider` — קורא ל-`places:searchText` עם `X-Goog-Api-Key` מ-`process.env.GOOGLE_PLACES_API_KEY` (**המפתח לעולם לא בקוד/לוג/גוף בקשה**), מנרמל שם/כתובת/דירוג/מחיר ומחשב מרחק (haversine); `MockPlacesProvider` — תוצאות דמו בלי רשת/מפתח, פורמט זהה. מושך גם **שעות פתיחה** (`currentOpeningHours`/`regularOpeningHours` → `openingHours` לשבוע + `todayHours` להיום לפי שעון ישראל), **טלפון**, **אתר** ו**סוג המקום/המטבח**. `util.js` — haversine + פורמט מרחק/מחיר + `todayHoursLine` (השבוע של גוגל מתחיל ב**יום שני**). נקודת החלפה אחת: `places/index.js` (בוחר Google אם יש מפתח, אחרת mock; `PLACES_PROVIDER=mock` כופה mock). ה-AI מקבל את הכלי `search_nearby_places` (tool-use) ומכבד בקשה מדויקת (בשרי/כשר/טבעוני) דרך שדה `query`. **אומת חי מול Google — ראה §7.1.** | Works (verified live) |
 | `i18n.js` | `detectLang` / `detectLangSignal` (Hebrew unicode heuristic), `detectLanguageRequest` + `stripLanguageRequest` (בקשת מעבר שפה), `t` helper. | Works |
-| `validate.js` | אימות קלט האורח: שם (דוחה גם *מילות פקודה* כמו "I want to check in"), מספר הזמנה, תמונת ת"ז, **תאריכי שהייה** (`validateStayDates` — פרסור חופשי HE/EN **מבוסס-תפקיד**: "עד"/"until" לפני תאריך = עזיבה) ו**אישור תנאים** (`validateTermsConfirmation` — דורש נוסח מפורש). + `stripInternalTags` (כולל תג **קטוע**). | Works |
+| `numbers.js` | **מספרים שנכתבו במילים** — `wordsToDigits` ממיר "שתי לילות"→"2 לילות", "עשרה אורחים"→"10 אורחים", "in three days"→"in 3 days", בעברית ובאנגלית (כולל 11–20). התחילית נשמרת ("לשלושה"→"ל3") כדי שמילות התפקיד לא ייעלמו, ו"יום שני" נשאר יום בשבוע. נקודת נרמול אחת שכל הפרסורים (`validateStayDates`, אורחים, ETA) עוברים דרכה. | Works |
+| `validate.js` | אימות קלט האורח: שם (דוחה גם *מילות פקודה* כמו "I want to check in"), מספר הזמנה, תמונת ת"ז, **תאריכי שהייה** (`validateStayDates` — פרסור חופשי HE/EN **מבוסס-תפקיד**: "עד"/"until" לפני תאריך = עזיבה) ו**אישור תנאים** (`validateTermsConfirmation` — דורש נוסח מפורש). קורא **מספרים במילים** דרך `numbers.js`, ועוצר **תאריך שעבר מיד** (גם כשנמסר תאריך יחיד — מחזיר `pastDate`/`today` כדי לומר לאורח *איזה* תאריך). + `stripInternalTags` (כולל תג **קטוע**). | Works |
 | `idverify/` | שכבת אימות זהות מבודדת. `vision.js` — בדיקת Claude vision אמיתית **ומחמירה** (בודקת `shows_document`: סלפי/צילום מסך/תמונה אקראית → `is_id=false`; סף ביטחון 0.7); `MockIdProvider` — אוכף `ACCEPTED_DOC_TYPES = {id_card, passport}` **בקוד** (לא רק ב-prompt), ושומר את המסמך **מוצפן at-rest** (`crypto.js`, AES-256-GCM, קובץ `.enc`) — דמו מקומי, לא plaintext. הסבר הדחייה לאורח **גנרי** (לא נוקב בשם המסמך שנשלח). נקודת החלפה אחת: `idverify/index.js` (שם גם ה-hand-off העתידי ל-PMS). | Works |
 | `e2e.test.mjs` | בדיקות end-to-end לזרימת הצ'ק אין, השפה, התגים והזהות (`npm test`). | Works |
 | `index.html` (50KB) | Standalone dashboard/landing UI. | Present, not wired into the server flow as a tracked file |
@@ -136,7 +137,7 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
   saved on the reservation, escalated to management (low ratings → high priority). Still lacks:
   formal invoice/receipt PDF, minibar check, luggage storage, late-checkout offer.
 - No logging/monitoring, no rate-limiting, no Twilio request validation (security).
-- ~~No tests~~ **PARTIAL** — `e2e.test.mjs` + `places.test.mjs` + `safety.test.mjs` (176 tests, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
+- ~~No tests~~ **PARTIAL** — `e2e.test.mjs` + `places.test.mjs` + `safety.test.mjs` (198 tests, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
   תגים, זהות, **מדיניות סוגי מסמכים, תאריכי שהייה, אישור תנאים, עקביות שפה מקצה לקצה**
   (כולל רינדור עמוד האישור), **המידע המובנה שמגיע ל-AI (system prompt), ומיזוג/שמירת הקונפיג**
   (כולל ריסטארט אמיתי בתהליך נפרד), **וזרימת הצ'ק אאוט המלאה** (הצגת חשבון → אישור → שלושת
@@ -282,7 +283,7 @@ Priority order (to be decided together):
       **stay-date parsing (every HE/EN phrasing + the ambiguous cases) + date confirmation +
       truncated-tag leak + deposit wording** / **check-out state machine (bill preview →
       confirm → all three deposit outcomes + cancel + HE/EN consistency)**
-      (`e2e.test.mjs`/`places.test.mjs`/`safety.test.mjs`, 176 tests, `npm test`). Still missing: the isolated payment provider layer
+      (`e2e.test.mjs`/`places.test.mjs`/`safety.test.mjs`, 198 tests, `npm test`). Still missing: the isolated payment provider layer
       itself.
 
 ### שפה — עקביות מקצה לקצה (ממומש)
@@ -401,6 +402,40 @@ Priority order (to be decided together):
 **שעת הגעה (ETA):** תצוגה בלבד — נשמרת כהערה לצוות ואינה משפיעה על תאריכים, תוקף כרטיס
 או no-show. שעה שעברה אינה חוסמת; שעה לא חוקית (`25:00`) פשוט אינה נקלטת.
 
+### 7.2.2 תיקוני הבדיקה החיה (21.07.2026) ✅
+
+שבע תקלות שנצפו בשיחה אמיתית בוואטסאפ, וכולן תוקנו ברמה הדטרמיניסטית (ולא
+רק ב-prompt) היכן שהיה אפשר:
+
+| מה נצפה | השורש | התיקון |
+|---|---|---|
+| "שתי לילות" לא הובן | הפרסור חיפש ספרות בלבד | `numbers.js` — נרמול מילים→ספרות לפני **כל** פרסור (לילות, אורחים, שעות, "בעוד שלושה ימים"). "יום שני" מוגן במפורש |
+| "בשמונה בערב" נקלט כ-08:00 | `\b` אינו עובד אחרי מילה עברית, ולכן זיהוי "בערב" נכשל בשקט | `DAY_PARTS` בלי `\b` על עברית; ETA מילולי → 20:00 |
+| 10.7 (תאריך שעבר) נקלט כ"תאריך אחד" | בדיקת ה-past רצה רק כששני התאריכים ידועים | תאריך יחיד שעבר נדחה **מיד**, וההודעה נוקבת בתאריך ובתאריך של היום (`pastDate`/`today`) |
+| "פסטה" → "מעביר לשירות החדרים" | לבוט לא היה תפריט, ולכן לא היה מה לשאול | תפריט מלא ב-`config` + פרוטוקול מלצר ב-prompt: מציעים מנות → משלימים רוטב/גודל/תוספות/אלרגיות → קוראים את ההזמנה → `[ROOMSERVICE:...]` מפורט |
+| המלצה בלי שעות פתיחה; "אין לי מידע על שעות" | ה-FieldMask לא ביקש שעות מגוגל | `weekdayDescriptions` + טלפון + אתר ב-FieldMask; `todayHours` לפי שעון ישראל; ה-prompt מחייב למסור שעות ולחפש שוב במקום לומר "אין לי" |
+| הזמנת שולחן בלי תאריך | רשימת הפרטים דרשה "היום והשעה" בלבד | תאריך/יום הוא פרט חובה בכל סוגי ההזמנות, התג נושא תאריך מפורש (22/07 ולא "מחר"), ותאריך/שעה שעברו נתפסים מול השעה הנוכחית. רשת ביטחון: `missingBookingParts` מסמן לצוות "חסר תאריך/שעה" |
+| "חדר שקט" כדוגמה לבקשה מיוחדת | דוגמה מטופשת — כל החדרים שקטים | קומה גבוהה · נוף לים · מיטה זוגית או שתי מיטות · קרבה למעלית |
+
+**ניתוב מחלקות — נבדק מקצה לקצה:** `TAG_DEPARTMENTS` עבר מ-`bot.js` ל-`config.js`
+ליד אנשי הקשר, ולכן יש שרשרת אחת שאפשר להדפיס ולבדוק: תג → מחלקה → וואטסאפ +
+מייל. `printRoutingTable()` רץ בעליית השרת, `GET /api/routing` מחזיר את אותה
+טבלה, ובדיקה אוטומטית מוודאת שכל אחד משמונת התגים מגיע לשני הערוצים של המחלקה
+הנכונה, עם מספר החדר, ובלי שהתג ידלוף לאורח.
+
+| תג | מחלקה | וואטסאפ (דמו) | מייל (דמו) |
+|---|---|---|---|
+| `[HK]` / `[HK_URGENT]` | משק בית | +9721234567 | housekeeping@kempinski-demo.co.il |
+| `[MAINTENANCE]` | אחזקה | +9729876543 | maintenance@kempinski-demo.co.il |
+| `[ROOMSERVICE]` | שירות חדרים | +9724445566 | roomservice@kempinski-demo.co.il |
+| `[CONCIERGE]` | קונסיירז' | +9721112233 | concierge@kempinski-demo.co.il |
+| `[RECEPTION]` | קבלה | +9727654321 | reception@kempinski-demo.co.il |
+| `[SECURITY]` / `[EMERGENCY]` | ביטחון | +9725556677 | security@kempinski-demo.co.il |
+
+⚠️ אלה **מספרים ומיילים לדוגמה**. לפני הדגמה מול לקוח יש להחליף אותם במספרים
+האמיתיים של המלון (`config.js` או `POST /api/config`) — אחרת ההתראות נשלחות
+למספרים שאינם קיימים.
+
 ### 7.3 סימולציית הדגמה — `simulate.mjs` ✅
 
 `node --experimental-test-module-mocks simulate.mjs [תרחיש]` מריץ את **כל** הזרימות
@@ -408,7 +443,9 @@ Priority order (to be decided together):
 שהאורח רואה ואת מה שכל מחלקה מקבלת (וואטסאפ + מייל). רק שני דברים מוחלפים: טוויליו
 (אין שליחה אמיתית) ואימות הזהות (דורש URL מדיה אמיתי של טוויליו).
 
-תרחישים: `checkin`, `concierge`, `emergency`, `checkout`, `english`, `routing`, `followups`.
+תרחישים: `checkin`, `concierge`, `emergency`, `checkout`, `english`, `routing`, `followups`,
+`dates`, `food` (הזמנת פסטה עד הסוף), `booking` (שולחן — כולל שאלת תאריך), `words`
+(מספרים במילים).
 בלי ארגומנט — הכול. משמש לבדיקה לפני הדגמה מול לקוח, כשאי אפשר לבדוק בוואטסאפ.
 
 ### 7.4 מולטי-טננט — נקודת ההפרדה בין מלונות

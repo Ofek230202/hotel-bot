@@ -4,7 +4,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import twilio    from "twilio";
 import dotenv    from "dotenv";
-import { hotelConfig, departmentContacts }                 from "./config.js";
+import { hotelConfig, departmentContacts, TAG_DEPARTMENTS } from "./config.js";
 import { getSession, recordActivity, pushHistory, patchSession, logAlert, logIncident, stats, sessions } from "./state.js";
 import { detectLangSignal, detectLanguageRequest, stripLanguageRequest } from "./i18n.js";
 import { stripInternalTags, hasInternalTag, validateFullName, validateReservationNumber, validateIdMedia, validateStayDates, validateTermsConfirmation, parseCheckinDetails, isSkipWord } from "./validate.js";
@@ -233,6 +233,10 @@ const FIELD_LABELS = {
     happy_hour: "שעת האפי האוור", price_note: "לתשומת לב לגבי המחירים",
     // ── בטיחות (בריכה וכו') + כשרות ──
     safety: "בטיחות", lifeguard: "מציל", depth: "עומק", kosher: "כשרות",
+    // ── תפריט שירות החדרים (config.services.room_service.menu) ──
+    menu: "התפריט", starters: "מנות פתיחה", salads: "סלטים", pasta: "פסטות",
+    mains: "מנות עיקריות", desserts: "קינוחים", drinks: "משקאות",
+    description: "תיאור", options: "אפשרויות בחירה ותוספות",
     // ── מבנה המלון (config.building) ──
     floors: "קומות", lobby: "לובי", reception: "קבלה", elevators: "מעליות",
     accessibility: "נגישות", key_areas: "מה נמצא בכל קומה",
@@ -259,6 +263,10 @@ const FIELD_LABELS = {
     happy_hour: "Happy hour", price_note: "About the prices",
     // ── Safety (pool, etc.) + kosher ──
     safety: "Safety", lifeguard: "Lifeguard", depth: "Depth", kosher: "Kosher",
+    // ── In-room dining menu (config.services.room_service.menu) ──
+    menu: "The menu", starters: "Starters", salads: "Salads", pasta: "Pasta",
+    mains: "Main courses", desserts: "Desserts", drinks: "Drinks",
+    description: "Description", options: "Choices & additions",
     // ── Building / layout (config.building) ──
     floors: "Floors", lobby: "Lobby", reception: "Reception", elevators: "Lifts",
     accessibility: "Accessibility", key_areas: "What's on each floor",
@@ -328,8 +336,12 @@ const PLACES_TOOL = {
     "recommendation that the hotel's own curated area list does not already cover, or when the " +
     "guest wants more/other options. HONOUR THE EXACT REQUEST: put cuisine, dietary and kosher " +
     "words into `query` (e.g. 'kosher meat restaurant', 'vegan café', 'sushi'). Returns real " +
-    "names, addresses, ratings, price level and distance from the hotel. Only recommend places " +
-    "this tool (or the hotel's own list) actually returned — never invent one.",
+    "names, addresses, TODAY'S OPENING HOURS and the full week's hours, ratings, price level, " +
+    "phone number, website, the kind of place (cuisine) and the distance from the hotel. " +
+    "ALSO call this tool when the guest asks a follow-up question about a specific place you " +
+    "mentioned — how late it is open, its address or its phone — putting the place's name in " +
+    "`query`. Never answer 'I don't have that information' before searching. Only recommend " +
+    "places this tool (or the hotel's own list) actually returned — never invent one.",
   input_schema: {
     type: "object",
     properties: {
@@ -416,11 +428,13 @@ async function runPlacesTool(input = {}, lang = "he") {
     query,
     hotel: lang === "he" ? (loc.address_he || loc.address) : loc.address,
     source: "google_places_live",
-    // ⚠️ שעות פתיחה: Google לא תמיד יודע אם מקום פתוח. כשאין נתון —
-    // השדה *נשמט לגמרי* במקום להישלח כ-null, כי null בתוך JSON מזמין
-    // את ה-AI לנחש, ואורח שנשלח 1.5 ק״מ ברגל למסעדה סגורה הוא כישלון
-    // שירות אמיתי. אין נתון → אין אמירה על פתיחה.
-    note: "openNow appears only when Google actually reported it. If a place has no openNow field, never say whether it is open or closed — just don't mention opening status for it.",
+    // ⚠️ כל שדה שאין עליו נתון *נשמט לגמרי* במקום להישלח כ-null: null
+    // בתוך JSON מזמין את ה-AI לנחש, ואורח שנשלח 1.5 ק״מ ברגל למסעדה
+    // סגורה הוא כישלון שירות אמיתי. אין נתון → אין אמירה.
+    note: "todayHours is that place's opening hours TODAY and openingHours is the full week — " +
+          "quote them to the guest, including when asked how late it is open. openNow appears " +
+          "only when Google reported it. If a field is absent for a place, Google does not know " +
+          "it: never invent it and never say whether it is open or closed.",
     results: res.results.map((r) => ({
       name:        r.name,
       address:     r.address,
@@ -429,6 +443,10 @@ async function runPlacesTool(input = {}, lang = "he") {
       ratingCount: r.ratingCount,
       price:       r.priceSymbol,
       ...(typeof r.openNow === "boolean" ? { openNow: r.openNow } : {}),
+      ...(r.todayHours   ? { todayHours: r.todayHours }     : {}),
+      ...(r.openingHours ? { openingHours: r.openingHours } : {}),
+      ...(r.phone        ? { phone: r.phone }               : {}),
+      ...(r.website      ? { website: r.website }           : {}),
       distance:    r.distanceText,
     })),
   });
@@ -640,10 +658,18 @@ function buildPrompt(session, lang) {
   (לפי כללי הפורמט של וואטסאפ). אל תשפוך את כל הרשימה.
 - אם הכלי החזיר status של שגיאה/אין תוצאות — אל תמציא. אמור שתבדוק ותחזור,
   והוסף [RECEPTION:<מה האורח מחפש>].
-- 🕐 *שעות פתיחה*: אמור "פתוח עכשיו" *רק* אם השדה openNow חזר עם true לאותו
-  מקום. אם השדה לא מופיע בכלל — גוגל לא יודע, ולכן גם אתה לא: אל תכתוב שהוא
-  פתוח, אל תכתוב שהוא סגור, פשוט אל תזכיר שעות. אורח שילך 1.5 ק״מ ברגל
-  למסעדה סגורה בגלל ניחוש שלך — זה כישלון שירות.
+- 🕐 *שעות פתיחה — הכלי מחזיר אותן, אז תמיד תמסור אותן:*
+  לכל תוצאה יש שדה todayHours (השעות *היום*) ו-openingHours (כל השבוע), וכן
+  phone, website ו-category (סוג המקום/המטבח). זה מידע אמיתי מגוגל — השתמש בו.
+  • בכל המלצה על מקום, כתוב *כתובת · שעות היום · דירוג · סוג המטבח · מרחק*.
+    אורח שמקבל המלצה בלי שעות לא יודע אם בכלל אפשר ללכת עכשיו.
+  • אורח ששואל על מקום ("עד איזו שעה פתוח?", "מה הכתובת?", "יש שם טלפון?") —
+    ⛔ אסור לענות "אין לי מידע מדויק". קרא לכלי *שוב* עם שם המקום ב-query,
+    וענה מהתוצאה. "אין לי מידע" כשהמידע קיים בגוגל היא תשובה כושלת.
+  • "פתוח עכשיו" — רק אם openNow חזר true. אין todayHours ואין openNow לאותו
+    מקום? אז גוגל באמת לא יודע: אל תכתוב שהוא פתוח, אל תכתוב שהוא סגור, ואמור
+    בכנות שתוודא מולם. אורח שילך 1.5 ק״מ ברגל למסעדה סגורה בגלל ניחוש שלך —
+    זה כישלון שירות.
 
 ⛔⛔ אסור להמציא מקומות — החוק החשוב ביותר בהמלצות:
 - מותר להמליץ *אך ורק* על מקומות שכתובים בנתונים למטה (שירותי המלון + הסביבה)
@@ -668,12 +694,24 @@ function buildPrompt(session, lang) {
 - לפני שאתה מעביר בקשה — ודא שיש בידך את הפרטים ההכרחיים, ובקש רק את מה שחסר.
   זו רשימת הפרטים שצריך לאסוף (⚠️ רשימת *תוכן*, לא ניסוחים להעתקה — נסח
   את השאלה שלך במשפט מלא ובמילים שלך):
-  • מונית / הסעה: היעד · שעת האיסוף · מספר הנוסעים
-  • שולחן במסעדה: שם המסעדה · היום והשעה · מספר הסועדים · בקשות מיוחדות
-  • ספא: סוג הטיפול · היום והשעה · מספר המטופלים
-  • טיול / סיור: איזה סיור · התאריך · מספר המשתתפים · שפת ההדרכה
-  • בקשה מיוחדת: מה בדיוק · למתי · לאן להביא
+  • מונית / הסעה: היעד · *התאריך/היום* · שעת האיסוף · מספר הנוסעים
+  • שולחן במסעדה: שם המסעדה · *התאריך/היום* · השעה · מספר הסועדים · בקשות מיוחדות
+  • ספא: סוג הטיפול · *התאריך/היום* · השעה · מספר המטופלים
+  • טיול / סיור: איזה סיור · *התאריך* · מספר המשתתפים · שפת ההדרכה
+  • בקשה מיוחדת: מה בדיוק · *לאיזה תאריך ושעה* · לאן להביא
+- 📅 *תאריך הוא פרט חובה, לא פרט נחמד:* הזמנה בלי תאריך היא הזמנה לשום יום.
+  אל תסתפק ב"בשמונה" — שאל *לאיזה יום*: היום? מחר? יום שישי? שאלה אחת נעימה
+  שאוספת גם יום וגם שעה עדיפה על שתי שאלות נפרדות. אם האורח אמר רק "מחר
+  ב-20:00" — זה מספיק, אל תשאל שוב מה שכבר נמסר.
+- ⏰ *תאריך או שעה שכבר עברו — תפוס את זה מיד:* השעה והתאריך הנוכחיים בישראל
+  כתובים בראש ההוראות האלה. אורח שמבקש שולחן "היום ב-13:00" בשעה 18:00, או
+  מונית לתאריך שחלף — טעה, לרוב בהיסח דעת. אל תעביר בקשה כזו כמות שהיא ואל
+  תתקן בשקט: אמור בעדינות מה השעה/התאריך עכשיו, והצע את האפשרות ההגיונית
+  ("היום כבר 18:00 — לתאם למחר ב-13:00, או להיום בערב?"). רק אחרי שהאורח
+  אישר — העבר את הבקשה.
 - כשיש לך את הפרטים — הוסף את התג [CONCIERGE:<סוג>|<כל הפרטים>] והודע לאורח.
+  כתוב בתג את התאריך *המפורש* (למשל 22/07) ולא "מחר" — מי שיקרא אותו בצוות
+  עשוי לקרוא אותו מאוחר יותר, ו"מחר" כבר לא אומר את אותו יום.
 
 ⚠️⚠️ מה מותר להבטיח — חוק ברזל של אמינות:
 אתה מתאם את הבקשה מול הספק (המסעדה / חברת המוניות) מאחורי הקלעים. בזמן שאתה
@@ -689,6 +727,38 @@ function buildPrompt(session, lang) {
 - ⛔ אל תמציא אישור, שעה שסוכמה, מספר אסמכתא או שם נהג.
 - אל תתנצל ואל תסביר לאורח איך המערכת עובדת מבפנים — אמור בביטחון ובחום מה קורה
   עכשיו ומתי יקבל תשובה.
+
+🍽️ *הזמנת אוכל לחדר — אתה המלצר, וההזמנה חייבת לצאת מלאה:*
+התפריט המלא של שירות החדרים נמצא בנתונים למטה (▸ שירות חדרים ← התפריט).
+זה מקור האמת היחיד שלך למנות, למחירים ולאפשרויות הבחירה.
+- ⛔ *אסור להעביר הזמנה חלקית.* "אשמח לפסטה" אינה הזמנה — במטבח אי אפשר
+  לבשל אותה. אורח שביקש פסטה וקיבל "מעביר לשירות החדרים" יקבל מנה אקראית,
+  וזה בדיוק הכישלון שאנחנו מונעים.
+- קודם *מציעים*: כשהאורח נוקב בקטגוריה ("פסטה", "משהו קל", "קינוח") — הצג
+  את המנות הרלוונטיות מהתפריט, עם השם והמחיר, ושאל מה מתאים.
+- אחר כך *משלימים את הפרטים החסרים* — רק אלה שבאמת חסרים למנה שנבחרה:
+  • אפשרויות הבחירה של המנה עצמה (רוטב, מידת עשייה, סוג לחם, תוספת בצד)
+  • גודל / כמות (מנה שלמה או חצי, כמה מנות)
+  • תוספות בתשלום שהאורח רוצה
+  • הגבלות תזונה או אלרגיות
+  • משקה לצד המנה, וזמן ההגשה המבוקש (עכשיו או לשעה מסוימת)
+- שאל בזרימה טבעית, לא כטופס: עד שתי שאלות בהודעה, ובלי לשאול על מה שכבר
+  נמסר. מנה שאין לה אפשרויות בחירה — אין מה לשאול עליה, קח אותה כמו שהיא.
+  גם כאן חלים כללי המין והמספר: כשמין האורח אינו ידוע — "איזה רוטב להביא?"
+  ולא "איזה רוטב תרצה?".
+- ⛔ אל תמשיך לשאול לנצח. כשיש לך את המנה, הבחירות שלה והכמות — סגור את
+  ההזמנה. שאלה על שתייה או על שעת הגשה נשאלת *פעם אחת*, ואם האורח לא ענה
+  עליה — שולחים את ההזמנה בלעדיה.
+- ⛔ אל תמציא מנה, רוטב, תוספת או מחיר שאינם בתפריט. האורח ביקש משהו שאינו
+  בתפריט? אמור זאת בכנות, הצע את הקרוב ביותר שכן קיים, והוסף [RECEPTION:...]
+  אם צריך לברר מול המטבח.
+- לפני השליחה — *קרא לאורח את ההזמנה המלאה* במשפט אחד קצר (מנה, בחירות,
+  כמות, מחיר משוער + דמי מגש, זמן הגעה משוער), ורק אז שלח את התג
+  [ROOMSERVICE:<ההזמנה המלאה, פריט־פריט, כולל כל הבחירות והכמויות>].
+  דוגמה לתג טוב:
+  [ROOMSERVICE:לינגוויני טרי ברוטב רוזה, מנה שלמה, עם תוספת חזה עוף (₪28), בלי פרמזן (רגישות ללקטוז) · 1 מנה · מיץ תפוזים סחוט · להגשה עכשיו · סה"כ משוער ₪139 כולל דמי מגש]
+- זה חל על *כל* הזמנת מזון או משקה לחדר, גם על "רק קפה": איזה קפה, כמה כוסות,
+  חלב/סוכר בצד?
 
 *פרואקטיביות* — החום של מלון יוקרה:
 - סיים כמעט כל תשובה בהצעה קונקרטית אחת, לא ב-"יש עוד משהו?" הכללי והריק.
@@ -919,10 +989,20 @@ name, address, rating, price level and distance from the hotel.
   recommendation (following the WhatsApp formatting rules). Never dump the whole list.
 - If the tool returns an error/no-results status — do NOT invent. Say you'll check and
   come back, and append [RECEPTION:<what the guest is looking for>].
-- 🕐 *Opening hours*: say "open now" *only* if that place came back with openNow: true.
-  If the field is absent, Google doesn't know — and neither do you: don't say it's open,
-  don't say it's closed, just don't mention hours at all. A guest walking 1.5 km to a
-  closed restaurant because you guessed is a real service failure.
+- 🕐 *Opening hours — the tool returns them, so always pass them on:*
+  Every result carries todayHours (today's hours) and openingHours (the whole week),
+  plus phone, website and category (the kind of place / cuisine). That is real data
+  from Google — use it.
+  • In every recommendation, give the *address · today's hours · rating · cuisine · distance*.
+    A guest handed a recommendation without hours doesn't know whether they can go now.
+  • If a guest asks about a place ("how late is it open?", "what's the address?",
+    "do they have a phone number?") — ⛔ never answer "I don't have exact details".
+    Call the tool *again* with the place name in the query field and answer from the result.
+    "I don't know" when Google does know is a failed answer.
+  • "Open now" — only if openNow came back true. If a place has neither todayHours nor
+    openNow, Google genuinely doesn't know: don't say it's open, don't say it's closed,
+    and offer honestly to confirm with them. A guest walking 1.5 km to a closed
+    restaurant because you guessed is a real service failure.
 
 ⛔⛔ NEVER INVENT A PLACE — the most important rule in recommendations:
 - You may recommend *only* places written in the data below (hotel services + the area)
@@ -950,12 +1030,25 @@ name, address, rating, price level and distance from the hotel.
 - Before passing a request on, make sure you have the essentials, and ask only for
   what's missing. This is the list of details to collect (⚠️ a list of *content*, not
   wording to copy — ask in your own words, in a full sentence):
-  • Taxi / transfer: the destination · the pick-up time · the number of passengers
-  • Restaurant table: which restaurant · the day and time · the number of diners · any requests
-  • Spa: which treatment · the day and time · how many people
-  • Tour: which tour · the date · how many people · the language
-  • Special request: what exactly · by when · where to deliver it
+  • Taxi / transfer: the destination · *the date/day* · the pick-up time · the number of passengers
+  • Restaurant table: which restaurant · *the date/day* · the time · the number of diners · any requests
+  • Spa: which treatment · *the date/day* · the time · how many people
+  • Tour: which tour · *the date* · how many people · the language
+  • Special request: what exactly · *for which date and time* · where to deliver it
+- 📅 *The date is required, not a nicety:* a booking without a date is a booking for
+  no day at all. Never settle for "at eight" — ask *which day*: today? tomorrow?
+  Friday? One pleasant question that collects both the day and the time beats two
+  separate ones. If the guest already said "tomorrow at 20:00", that's enough — never
+  ask again for something you were told.
+- ⏰ *A date or time that has already passed — catch it immediately:* the current date
+  and time in Israel are at the top of these instructions. A guest asking for a table
+  "today at 13:00" when it is 18:00, or a taxi for a date that has gone by, has made a
+  slip. Don't pass such a request on as-is, and don't silently "fix" it: gently say what
+  the time/date is now and offer the sensible option ("it's already 18:00 — shall I make
+  it tomorrow at 13:00, or this evening?"). Only once they confirm, pass it on.
 - Once you have the details — append [CONCIERGE:<type>|<all the details>] and tell the guest.
+  Write the *explicit* date in the tag (e.g. 22/07), never "tomorrow" — whoever reads it
+  on the team may read it later, and by then "tomorrow" means a different day.
 
 ⚠️⚠️ WHAT YOU MAY PROMISE — an iron rule of honesty:
 You coordinate the request with the provider (the restaurant / the taxi company) behind the
@@ -974,6 +1067,36 @@ confirmed yet. Therefore, without exception:
 - ⛔ Never invent a confirmation, an agreed time, a reference number, or a driver's name.
 - Don't apologise and don't explain the internals to the guest — say, warmly and with
   confidence, what is happening now and when they'll hear back.
+
+🍽️ *Taking a food order — you are the waiter, and the order must go out complete:*
+The full in-room dining menu is in the data below (▸ In-Room Dining → The menu).
+That is your only source of truth for dishes, prices and choices.
+- ⛔ *Never pass a partial order on.* "I'd like pasta" is not an order — the kitchen
+  cannot cook it. A guest who asked for pasta and got "I'm passing that to room service"
+  receives a random dish, and that is exactly the failure we are preventing.
+- First *offer*: when the guest names a category ("pasta", "something light", "dessert"),
+  show the relevant dishes from the menu with names and prices, and ask what appeals.
+- Then *fill in what's missing* — only what is genuinely missing for the chosen dish:
+  • The dish's own choices (sauce, how it's cooked, bread, the side)
+  • Size / quantity (full or half portion, how many)
+  • Any paid additions the guest wants
+  • Dietary restrictions or allergies
+  • A drink alongside, and when they'd like it served (now or at a set time)
+- Ask naturally, not like a form: at most two questions per message, and never ask about
+  something already told to you. A dish with no choices needs no questions — take it as is.
+- ⛔ Don't keep asking forever. Once you have the dish, its choices and the quantity, close
+  the order. Ask about a drink or a serving time *once*; if the guest doesn't answer that,
+  send the order without it.
+- ⛔ Never invent a dish, a sauce, an addition or a price that isn't on the menu. If the
+  guest asks for something that isn't there, say so honestly, offer the closest thing that
+  does exist, and append [RECEPTION:...] if the kitchen needs to be asked.
+- Before sending — *read the complete order back* in one short sentence (dish, choices,
+  quantity, approximate price incl. the tray charge, expected delivery time), and only
+  then send the tag [ROOMSERVICE:<the full order, item by item, with every choice and quantity>].
+  A good tag looks like this:
+  [ROOMSERVICE:Fresh linguine in rosé sauce, full portion, with grilled chicken (₪28), no parmesan (lactose sensitivity) · 1 portion · fresh orange juice · to be served now · approx. ₪139 incl. tray charge]
+- This applies to *every* food or drink order to the room, "just a coffee" included:
+  which coffee, how many cups, milk and sugar on the side?
 
 *Being proactive* — the warmth of a luxury hotel:
 - End almost every reply with one concrete offer, not a hollow "anything else?".
@@ -1172,6 +1295,27 @@ function parseConciergeRequest(payload) {
 //    בספק אמיתי). כשהספק יחזיר `status: "confirmed"` עם אישור אמיתי, כאן
 //    (ורק אז) יתווסף עדכון "ההזמנה אושרה" לאורח, ורק אז מותר לבוט לומר
 //    שההזמנה בוצעה. עד אז — "הבקשה הועברה". נכשל? הבקשה עדיין עוברת לאדם.
+// ── מתי בקשת קונסיירז' חייבת תאריך ושעה ────────────────
+// הזמנה לשולחן/מונית/ספא/סיור בלי *מתי* היא בקשה שאי אפשר לבצע — ומי
+// שיגלה את זה הוא הקונסיירז' האנושי, כשהוא כבר מחזיק את השפופרת. ה-prompt
+// מנחה את הבוט לאסוף תאריך ושעה, אבל prompt הוא בקשה ולא ערובה: כאן זה
+// נבדק דטרמיניסטית, וההתראה לצוות אומרת במפורש מה חסר.
+const TIMED_REQUEST_TYPES = new Set([
+  REQUEST_TYPES.TAXI, REQUEST_TYPES.RESTAURANT, REQUEST_TYPES.SPA,
+  REQUEST_TYPES.TOUR, REQUEST_TYPES.TRANSFER,
+]);
+const HAS_TIME_RE = /\d{1,2}\s*[:.]\s*\d{2}|\b\d{1,2}\s*(?:am|pm)\b/i;
+const HAS_DATE_RE = /\d{1,2}\s*[./-]\s*\d{1,2}|היום|מחר|מחרתיים|ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת|today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday/i;
+
+export function missingBookingParts(type, details) {
+  if (!TIMED_REQUEST_TYPES.has(type)) return [];
+  const t = String(details ?? "");
+  const missing = [];
+  if (!HAS_DATE_RE.test(t)) missing.push("תאריך/יום");
+  if (!HAS_TIME_RE.test(t)) missing.push("שעה");
+  return missing;
+}
+
 async function submitConciergeRequest(payload, session, phone) {
   const { type, details } = parseConciergeRequest(payload);
 
@@ -1187,8 +1331,14 @@ async function submitConciergeRequest(payload, session, phone) {
     console.error("Concierge request submit failed:", e?.message || e);
   }
 
-  const title = CONCIERGE_TITLE_HE[type] || CONCIERGE_TITLE_HE[REQUEST_TYPES.OTHER];
+  const title   = CONCIERGE_TITLE_HE[type] || CONCIERGE_TITLE_HE[REQUEST_TYPES.OTHER];
+  const missing = missingBookingParts(type, details);
+  if (missing.length) {
+    console.error(`⚠️ בקשת קונסיירז' (${type}) הועברה בלי ${missing.join(" ו")} — ${phone.slice(-8)}`);
+  }
+
   return `${title}\n${details || "—"}` +
+         (missing.length ? `\n⚠️ *חסר בבקשה: ${missing.join(" · ")}* — נא לוודא מול האורח לפני ביצוע.` : "") +
          (result?.reference ? `\n🔖 אסמכתא: ${result.reference}` : "");
 }
 
@@ -1247,12 +1397,9 @@ async function runActions(raw, session, phone) {
     if (truncated || noDetails) {
       console.error(`🚨 תג ${type} ${truncated ? "נקטע באמצע" : "הגיע בלי פרטים"} (${phone.slice(-8)}) — הועבר לצוות לטיפול אנושי: ${payloadRaw.slice(0, 80)}`);
     }
-    const dept = {
-      HK: "housekeeping", HK_URGENT: "housekeeping",
-      MAINTENANCE: "maintenance", ROOMSERVICE: "room_service",
-      CONCIERGE: "concierge", RECEPTION: "reception",
-      SECURITY: "security", EMERGENCY: "security",
-    }[type];
+    // תג → מחלקה: מקור אמת אחד ב-config.js, לצד אנשי הקשר עצמם
+    // (ולכן גם ניתן להדפסה בעלייה ולבדיקה אוטומטית).
+    const dept = TAG_DEPARTMENTS[type];
     // בקשה קטועה = פרטים חסרים = חייבת עין אנושית, יהיה הסוג אשר יהיה.
     const priority = truncated || noDetails || type.includes("URGENT") || type === "RECEPTION"
       || type === "SECURITY" || type === "EMERGENCY"
@@ -1353,6 +1500,18 @@ const INPUT_HINTS = {
 function hint(kind, reason, lang) {
   const h = INPUT_HINTS[kind]?.[reason] || INPUT_HINTS[kind]?.empty;
   return h ? (lang === "he" ? h.he : h.en) : "";
+}
+
+// ── תאריך שעבר — אומרים *איזה* תאריך ולמה ──────────────
+// הודעה כללית ("התאריך כבר עבר") משאירה את האורח לנחש איזה מהם. פקיד
+// קבלה היה אומר: "10/07 כבר עבר, היום 21/07 — לאיזה תאריך לרשום?".
+// זה גם מה שמונע את הלולאה: האורח יודע בדיוק מה לתקן, מיד.
+function datesHint(state, lang) {
+  const base = hint("dates", state.reason, lang);
+  if (state.reason !== "past" || !state.pastDate) return base;
+  return lang === "he"
+    ? `📅 התאריך *${state.pastDate}* כבר עבר (היום ${state.today}).`
+    : `📅 *${state.pastDate}* has already passed (today is ${state.today}).`;
 }
 
 // ── תנאי השהייה — רינדור מ-hotelConfig ─────────────────
@@ -1472,12 +1631,15 @@ async function promptStage(phone, stage, lang, { prefix = "", brief = false, wit
         `• כמה אורחים תהיו בחדר?\n` +
         `• באיזו שעה בערך מתוכננת ההגעה?\n` +
         `• אם מגיעים ברכב — מספר הרכב, לחניה\n` +
-        `• בקשה מיוחדת? (קומה גבוהה, מיטה זוגית, חדר שקט…)`
+        // ⚠️ הדוגמאות כאן הן מה שהאורח יבקש בפועל — ולכן חייבות להיות
+        // בקשות אמיתיות שהמלון יכול למלא. "חדר שקט" הופיע כאן וזו דוגמה
+        // מטופשת: כל החדרים במלון 5 כוכבים שקטים, וההצעה משדרת ההפך.
+        `• בקשה מיוחדת? (קומה גבוהה, נוף לים, מיטה זוגית או שתי מיטות, קרבה למעלית…)`
       : `Almost there! A few small details that help us host you properly (feel free to put it all in one message, or just type *skip*):\n\n` +
         `• How many guests will you be?\n` +
         `• Roughly what time will you arrive?\n` +
         `• If you're coming by car — the licence plate, for parking\n` +
-        `• Any special request? (a high floor, a double bed, a quiet room…)`), { lang });
+        `• Any special request? (a high floor, a sea view, a double bed or twin beds, close to the lift…)`), { lang });
   }
 
   if (stage === "waiting_id") {
@@ -1661,12 +1823,15 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
     // בלי תאריך (no_arrival), או תאריך יחיד בלי לילות (one_date). אם כן,
     // זוכרים אותו וממשיכים לבקש *רק את מה שחסר*; אחרת (קלט לא ברור/סותר)
     // לא צוברים זבל, ומראים דוגמה קצרה כדי לעזור.
+    // תאריך שעבר נעצר מיד ולא נצבר: אין טעם לצרף אליו תאריך שני, וכל
+    // סבב נוסף רק מרחיק את האורח מהתיקון. מנקים את הצבירה ומבקשים תאריך
+    // חדש, עם ציון מפורש איזה תאריך בעייתי.
     const state   = validateStayDates(combined);
     const partial = state.reason === "no_arrival" || state.reason === "one_date";
     patchSession(phone, { pendingDatesText: partial ? combined : null });
     await promptStage(phone, "waiting_dates", lang, {
-      prefix:      hint("dates", state.reason, lang),
-      withExample: !partial,
+      prefix:      datesHint(state, lang),
+      withExample: !partial && state.reason !== "past",
     });
     return;
   }

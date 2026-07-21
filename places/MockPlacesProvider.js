@@ -10,7 +10,20 @@
 //     כמו שאר שכבות המוק בפרויקט. הבחירה נעשית במקום אחד: places/index.js.
 // ════════════════════════════════════════════════════════
 import { PlacesProvider } from "./PlacesProvider.js";
-import { haversineMeters, distanceText } from "./util.js";
+import { haversineMeters, distanceText, todayHoursLine } from "./util.js";
+
+// שעות שבוע לדוגמה — בדיוק בפורמט של Google (ראשונה = יום שני), כדי
+// שהמוק והספק האמיתי ייראו זהים לבוט, כולל שורת "השעות היום".
+const DEMO_HOURS_EN = [
+  "Monday: 12:00 – 23:00", "Tuesday: 12:00 – 23:00", "Wednesday: 12:00 – 23:00",
+  "Thursday: 12:00 – 23:30", "Friday: 12:00 – 15:00", "Saturday: Closed",
+  "Sunday: 12:00 – 23:00",
+];
+const DEMO_HOURS_HE = [
+  "יום שני: 12:00–23:00", "יום שלישי: 12:00–23:00", "יום רביעי: 12:00–23:00",
+  "יום חמישי: 12:00–23:30", "יום שישי: 12:00–15:00", "יום שבת: סגור",
+  "יום ראשון: 12:00–23:00",
+];
 
 // דוגמאות לפי קטגוריה — כל אחת עם היסט קטן ממיקום המלון כדי לייצר מרחק
 // אמין. keyword משוקף לשם (למשל "kosher") כדי שבדיקות יראו שהסינון עבר.
@@ -40,8 +53,9 @@ export class MockPlacesProvider extends PlacesProvider {
       return { ok: false, results: [], reason: "no_location", provider: "mock" };
     }
 
-    const base = SAMPLES[category] || SAMPLES.default;
-    const tag  = (keyword || query || "").trim();
+    const base  = SAMPLES[category] || SAMPLES.default;
+    const tag   = (keyword || query || "").trim();
+    const hours = lang === "he" ? DEMO_HOURS_HE : DEMO_HOURS_EN;
 
     const results = base.slice(0, limit).map((s) => {
       const loc    = { lat: location.lat + s.d[0], lng: location.lng + s.d[1] };
@@ -58,6 +72,10 @@ export class MockPlacesProvider extends PlacesProvider {
         priceLevel:     s.price,
         priceSymbol:    s.price ? "₪".repeat(s.price) : null,
         openNow:        true,
+        openingHours:   hours,
+        todayHours:     todayHoursLine(hours),
+        phone:          "03-000-0000",
+        website:        null,
         distanceMeters: meters,
         distanceText:   distanceText(meters, lang),
         mapsUri:        null,

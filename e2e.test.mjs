@@ -82,6 +82,16 @@ mock.module("./places/index.js", {
   },
 });
 
+// ── שכבת המייל — לוכדים כל מייל שנשלח למחלקה ──────────
+// כל התראה למחלקה אמורה לצאת בשני ערוצים (וואטסאפ + מייל). בלי לכידת
+// המייל אפשר לבדוק רק חצי מהניתוב.
+const emails = [];
+mock.module("./email/index.js", {
+  exports: {
+    email: { send: async (m) => { emails.push(m); return { success: true, messageId: "mock" }; } },
+  },
+});
+
 // אימות הזהות — נשלט מהבדיקה (לא קוראים ל-AI/רשת אמיתיים).
 let idResult = { success: true, status: "verified", documentId: "d1", documentType: "id_card", storedPath: "/demo/id.jpg", reasonHe: "", reasonEn: "" };
 mock.module("./idverify/index.js", {
@@ -110,7 +120,7 @@ function freshGuest() { return `whatsapp:+9725000000${String(++phoneSeq).padStar
 // שלח התראות רפאים לצוות באמצע בדיקות אחרות.
 beforeEach(() => {
   sent.length = 0; aiCalls = 0; aiParams = null; aiReply = "שלום!";
-  aiScript = null;
+  aiScript = null; emails.length = 0;
   placesCalls = [];
   placesResult = { ok: true, provider: "mock", results: [] };
 });
@@ -2499,6 +2509,348 @@ test("תאריכים: הזמנה לא הגיונית לעולם לא נרשמת"
   const s = getSession(p);
   assert.equal(s.checkinStage, "waiting_dates", "נשארים בשלב התאריכים עד שיש קלט תקין");
   assert.ok(!s.pendingStay, "לא נשמרה שום שהייה לא הגיונית");
+});
+
+// ════════════════════════════════════════════════════════
+//  מספרים שנכתבו במילים — "שתי לילות" = 2 לילות
+//  ----------------------------------------------------------
+//  מהבדיקה החיה: אורח כתב "שתי לילות" והבוט לא הבין את מספר הלילות.
+//  אורח לא מקליד ספרות; הוא כותב כמו שהוא מדבר.
+// ════════════════════════════════════════════════════════
+test("מספרים במילים: לילות בעברית ובאנגלית מובנים בדיוק כמו ספרות", async () => {
+  const { validateStayDates } = await import("./validate.js");
+  const now = new Date("2026-07-15T09:00:00Z");
+
+  const cases = [
+    ["שתי לילות מ-20/7",          "2026-07-20", "2026-07-22", 2],
+    ["שני לילות מ-20/7",          "2026-07-20", "2026-07-22", 2],
+    ["שלושה לילות מ-20/7",        "2026-07-20", "2026-07-23", 3],
+    ["20/7, ארבעה לילות",         "2026-07-20", "2026-07-24", 4],
+    ["חמישה לילות עד 25/7",       "2026-07-20", "2026-07-25", 5],
+    ["עשרה לילות מ-20/7",         "2026-07-20", "2026-07-30", 10],
+    ["לילה אחד מ-20/7",           "2026-07-20", "2026-07-21", 1],
+    ["two nights from 20/7",      "2026-07-20", "2026-07-22", 2],
+    ["three nights from 20/07",   "2026-07-20", "2026-07-23", 3],
+    ["seven nights until 25/7",   "2026-07-18", "2026-07-25", 7],
+    ["בעוד שלושה ימים, 2 לילות",  "2026-07-18", "2026-07-20", 2],
+    ["in three days, two nights", "2026-07-18", "2026-07-20", 2],
+  ];
+
+  for (const [text, checkIn, checkOut, nights] of cases) {
+    const v = validateStayDates(text, now);
+    assert.ok(v.ok, `"${text}" נדחה: ${v.reason}`);
+    assert.deepEqual(
+      { checkIn: v.value.checkIn, checkOut: v.value.checkOut, nights: v.value.nights },
+      { checkIn, checkOut, nights },
+      `"${text}" הובן לא נכון`,
+    );
+  }
+});
+
+test("מספרים במילים: 'יום שני' נשאר יום בשבוע ולא הופך ל-2", async () => {
+  const { wordsToDigits } = await import("./numbers.js");
+  assert.equal(wordsToDigits("נגיע ביום שני"), "נגיע ביום שני");
+  assert.equal(wordsToDigits("שני לילות"), "2 לילות");
+  // התחילית נשמרת — בלעדיה מילת התפקיד ("ל", "מ") הייתה נעלמת מהתאריך.
+  assert.equal(wordsToDigits("לשלושה לילות"), "ל3 לילות");
+});
+
+test("מספרים במילים: אורחים ושעות — בצ'ק אין ובפרטים הנוספים", async () => {
+  const { parseCheckinDetails } = await import("./validate.js");
+
+  assert.equal(parseCheckinDetails("עשרה אורחים").guests, 10);
+  assert.equal(parseCheckinDetails("שני אורחים").guests, 2);
+  assert.equal(parseCheckinDetails("ארבעה אנשים").guests, 4);
+  assert.equal(parseCheckinDetails("two guests").guests, 2);
+  assert.equal(parseCheckinDetails("we are five").guests, 5);
+
+  // שעה שנכתבה במילים — כולל חלק היום. "בשמונה בערב" הוא 20:00, לא 08:00.
+  assert.equal(parseCheckinDetails("מגיעים בשמונה בערב").eta, "20:00");
+  assert.equal(parseCheckinDetails("מגיעים בתשע בבוקר").eta, "09:00");
+  assert.equal(parseCheckinDetails("arriving at eight in the evening").eta, "20:00");
+  assert.equal(parseCheckinDetails("מגיעים ב-14:30").eta, "14:30");
+});
+
+test("מספרים במילים: מקצה לקצה בצ'אט — 'שתי לילות' מתקבל", async () => {
+  const { getSession } = await import("./state.js");
+  const d = (n) => {
+    const x = new Date(Date.now() + n * 86400000);
+    return `${String(x.getUTCDate()).padStart(2, "0")}/${String(x.getUTCMonth() + 1).padStart(2, "0")}/${x.getUTCFullYear()}`;
+  };
+
+  const p = await checkinUpTo("waiting_dates");
+  sent.length = 0;
+  await bot.handleIncoming(p, `שתי לילות מ-${d(5)}`);
+
+  assert.match(lastBody(), /נכון\?/, `לא הגיע לאישור התאריכים: ${lastBody()}`);
+  assert.equal(getSession(p).pendingStay.nights, 2, "שתי לילות = 2 לילות");
+});
+
+// ════════════════════════════════════════════════════════
+//  תאריך שעבר — נתפס *ברגע שנמסר*, לא אחרי עוד סבב
+//  ----------------------------------------------------------
+//  מהבדיקה החיה: האורח מסר 10.7 כשהיום 21.7. הבוט ענה "קיבלתי תאריך
+//  אחד" והמשיך לבקש תאריך עזיבה — ורק אז גילה שההגעה עברה. פקיד קבלה
+//  היה עוצר מיד; אין צורך בתאריך שני כדי לדעת שהראשון בעבר.
+// ════════════════════════════════════════════════════════
+test("תאריך שעבר: תאריך בודד שעבר נדחה מיד, בלי לבקש תאריך שני", async () => {
+  const { validateStayDates } = await import("./validate.js");
+  const now = new Date("2026-07-21T09:00:00Z");
+
+  const v = validateStayDates("10.7", now);
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, "past", "תאריך יחיד שעבר → past, לא one_date");
+  assert.equal(v.pastDate, "10/07/2026", "יודעים לומר איזה תאריך בדיוק עבר");
+  assert.equal(v.today, "21/07/2026");
+
+  // תאריך עתידי בודד עדיין מבקש את המשלים — ההתנהגות הזו לא נשברה.
+  assert.equal(validateStayDates("25.7", now).reason, "one_date");
+  // אתמול נשאר קביל (אורח שמאחר בלילה).
+  assert.ok(validateStayDates("20.7 - 25.7", now).ok);
+});
+
+test("תאריך שעבר: הבוט אומר לאורח *איזה* תאריך עבר, מיד באותה הודעה", async () => {
+  const past = new Date(Date.now() - 11 * 86400000);
+  const dm = `${String(past.getUTCDate()).padStart(2, "0")}.${String(past.getUTCMonth() + 1).padStart(2, "0")}`;
+
+  const p = await checkinUpTo("waiting_dates");
+  sent.length = 0;
+  await bot.handleIncoming(p, dm);
+
+  assert.match(lastBody(), /כבר עבר/, `לא זוהה כתאריך שעבר: ${lastBody()}`);
+  assert.match(lastBody(), new RegExp(String(past.getUTCDate()).padStart(2, "0")), "מציין את התאריך הבעייתי");
+  assert.ok(!/קיבלתי תאריך אחד/.test(lastBody()), "אסור להמשיך כאילו הכול תקין");
+  assert.ok(!/נכון\?/.test(lastBody()), "אסור להתקדם לאישור תאריכים");
+
+  // ואחרי תיקון — ממשיכים כרגיל, בלי שהתאריך הפגום נצבר לתוך הקלט הבא.
+  const d = (n) => {
+    const x = new Date(Date.now() + n * 86400000);
+    return `${String(x.getUTCDate()).padStart(2, "0")}/${String(x.getUTCMonth() + 1).padStart(2, "0")}/${x.getUTCFullYear()}`;
+  };
+  sent.length = 0;
+  await bot.handleIncoming(p, `${d(4)} - ${d(7)}`);
+  assert.match(lastBody(), /נכון\?/, `לא התאושש אחרי תאריך שעבר: ${lastBody()}`);
+});
+
+// ════════════════════════════════════════════════════════
+//  הזמנת אוכל — הזמנה יוצאת מלאה, כמו אצל מלצר
+//  ----------------------------------------------------------
+//  מהבדיקה החיה: אורח ביקש פסטה, והבוט ענה "מעביר לשירות החדרים" —
+//  בלי סוג, בלי רוטב, בלי גודל. במטבח אי אפשר לבשל את זה.
+// ════════════════════════════════════════════════════════
+test("שירות חדרים: התפריט המלא מגיע ל-AI, עם מנות, מחירים ואפשרויות בחירה", async () => {
+  const sys = await askConcierge("אשמח לפסטה לחדר");
+
+  assert.match(sys, /לינגוויני טרי/, "המנות עצמן חייבות להגיע ל-AI");
+  assert.match(sys, /₪86/, "עם המחיר");
+  assert.match(sys, /אפשרויות בחירה ותוספות/, "השדה מגיע מתויג, לא כערך ערום");
+  assert.match(sys, /רוזה/, "אפשרויות הרוטב — בלעדיהן אי אפשר לשאול 'איזה רוטב'");
+  assert.match(sys, /מידת עשייה/, "מנות בשר — מידת עשייה");
+});
+
+test("שירות חדרים: ה-prompt מחייב לאסוף את פרטי המנה לפני העברה למטבח", async () => {
+  const he = await askConcierge("אשמח לפסטה לחדר");
+  for (const rule of [/אתה המלצר/, /אסור להעביר הזמנה חלקית/, /רוטב/, /אלרגיות/, /ROOMSERVICE/]) {
+    assert.match(he, rule, "כלל חסר בהוראות ההזמנה (עברית)");
+  }
+  const en = await askConcierge("I'd like some pasta to the room please");
+  for (const rule of [/you are the waiter/i, /Never pass a partial order/i, /allergies/i]) {
+    assert.match(en, rule, "כלל חסר בהוראות ההזמנה (אנגלית)");
+  }
+});
+
+test("שירות חדרים: הזמנה מלאה מנותבת לשירות החדרים — וואטסאפ + מייל + חדר", async () => {
+  const { departmentContacts } = await import("./config.js");
+  const p = freshGuest();
+  const { patchSession } = await import("./state.js");
+  await bot.handleIncoming(p, "שלום");
+  patchSession(p, { roomNumber: "512" });
+
+  sent.length = 0; emails.length = 0;
+  aiReply = "בשמחה — לינגוויני ברוטב רוזה בדרך אליך 🌟\n" +
+            "[ROOMSERVICE:לינגוויני טרי ברוטב רוזה, מנה שלמה, בלי פרמזן · 1 מנה · להגשה עכשיו]";
+  await bot.handleIncoming(p, "אשמח ללינגוויני ברוזה");
+
+  const { whatsapp, email: mail } = departmentContacts("room_service");
+  const staff = sent.find(m => m.to === whatsapp);
+  assert.ok(staff, "ההזמנה חייבת להגיע לוואטסאפ של שירות החדרים");
+  assert.match(staff.body, /רוזה/, "ההזמנה המלאה, לא 'האורח רוצה פסטה'");
+  assert.match(staff.body, /חדר: 512/, "עם מספר החדר");
+  assert.ok(emails.some(e => e.to === mail && /רוזה/.test(e.body)), "וגם למייל של שירות החדרים");
+});
+
+// ════════════════════════════════════════════════════════
+//  ניתוב מחלקות — כל תג, לשני הערוצים, למחלקה הנכונה
+// ════════════════════════════════════════════════════════
+test("ניתוב: כל תג מגיע למחלקה הנכונה — וואטסאפ *וגם* מייל, עם מספר חדר", async () => {
+  const { departmentContacts, TAG_DEPARTMENTS } = await import("./config.js");
+  const { patchSession } = await import("./state.js");
+
+  const samples = {
+    HK:          "[HK:מגבות נוספות לחדר]",
+    HK_URGENT:   "[HK_URGENT:נשפך יין על השטיח]",
+    MAINTENANCE: "[MAINTENANCE:המזגן לא מקרר]",
+    ROOMSERVICE: "[ROOMSERVICE:קפוצ'ינו אחד וכריך קלאב]",
+    CONCIERGE:   "[CONCIERGE:taxi|מונית לנמל הישן, מחר 22/07 ב-20:00, 2 נוסעים]",
+    RECEPTION:   "[RECEPTION:שאלה על החשבון]",
+    SECURITY:    "[SECURITY:אדם חשוד במסדרון]",
+    EMERGENCY:   "[EMERGENCY:פציעה — האורח נחתך ביד]",
+  };
+
+  for (const [tag, reply] of Object.entries(samples)) {
+    const p = freshGuest();
+    await bot.handleIncoming(p, "שלום");
+    patchSession(p, { roomNumber: "701" });
+
+    sent.length = 0; emails.length = 0;
+    aiReply = `בטיפול 🌟\n${reply}`;
+    await bot.handleIncoming(p, "בקשה כלשהי");
+
+    const dept = TAG_DEPARTMENTS[tag];
+    const { whatsapp, email: mail } = departmentContacts(dept);
+    const waMsg = sent.find(m => m.to === whatsapp);
+    assert.ok(waMsg, `[${tag}] לא הגיע לוואטסאפ של ${dept}`);
+    assert.match(waMsg.body, /חדר: 701/, `[${tag}] ההתראה חייבת לכלול מספר חדר`);
+    assert.ok(emails.some(e => e.to === mail), `[${tag}] לא נשלח מייל ל-${dept}`);
+    // התג עצמו לעולם לא נשלח לאורח.
+    const guestMsgs = sent.filter(m => m.to === p).map(m => m.body).join("\n");
+    assert.ok(!/\[[A-Z_]+/.test(guestMsgs), `[${tag}] תג פנימי דלף לאורח: ${guestMsgs}`);
+  }
+});
+
+test("ניתוב: טבלת הניתוב מלאה — לכל תג יש מחלקה, מספר ומייל", async () => {
+  const { routingTable, TAG_DEPARTMENTS } = await import("./config.js");
+  const rows = routingTable();
+  assert.equal(rows.length, Object.keys(TAG_DEPARTMENTS).length);
+  for (const r of rows) {
+    assert.ok(r.whatsapp, `[${r.tag}] בלי מספר וואטסאפ — הבקשה תיעלם`);
+    assert.ok(r.email,    `[${r.tag}] בלי מייל — חצי מהניתוב חסר`);
+    assert.ok(r.deptHe,   `[${r.tag}] בלי שם מחלקה קריא`);
+  }
+});
+
+// ════════════════════════════════════════════════════════
+//  קונסיירז' — תאריך ושעה הם פרט חובה בהזמנה
+// ════════════════════════════════════════════════════════
+test("קונסיירז': ה-prompt דורש תאריך/יום, ותופס תאריך או שעה שעברו", async () => {
+  const he = await askConcierge("אפשר להזמין שולחן במסעדה?");
+  assert.match(he, /תאריך הוא פרט חובה/, "חייב לדרוש תאריך");
+  assert.match(he, /שכבר עברו/, "חייב לתפוס תאריך/שעה שעברו");
+  assert.match(he, /התאריך \*המפורש\*|22\/07/, "התג נושא תאריך מפורש, לא 'מחר'");
+
+  const en = await askConcierge("Can you book me a table?");
+  assert.match(en, /The date is required/i);
+  assert.match(en, /already passed/i);
+});
+
+test("קונסיירז': בקשה שהועברה בלי תאריך/שעה מסומנת לצוות במפורש", async () => {
+  const { departmentContacts } = await import("./config.js");
+  const { missingBookingParts } = await import("./bot.js");
+  const { REQUEST_TYPES } = await import("./concierge/index.js");
+
+  assert.deepEqual(missingBookingParts(REQUEST_TYPES.RESTAURANT, "שולחן ל-2 במסעדת ים"), ["תאריך/יום", "שעה"]);
+  assert.deepEqual(missingBookingParts(REQUEST_TYPES.TAXI, "מונית לנתב\"ג מחר ב-05:30, 2 נוסעים"), []);
+  assert.deepEqual(missingBookingParts(REQUEST_TYPES.GIFT, "זר פרחים"), [], "בקשה שאינה הזמנה בזמן — לא נדרש");
+
+  const p = freshGuest();
+  await bot.handleIncoming(p, "שלום");
+  sent.length = 0;
+  aiReply = "אני מטפל בזה ואחזור עם אישור 🌟\n[CONCIERGE:restaurant|שולחן ל-2 במסעדת ים]";
+  await bot.handleIncoming(p, "תזמין לי שולחן");
+
+  const { whatsapp } = departmentContacts("concierge");
+  const staff = sent.find(m => m.to === whatsapp);
+  assert.ok(staff, "הבקשה הועברה לקונסיירז'");
+  assert.match(staff.body, /חסר בבקשה/, "הצוות חייב לדעת שחסרים פרטים");
+  assert.match(staff.body, /תאריך/, "ומה בדיוק חסר");
+});
+
+// ════════════════════════════════════════════════════════
+//  שעות פתיחה מגוגל — הקונסיירז' מוסר מידע, לא "אין לי"
+// ════════════════════════════════════════════════════════
+test("Places: שעות הפתיחה מגוגל מגיעות ל-AI (היום + כל השבוע)", async () => {
+  placesResult = {
+    ok: true, provider: "google",
+    results: [{
+      name: "מסעדת בדיקה", address: "הירקון 100, תל אביב", category: "מסעדת בשרים",
+      rating: 4.6, ratingCount: 812, priceSymbol: "₪₪₪", openNow: true,
+      todayHours: "יום שלישי: 12:00–23:00",
+      openingHours: ["יום שני: 12:00–23:00", "יום שלישי: 12:00–23:00", "יום רביעי: 12:00–23:00",
+                     "יום חמישי: 12:00–23:30", "יום שישי: 12:00–15:00", "יום שבת: סגור",
+                     "יום ראשון: 12:00–23:00"],
+      phone: "03-1234567", website: "https://example.co.il",
+      distanceText: "450 מ׳", distanceMeters: 450,
+    }],
+  };
+  aiScript = (params, idx) => idx === 0
+    ? { stop_reason: "tool_use", content: [{ type: "tool_use", id: "t1", name: "search_nearby_places", input: { query: "מסעדת בשר", category: "restaurant" } }] }
+    : null;
+
+  const p = freshGuest();
+  await bot.handleIncoming(p, "אשמח להמלצה על מסעדת בשר");
+
+  // מה שחזר לכלי — זה מה שה-AI מקבל לנסח ממנו.
+  const toolResult = JSON.stringify(aiParams.messages);
+  assert.match(toolResult, /todayHours/, "שעות היום חייבות להגיע ל-AI");
+  assert.match(toolResult, /12:00/, "עם השעות עצמן");
+  assert.match(toolResult, /openingHours/, "וגם שעות כל השבוע");
+  assert.match(toolResult, /03-1234567/, "וגם הטלפון — כדי שלא יאמר 'אין לי'");
+  assert.match(toolResult, /מסעדת בשרים/, "וגם סוג המטבח");
+});
+
+test("Places: ה-prompt מחייב למסור שעות ואוסר על 'אין לי מידע'", async () => {
+  const he = await askConcierge("איזו מסעדה יש באזור?");
+  assert.match(he, /שעות פתיחה/, "הוראה על שעות פתיחה");
+  assert.match(he, /todayHours/, "השדה עצמו מוזכר, כדי שה-AI ידע מאיפה לקחת");
+  assert.match(he, /קרא לכלי \*שוב\*/, "שאלת המשך על מקום → חיפוש נוסף, לא 'אין לי'");
+
+  const en = await askConcierge("Any good restaurant nearby?");
+  assert.match(en, /todayHours/);
+  assert.match(en, /Call the tool \*again\*/);
+});
+
+test("Places: מקום בלי שעות ידועות — לא ממציאים לו שעות", async () => {
+  placesResult = {
+    ok: true, provider: "google",
+    results: [{ name: "מקום בלי שעות", address: "רחוב כלשהו 1", category: "בר",
+                rating: 4.1, ratingCount: 60, priceSymbol: "₪₪", openNow: null,
+                todayHours: null, openingHours: null, phone: null, website: null,
+                distanceText: "300 מ׳", distanceMeters: 300 }],
+  };
+  aiScript = (params, idx) => idx === 0
+    ? { stop_reason: "tool_use", content: [{ type: "tool_use", id: "t1", name: "search_nearby_places", input: { query: "בר" } }] }
+    : null;
+
+  const p = freshGuest();
+  await bot.handleIncoming(p, "אשמח להמלצה על בר");
+
+  // בודקים את *התוצאה עצמה* ולא את כל הודעות ה-AI: ההסבר שנשלח לצד
+  // התוצאות מזכיר את שמות השדות בכוונה.
+  const block   = aiParams.messages.flatMap(m => (Array.isArray(m.content) ? m.content : []))
+                                   .find(b => b.type === "tool_result");
+  const payload = JSON.parse(block.content);
+  assert.equal(payload.results.length, 1);
+  assert.ok(!("todayHours" in payload.results[0]), "שדה ריק נשמט לגמרי — null מזמין ניחוש");
+  assert.ok(!("openNow" in payload.results[0]),    "בלי נתון פתיחה — אין אמירה על פתיחה");
+  assert.ok(!("phone" in payload.results[0]),      "אין טלפון → לא ממציאים טלפון");
+});
+
+// ════════════════════════════════════════════════════════
+//  בקשות מיוחדות בצ'ק אין — דוגמאות שאורח באמת מבקש
+// ════════════════════════════════════════════════════════
+test("צ'ק אין: דוגמאות הבקשות המיוחדות הגיוניות — בלי 'חדר שקט'", async () => {
+  const pHe = await checkinUpTo("waiting_details");
+  const he  = lastBody();
+  assert.match(he, /בקשה מיוחדת/, "השלב מבקש בקשה מיוחדת");
+  assert.match(he, /קומה גבוהה/);
+  assert.match(he, /נוף לים/);
+  assert.ok(!/חדר שקט/.test(he), "כל החדרים שקטים — דוגמה כזו משדרת את ההפך");
+  assert.ok(pHe);
+
+  await checkinUpTo("waiting_details", { lang: "en" });
+  const en = lastBody();
+  assert.match(en, /sea view/i);
+  assert.ok(!/quiet room/i.test(en), "no 'quiet room' example in English either");
 });
 
 // ניקוי קובץ ה-DB הזמני

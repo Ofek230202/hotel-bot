@@ -71,6 +71,11 @@ for (const query of queries) {
     console.log(`    ⭐ ${r.rating ?? "—"}${r.ratingCount ? ` (${r.ratingCount} מדרגים)` : ""}` +
                 `${r.priceSymbol ? ` · ${r.priceSymbol}` : ""} · ${r.distanceText}` +
                 ` · פתוח עכשיו: ${r.openNow === true ? "כן" : r.openNow === false ? "לא" : "אין נתון"}`);
+    // שעות הפתיחה הן הנתון שהיה חסר בבדיקה החיה — מדפיסים אותן במפורש
+    // כדי שאפשר יהיה להשוות מול Google Maps ולוודא שהן נכונות.
+    console.log(`    🕐 היום: ${r.todayHours || "אין נתון"}`);
+    if (r.openingHours) console.log(`    📅 השבוע: ${r.openingHours.join(" | ")}`);
+    console.log(`    🍽️ סוג: ${r.category || "—"}${r.phone ? ` · ☎️ ${r.phone}` : ""}`);
     if (r.mapsUri) console.log(`    🔗 ${r.mapsUri}`);
     console.log("");
   });

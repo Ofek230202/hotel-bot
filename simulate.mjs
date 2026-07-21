@@ -133,9 +133,46 @@ const scenarios = {
     await guest("אני מאשר את התנאים");
   },
 
+  // הזמנת אוכל — האם הבוט לוקח את ההזמנה עד הסוף, כמו מלצר?
+  async food() {
+    header("תרחיש 9 — הזמנת אוכל: פסטה (חייב לשאול סוג/רוטב/גודל/תוספות)");
+    reset();
+    patchSession(GUEST, { lang: "he", roomNumber: "304", guestName: "ישראל ישראלי" });
+    await guest("אני רוצה להזמין פסטה לחדר");
+    await guest("לינגוויני");
+    await guest("רוזה, מנה שלמה, בלי פרמזן — יש לי רגישות ללקטוז");
+    await guest("כוס יין אדום, וזה הכל");
+    const staff = log.filter(l => l.to && l.to !== GUEST);
+    for (const s of staff) console.log(`   ➜ נותב ל: ${(STAFF.get(s.to) || ["?"])[0]}`);
+    if (!staff.length) console.log(`${C.re}   ⚠️ עדיין לא נשלחה הזמנה למטבח (אולי הבוט עוד אוסף פרטים)${C.r}`);
+  },
+
+  // הזמנת שולחן — האם נשאל התאריך/היום, ולא רק השעה?
+  async booking() {
+    header("תרחיש 10 — הזמנת שולחן: חייב לשאול גם תאריך/יום");
+    reset();
+    patchSession(GUEST, { lang: "he", roomNumber: "304", guestName: "ישראל ישראלי" });
+    await guest("תזמין לי בבקשה שולחן במסעדה טובה באזור");
+    await guest("2 אנשים, על שם ישראל");
+    await guest("מחר ב-20:30");
+  },
+
+  // מספרים במילים — "שתי לילות" חייב להיקלט כמו "2 לילות"
+  async words() {
+    header("תרחיש 11 — מספרים שנכתבו במילים");
+    reset();
+    await bot.handleIncoming(GUEST, "צק אין");
+    await bot.handleIncoming(GUEST, "ישראל ישראלי");
+    await bot.handleIncoming(GUEST, "RES12345");
+    log.length = 0;
+    await guest(STAY_TEXT.replace(/^4 לילות/, "שתי לילות"));
+    await guest("כן");
+    await guest("שני אורחים, מגיעים בשמונה בערב, קומה גבוהה");
+  },
+
   async dates() {
     header("תרחיש 8 — תאריכים שכבר עברו / לא הגיוניים");
-    for (const t of ["10.7 - 13.7", "25.7 - 23.7", "32.13 - 35.14", "1.1.2050 - 5.1.2050", "עוד שבוע, 3 לילות"]) {
+    for (const t of ["10.7", "10.7 - 13.7", "25.7 - 23.7", "32.13 - 35.14", "1.1.2050 - 5.1.2050", "עוד שבוע, 3 לילות"]) {
       reset();
       await bot.handleIncoming(GUEST, "צק אין");
       await bot.handleIncoming(GUEST, "ישראל ישראלי");

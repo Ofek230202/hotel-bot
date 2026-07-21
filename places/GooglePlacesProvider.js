@@ -13,12 +13,17 @@
 //  { ok:false, reason } — הבוט אומר לאורח שיבדוק ויחזור, לא קורס ולא ממציא.
 // ════════════════════════════════════════════════════════
 import { PlacesProvider, PLACE_CATEGORIES } from "./PlacesProvider.js";
-import { haversineMeters, distanceText, priceLevelInfo, formatRating } from "./util.js";
+import { haversineMeters, distanceText, priceLevelInfo, formatRating, todayHoursLine } from "./util.js";
 
 const SEARCH_TEXT_URL = "https://places.googleapis.com/v1/places:searchText";
 
 // רק השדות שאנחנו באמת מציגים — FieldMask הדוק חוסך עלות וזמן ומונע
 // משיכת מידע מיותר. כל שדה כאן חייב להופיע גם ב-normalizePlace למטה.
+// 🔴 שעות הפתיחה נוספו כאן אחרי בדיקה חיה: הבוט המליץ על מסעדות בלי שעות,
+//    וכשאורח שאל "עד איזו שעה פתוח?" ענה "אין לי מידע מדויק" — בזמן שגוגל
+//    יודע בדיוק. weekdayDescriptions נותן את שעות כל ימות השבוע כטקסט מוכן
+//    (current = השבוע הנוכחי, כולל חריגים; regular = הרגילות, כגיבוי).
+//    גם טלפון ואתר נמשכים — כדי שהקונסיירז' יוכל לענות ולא "לבדוק ולחזור".
 const FIELD_MASK = [
   "places.displayName",
   "places.formattedAddress",
@@ -26,6 +31,10 @@ const FIELD_MASK = [
   "places.userRatingCount",
   "places.priceLevel",
   "places.currentOpeningHours.openNow",
+  "places.currentOpeningHours.weekdayDescriptions",
+  "places.regularOpeningHours.weekdayDescriptions",
+  "places.nationalPhoneNumber",
+  "places.websiteUri",
   "places.location",
   "places.primaryTypeDisplayName",
   "places.googleMapsUri",
@@ -140,6 +149,13 @@ function normalizePlace(p, hotel, lang) {
   const price  = priceLevelInfo(p.priceLevel);
   const rating = formatRating(p.rating, p.userRatingCount);
 
+  // שעות השבוע הנוכחי גוברות על ה"רגילות" — הן כוללות חגים ושינויים
+  // זמניים. שורת "היום" נגזרת מהן לפי היום בפועל בישראל.
+  const weekly =
+    p.currentOpeningHours?.weekdayDescriptions?.length ? p.currentOpeningHours.weekdayDescriptions :
+    p.regularOpeningHours?.weekdayDescriptions?.length ? p.regularOpeningHours.weekdayDescriptions :
+    null;
+
   return {
     name,
     address:        p.formattedAddress || null,
@@ -149,6 +165,10 @@ function normalizePlace(p, hotel, lang) {
     priceLevel:     price ? price.level : null,
     priceSymbol:    price ? price.symbol : null,
     openNow:        p.currentOpeningHours?.openNow ?? null,
+    openingHours:   weekly,
+    todayHours:     todayHoursLine(weekly),
+    phone:          p.nationalPhoneNumber || null,
+    website:        p.websiteUri || null,
     distanceMeters: meters,
     distanceText:   distanceText(meters, lang),
     mapsUri:        p.googleMapsUri || null,

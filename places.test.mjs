@@ -7,7 +7,7 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 
-import { haversineMeters, distanceText, priceLevelInfo } from "./places/util.js";
+import { haversineMeters, distanceText, priceLevelInfo, todayHoursLine } from "./places/util.js";
 import { MockPlacesProvider } from "./places/MockPlacesProvider.js";
 import { GooglePlacesProvider } from "./places/GooglePlacesProvider.js";
 import { PLACE_CATEGORIES } from "./places/PlacesProvider.js";
@@ -191,6 +191,86 @@ test("google: אפס תוצאות → ok=true עם רשימה ריקה (הבוט
   const res = await g.searchNearby({ query: "x", location: HOTEL });
   assert.equal(res.ok, true);
   assert.equal(res.results.length, 0);
+});
+
+// ── שעות פתיחה — הנתון שהיה חסר בבדיקה החיה ────────────
+// הבוט המליץ על מסעדות בלי שעות, וכשאורח שאל "עד איזו שעה פתוח?" ענה
+// "אין לי מידע מדויק" — בזמן שגוגל יודע. השעות נמשכות עכשיו במפורש.
+const WEEK_EN = [
+  "Monday: 12:00 – 23:00", "Tuesday: 12:00 – 23:00", "Wednesday: 12:00 – 23:00",
+  "Thursday: 12:00 – 23:30", "Friday: 12:00 – 15:00", "Saturday: Closed",
+  "Sunday: 12:00 – 23:00",
+];
+
+test("todayHoursLine: היום נגזר לפי שעון ישראל, והשבוע מתחיל בשני (כמו אצל גוגל)", () => {
+  // 20/07/2026 הוא יום שני; 25/07/2026 הוא שבת.
+  assert.equal(todayHoursLine(WEEK_EN, new Date("2026-07-20T09:00:00Z")), "Monday: 12:00 – 23:00");
+  assert.equal(todayHoursLine(WEEK_EN, new Date("2026-07-25T09:00:00Z")), "Saturday: Closed");
+  // 23:30 UTC ביום ראשון הוא כבר *יום שני* בישראל (UTC+3) — וזה מה שנמסר לאורח.
+  assert.equal(todayHoursLine(WEEK_EN, new Date("2026-07-19T22:30:00Z")), "Monday: 12:00 – 23:00");
+  // רשימה חסרה/ריקה → null, אף פעם לא ניחוש.
+  assert.equal(todayHoursLine(null), null);
+  assert.equal(todayHoursLine(["Monday: 12:00 – 23:00"]), null);
+});
+
+test("google: FieldMask מבקש שעות פתיחה, טלפון ואתר", () => {
+  // בלי השדות האלה במסכה גוגל פשוט לא מחזיר אותם — וזה היה שורש
+  // התשובה "אין לי מידע על שעות".
+  const g = new GooglePlacesProvider("KEY");
+  stubFetch(() => googleOkResponse());
+  return g.searchNearby({ query: "x", location: HOTEL }).then(() => {
+    const mask = fetchCalls[0].opts.headers["X-Goog-FieldMask"];
+    assert.ok(mask.includes("currentOpeningHours.weekdayDescriptions"), "שעות השבוע הנוכחי");
+    assert.ok(mask.includes("regularOpeningHours.weekdayDescriptions"), "שעות רגילות כגיבוי");
+    assert.ok(mask.includes("nationalPhoneNumber"), "טלפון");
+    assert.ok(mask.includes("websiteUri"), "אתר");
+  });
+});
+
+test("google: שעות השבוע ושורת 'היום' מנורמלות מהתשובה", async () => {
+  const g = new GooglePlacesProvider("KEY");
+  stubFetch(() => ({
+    ok: true, status: 200,
+    json: async () => ({
+      places: [{
+        displayName: { text: "HaEsh Grill" },
+        formattedAddress: "12 Herbert Samuel St, Tel Aviv",
+        rating: 4.6, userRatingCount: 1240,
+        currentOpeningHours: { openNow: true, weekdayDescriptions: WEEK_EN },
+        regularOpeningHours: { weekdayDescriptions: ["x", "x", "x", "x", "x", "x", "x"] },
+        nationalPhoneNumber: "03-123-4567",
+        websiteUri: "https://example.co.il",
+        location: { latitude: 32.08, longitude: 34.7664 },
+        primaryTypeDisplayName: { text: "Steak house" },
+      }],
+    }),
+  }));
+
+  const r = (await g.searchNearby({ query: "meat", lang: "en", location: HOTEL })).results[0];
+  assert.deepEqual(r.openingHours, WEEK_EN, "שעות השבוע הנוכחי גוברות על ה'רגילות'");
+  assert.ok(r.todayHours.startsWith(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Jerusalem", weekday: "long" }).format(new Date())));
+  assert.equal(r.phone, "03-123-4567");
+  assert.equal(r.website, "https://example.co.il");
+  assert.equal(r.category, "Steak house", "סוג המקום/המטבח");
+});
+
+test("google: מקום בלי שעות → openingHours ו-todayHours הם null (בלי המצאה)", async () => {
+  const g = new GooglePlacesProvider("KEY");
+  stubFetch(() => googleOkResponse()); // אין weekdayDescriptions בתשובה
+  const r = (await g.searchNearby({ query: "x", lang: "en", location: HOTEL })).results[0];
+  assert.equal(r.openingHours, null);
+  assert.equal(r.todayHours, null);
+  assert.equal(r.phone, null);
+});
+
+test("mock: מחזיר בדיוק את אותם שדות כמו הספק האמיתי — כולל שעות", async () => {
+  const mock = new MockPlacesProvider();
+  const r = (await mock.searchNearby({ query: "restaurant", category: "restaurant", lang: "he", location: HOTEL })).results[0];
+  for (const k of ["openingHours", "todayHours", "phone", "openNow"]) {
+    assert.ok(k in r, `missing ${k} — המוק והספק האמיתי חייבים להיראות זהים לבוט`);
+  }
+  assert.equal(r.openingHours.length, 7);
+  assert.ok(r.todayHours, "יש שורת שעות להיום");
 });
 
 test("PLACE_CATEGORIES: קטגוריות המפתח ממופות ל-includedType של Google", () => {

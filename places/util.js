@@ -61,3 +61,23 @@ export function formatRating(rating, count) {
   if (rating == null) return null;
   return { value: Math.round(rating * 10) / 10, count: count ?? null };
 }
+
+// ── שעות הפתיחה *של היום* ──────────────────────────────
+// Google מחזיר את שעות השבוע כשבע שורות טקסט מוכנות
+// ("Monday: 12:00 – 23:00" / "יום שני: 12:00–23:00"), כשהראשונה היא
+// *יום שני* — כך זה מוגדר ב-Places API (New).
+//
+// שתי מלכודות שהקוד הזה מטפל בהן:
+//  1. "היום" נקבע לפי שעון *ישראל*, לא לפי UTC. בשעה 01:00 בלילה בישראל
+//     ה-UTC עדיין אתמול — והאורח היה מקבל את שעות אתמול.
+//  2. האינדוקס מתחיל בשני, לא בראשון. חישוב "יום בשבוע" רגיל (0=ראשון)
+//     היה מזיז את כל השבוע ביום אחד — ומוסר לאורח שעות של יום אחר לגמרי,
+//     מה שגרוע יותר מלא למסור שעות בכלל.
+export function todayHoursLine(weekdayDescriptions, now = new Date(), timeZone = "Asia/Jerusalem") {
+  if (!Array.isArray(weekdayDescriptions) || weekdayDescriptions.length < 7) return null;
+  const name = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "long" }).format(now);
+  const mondayFirst = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  const idx = mondayFirst.indexOf(name);
+  if (idx === -1) return null;
+  return weekdayDescriptions[idx] || null;
+}

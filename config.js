@@ -378,6 +378,50 @@ const DEFAULTS = {
         price_range:    "Breakfast ₪120 | Sandwiches & salads ₪60–₪95 | Hot main courses ₪95–₪160 | Desserts ₪45",
         service_charge: "₪25 tray charge per order, added to your room bill",
         night_menu:     "A reduced menu (sandwiches, salads, soups and desserts) is served between 23:00 and 06:00",
+        // ⚠️⚠️ SAMPLE MENU — every hotel replaces this with its real one ⚠️⚠️
+        // 🔴 Why the menu lives in the config at all: a guest who wrote "I'd
+        //    like pasta" got "I'm passing that to room service" — with no
+        //    dish, no sauce, no size. The kitchen cannot cook that. A waiter
+        //    asks *which* pasta and *which* sauce, and to do that the bot has
+        //    to know the menu. Anything not written here, it must not invent.
+        menu: {
+          starters: [
+            { name: "Jerusalem artichoke soup", description: "With toasted hazelnuts and truffle oil", price: "₪48" },
+            { name: "Beef carpaccio", description: "Rocket, aged parmesan, lemon", price: "₪72" },
+            { name: "Hummus & lamb kebab", description: "Warm pita, pickles", price: "₪64" },
+          ],
+          salads: [
+            { name: "Kempinski chopped salad", description: "Tomato, cucumber, herbs, olive oil", price: "₪58", options: "Add: grilled chicken ₪28 · goat cheese ₪22 · avocado ₪14" },
+            { name: "Caesar salad", description: "Cos lettuce, croutons, anchovy dressing", price: "₪68", options: "Add: chicken ₪28 · salmon ₪38 · without anchovy on request" },
+          ],
+          pasta: [
+            {
+              name: "Fresh linguine",
+              description: "Made in-house daily",
+              price: "₪86",
+              options: "Choice of sauce: rosé · fresh tomato & basil · mushroom cream · aglio e olio. " +
+                       "Optional additions: chicken breast ₪28 · shrimp ₪42 · extra parmesan ₪12. " +
+                       "Available as a half portion (₪62) and in a gluten-free pasta (₪12)",
+            },
+            { name: "Truffle ravioli", description: "Ricotta and spinach filling, butter-sage sauce", price: "₪98", options: "Vegetarian. Cream-free version on request" },
+          ],
+          mains: [
+            { name: "Entrecôte 300 g", description: "Served with roast potatoes and grilled vegetables", price: "₪186", options: "Cooked to your preference: rare · medium rare · medium · well done. Sauce: peppercorn · red wine · none" },
+            { name: "Sea bass fillet", description: "Lemon, olive oil, seasonal greens", price: "₪148", options: "Side choice: mashed potato · rice · green salad" },
+            { name: "Chicken schnitzel", description: "The children's favourite, with chips", price: "₪86", options: "Also available grilled instead of fried" },
+            { name: "Club sandwich", description: "Chicken, egg, tomato, chips on the side", price: "₪78", options: "Bread choice: white · wholemeal · gluten-free (₪8)" },
+          ],
+          desserts: [
+            { name: "Chocolate fondant", description: "Warm centre, vanilla ice cream", price: "₪52", options: "Takes 15 minutes to prepare" },
+            { name: "Seasonal fruit plate", description: "Whatever the market had this morning", price: "₪46" },
+          ],
+          drinks: [
+            { name: "Espresso / cappuccino / filter coffee", price: "₪18–₪26" },
+            { name: "Fresh orange juice", price: "₪28" },
+            { name: "House wine, by the glass", price: "₪42", options: "Red · white · rosé" },
+            { name: "Beer / soft drinks / mineral water", price: "₪16–₪34" },
+          ],
+        },
       },
       he: {
         name:           "שירות חדרים",
@@ -388,6 +432,49 @@ const DEFAULTS = {
         price_range:    "ארוחת בוקר ₪120 | כריכים וסלטים ₪60–₪95 | מנות עיקריות חמות ₪95–₪160 | קינוחים ₪45",
         service_charge: "דמי מגש ₪25 להזמנה, מתווספים לחשבון החדר",
         night_menu:     "בין 23:00 ל-06:00 מוגש תפריט מצומצם (כריכים, סלטים, מרקים וקינוחים)",
+        // ⚠️⚠️ תפריט לדוגמה — כל מלון מחליף אותו בתפריט האמיתי שלו ⚠️⚠️
+        // 🔴 למה התפריט יושב בקונפיג: אורח שכתב "אשמח לפסטה" קיבל "מעביר
+        //    לשירות החדרים" — בלי סוג, בלי רוטב, בלי גודל. במטבח אי אפשר
+        //    לבשל את זה. מלצר שואל *איזו* פסטה ו*איזה* רוטב, וכדי לשאול
+        //    הבוט חייב להכיר את התפריט. מה שלא כתוב כאן — אסור לו להמציא.
+        menu: {
+          starters: [
+            { name: "מרק ארטישוק ירושלמי", description: "עם אגוזי לוז קלויים ושמן כמהין", price: "₪48" },
+            { name: "קרפצ'יו בקר", description: "רוקט, פרמזן מיושן, לימון", price: "₪72" },
+            { name: "חומוס וקבב טלה", description: "פיתה חמה וחמוצים", price: "₪64" },
+          ],
+          salads: [
+            { name: "סלט קמפינסקי קצוץ", description: "עגבנייה, מלפפון, עשבי תיבול, שמן זית", price: "₪58", options: "תוספות: חזה עוף בגריל ₪28 · גבינת עיזים ₪22 · אבוקדו ₪14" },
+            { name: "סלט קיסר", description: "חסה רומית, קרוטונים, רוטב אנשובי", price: "₪68", options: "תוספות: עוף ₪28 · סלמון ₪38 · אפשר גם בלי אנשובי" },
+          ],
+          pasta: [
+            {
+              name: "לינגוויני טרי",
+              description: "נעשה במטבח שלנו כל בוקר",
+              price: "₪86",
+              options: "בחירת רוטב: רוזה · עגבניות ובזיליקום · שמנת פטריות · אליו אוליו. " +
+                       "תוספות: חזה עוף ₪28 · שרימפס ₪42 · פרמזן נוסף ₪12." +
+                       "אפשר גם במנה חצי (₪62) ובפסטה ללא גלוטן (₪12)",
+            },
+            { name: "רביולי כמהין", description: "מילוי ריקוטה ותרד, רוטב חמאה ומרווה", price: "₪98", options: "צמחוני. אפשר גם בגרסה בלי שמנת" },
+          ],
+          mains: [
+            { name: "אנטרקוט 300 גרם", description: "מוגש עם תפוחי אדמה צלויים וירקות בגריל", price: "₪186", options: "מידת עשייה: נא · מדיום רייר · מדיום · עשוי היטב. רוטב: פלפלת · יין אדום · בלי" },
+            { name: "פילה לברק", description: "לימון, שמן זית וירק העונה", price: "₪148", options: "בחירת תוספת: פירה · אורז · סלט ירוק" },
+            { name: "שניצל עוף", description: "האהוב על הילדים, עם צ'יפס", price: "₪86", options: "אפשר גם בגריל במקום מטוגן" },
+            { name: "כריך קלאב", description: "עוף, ביצה, עגבנייה, צ'יפס בצד", price: "₪78", options: "בחירת לחם: לבן · מלא · ללא גלוטן (₪8)" },
+          ],
+          desserts: [
+            { name: "פונדנט שוקולד", description: "לב חם, גלידת וניל", price: "₪52", options: "זמן הכנה 15 דקות" },
+            { name: "מגש פירות העונה", description: "מה שהיה הבוקר בשוק", price: "₪46" },
+          ],
+          drinks: [
+            { name: "אספרסו / קפוצ'ינו / קפה פילטר", price: "₪18–₪26" },
+            { name: "מיץ תפוזים סחוט", price: "₪28" },
+            { name: "יין הבית, בכוס", price: "₪42", options: "אדום · לבן · רוזה" },
+            { name: "בירה / שתייה קלה / מים מינרליים", price: "₪16–₪34" },
+          ],
+        },
       },
     },
 
@@ -458,24 +545,24 @@ const DEFAULTS = {
 
       restaurants: [
         { name: "HaEsh", cuisine: "Meat — grill & steakhouse", kosher: "Kosher (meat, Rabbinate certified)",
-          distance: "9 min walk", price_range: "₪120–₪200 per diner",
+          hours: "Sun–Thu 12:00–23:00, Fri 12:00–15:00, Sat from an hour after sundown", distance: "9 min walk", price_range: "₪120–₪200 per diner",
           good_for: "Meat lovers, a hearty dinner, groups",
           tip: "The place for a proper meat meal nearby — no dairy on the menu; ask for the mixed grill" },
         { name: "Yam", cuisine: "Seafood & fish", kosher: "Not kosher (serves shellfish)",
-          distance: "6 min walk", price_range: "₪140–₪220 per diner",
+          hours: "Daily 12:00–24:00", distance: "6 min walk", price_range: "₪140–₪220 per diner",
           good_for: "A special evening, sunset over the sea",
           tip: "Ask for a table on the upper terrace — I'll note it on the reservation" },
         { name: "Sofia", cuisine: "Italian, dairy — wood-fired oven", kosher: "Not kosher",
-          distance: "10 min walk", price_range: "₪90–₪140 per diner", good_for: "Families, a relaxed dinner",
+          hours: "Daily 12:00–23:30", distance: "10 min walk", price_range: "₪90–₪140 per diner", good_for: "Families, a relaxed dinner",
           tip: "Warm and noisy in the best way; the kids' pizza is made to order" },
         { name: "Aleph", cuisine: "Levantine small plates (meat & mezze)", kosher: "Not kosher",
-          distance: "12 min walk", price_range: "₪80–₪130 per diner", good_for: "Couples, a lively evening",
+          hours: "Daily 18:00–01:00", distance: "12 min walk", price_range: "₪80–₪130 per diner", good_for: "Couples, a lively evening",
           tip: "No reservations before 19:00 — go early or let me get you on the list" },
         { name: "Nur", cuisine: "Vegetarian & vegan", kosher: "Kosher (dairy & parve)",
-          distance: "8 min walk", price_range: "₪70–₪110 per diner", good_for: "Lunch, plant-based dining",
+          hours: "Sun–Thu 09:00–22:00, Fri 09:00–15:00, closed Sat", distance: "8 min walk", price_range: "₪70–₪110 per diner", good_for: "Lunch, plant-based dining",
           tip: "Everything on the menu is vegan; the mushroom dish is the one to order" },
         { name: "Beit Kaffe", cuisine: "Café, dairy — breakfast and light meals", kosher: "Kosher (dairy)",
-          distance: "4 min walk", price_range: "₪45–₪80 per diner", good_for: "A late breakfast, a working morning",
+          hours: "Sun–Fri 07:00–19:00, Sat 08:00–17:00", distance: "4 min walk", price_range: "₪45–₪80 per diner", good_for: "A late breakfast, a working morning",
           tip: "Open from 07:00 and quiet before 09:00 — the best coffee in the quarter" },
       ],
 
@@ -544,23 +631,23 @@ const DEFAULTS = {
 
       restaurants: [
         { name: "האש", cuisine: "בשרי — גריל וסטייקים", kosher: "כשר (בשרי, בהשגחת הרבנות)",
-          distance: "9 דקות הליכה", price_range: "₪120–₪200 לסועד",
+          hours: "א׳–ה׳ 12:00–23:00, ו׳ 12:00–15:00, מוצ״ש משעה לאחר צאת השבת", distance: "9 דקות הליכה", price_range: "₪120–₪200 לסועד",
           good_for: "אוהבי בשר, ארוחת ערב משביעה, קבוצות",
           tip: "המקום לארוחה בשרית אמיתית באזור — אין חלבי בתפריט; שווה לבקש את המעורב על האש" },
         { name: "ים", cuisine: "דגים ופירות ים", kosher: "לא כשר (מגישים פירות ים)",
-          distance: "6 דקות הליכה", price_range: "₪140–₪220 לסועד", good_for: "ערב מיוחד, שקיעה מול הים",
+          hours: "כל יום 12:00–24:00", distance: "6 דקות הליכה", price_range: "₪140–₪220 לסועד", good_for: "ערב מיוחד, שקיעה מול הים",
           tip: "כדאי לבקש שולחן במרפסת העליונה — אציין את זה בהזמנה" },
         { name: "סופיה", cuisine: "איטלקית, חלבי — טאבון", kosher: "לא כשר",
-          distance: "10 דקות הליכה", price_range: "₪90–₪140 לסועד", good_for: "משפחות, ארוחת ערב רגועה",
+          hours: "כל יום 12:00–23:30", distance: "10 דקות הליכה", price_range: "₪90–₪140 לסועד", good_for: "משפחות, ארוחת ערב רגועה",
           tip: "חם ורועש במובן הטוב; פיצה לילדים מוכנה בהזמנה" },
         { name: "אלף", cuisine: "מנות קטנות, מטבח לבנטיני (בשרי ומזה)", kosher: "לא כשר",
-          distance: "12 דקות הליכה", price_range: "₪80–₪130 לסועד", good_for: "זוגות, ערב תוסס",
+          hours: "כל יום 18:00–01:00", distance: "12 דקות הליכה", price_range: "₪80–₪130 לסועד", good_for: "זוגות, ערב תוסס",
           tip: "לא מקבלים הזמנות לפני 19:00 — או להגיע מוקדם, או שאסדר מקום ברשימה" },
         { name: "נור", cuisine: "צמחוני וטבעוני", kosher: "כשר (חלבי ופרווה)",
-          distance: "8 דקות הליכה", price_range: "₪70–₪110 לסועד", good_for: "צהריים, אוכל מהצומח",
+          hours: "א׳–ה׳ 09:00–22:00, ו׳ 09:00–15:00, שבת סגור", distance: "8 דקות הליכה", price_range: "₪70–₪110 לסועד", good_for: "צהריים, אוכל מהצומח",
           tip: "כל התפריט טבעוני; מנת הפטריות היא זו שכדאי להזמין" },
         { name: "בית קפה", cuisine: "בית קפה, חלבי — בקרים וארוחות קלות", kosher: "כשר (חלבי)",
-          distance: "4 דקות הליכה", price_range: "₪45–₪80 לסועד", good_for: "בוקר מאוחר, בוקר עבודה",
+          hours: "א׳–ו׳ 07:00–19:00, שבת 08:00–17:00", distance: "4 דקות הליכה", price_range: "₪45–₪80 לסועד", good_for: "בוקר מאוחר, בוקר עבודה",
           tip: "פתוח מ-07:00 ושקט לפני 09:00 — הקפה הכי טוב ברובע" },
       ],
 
@@ -808,6 +895,54 @@ export function configFor(hotelId = HOTEL) {
     configCache.set(hotelId, deepMerge(structuredClone(DEFAULTS), ov));
   }
   return configCache.get(hotelId);
+}
+
+// ── תג פנימי → מחלקה — מקור אמת אחד ────────────────────
+// המפה הזו הייתה קבורה בתוך runActions ב-bot.js, ולכן אי אפשר היה
+// להדפיס או לבדוק "לאן בעצם הולכת כל בקשה" בלי לקרוא את הלוגיקה.
+// עכשיו היא יושבת ליד אנשי הקשר: תג → מחלקה → וואטסאפ + מייל, שרשרת
+// אחת שאפשר להדפיס בעלייה ולבדוק בבדיקות.
+export const TAG_DEPARTMENTS = Object.freeze({
+  HK:          "housekeeping",
+  HK_URGENT:   "housekeeping",
+  MAINTENANCE: "maintenance",
+  ROOMSERVICE: "room_service",
+  CONCIERGE:   "concierge",
+  RECEPTION:   "reception",
+  SECURITY:    "security",
+  EMERGENCY:   "security",
+});
+
+// שם המחלקה לקריאת אדם (לוגים, טבלת הניתוב).
+export const DEPARTMENT_LABELS_HE = Object.freeze({
+  reception:    "קבלה",
+  housekeeping: "משק בית",
+  maintenance:  "אחזקה",
+  concierge:    "קונסיירז'",
+  security:     "ביטחון",
+  room_service: "שירות חדרים",
+});
+
+// טבלת הניתוב המלאה: כל תג, המחלקה שלו, והיעדים בפועל.
+export function routingTable(hotelId = HOTEL) {
+  return Object.entries(TAG_DEPARTMENTS).map(([tag, dept]) => {
+    const { whatsapp, email } = departmentContacts(dept, hotelId);
+    return { tag, dept, deptHe: DEPARTMENT_LABELS_HE[dept] || dept, whatsapp, email };
+  });
+}
+
+// הדפסת הטבלה בעלייה — כדי שלפני הדגמה אפשר יהיה לראות בעין אחת
+// לאן כל סוג בקשה נשלח, ובאיזה ערוץ. מחלקה בלי ערוץ מסומנת באדום.
+export function printRoutingTable(hotelId = HOTEL) {
+  const rows = routingTable(hotelId);
+  console.log(`\n📍 ניתוב בקשות — מלון "${hotelId}" (כל בקשה נשלחת גם בוואטסאפ וגם במייל):`);
+  for (const r of rows) {
+    const wa = r.whatsapp ? String(r.whatsapp).replace(/^whatsapp:/, "") : "❌ חסר";
+    const em = r.email || "❌ חסר";
+    console.log(`   [${r.tag}]`.padEnd(16) + `→ ${r.deptHe}`.padEnd(18) + `📱 ${wa}   📧 ${em}`);
+  }
+  console.log("");
+  return rows;
 }
 
 // אנשי הקשר של מחלקה, במלון מסוים.

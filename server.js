@@ -5,7 +5,7 @@ import express   from "express";
 import dotenv    from "dotenv";
 import { handleIncoming, wa, notifyStaff } from "./bot.js";
 import { allSessions, sessions, staffAlerts, incidents, stats, deleteSession, clearAllSessions } from "./state.js";
-import { hotelConfig, updateConfig, resetConfig, checkDepartmentContacts, DEPARTMENTS } from "./config.js";
+import { hotelConfig, updateConfig, resetConfig, checkDepartmentContacts, printRoutingTable, routingTable, DEPARTMENTS } from "./config.js";
 import { reservations, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES, autoChargeOnNoShow, findNoShowReservations } from "./checkin.js";
 import checkinRouter from "./checkin-routes.js";
 import { smokePlaces } from "./places/index.js";
@@ -222,6 +222,9 @@ app.post("/api/no-show", auth, async (req, res) => {
   }
 });
 
+// טבלת הניתוב — לאיזה מספר וואטסאפ ולאיזה מייל הולך כל סוג בקשה.
+app.get("/api/routing", auth, (req, res) => res.json(routingTable()));
+
 app.get("/api/alerts", auth, (req, res) => res.json(staffAlerts));
 app.get("/api/incidents", auth, (req, res) => res.json(incidents));
 app.get("/api/config", auth, (req, res) => res.json(hotelConfig));
@@ -263,6 +266,10 @@ app.listen(PORT, () => {
   smokePlaces(hotelConfig.location).catch(() => {});
 
   // מחלקה בלי מספר/מייל = בקשות אורחים שנעלמות בשקט. מדווחים בעלייה.
+  // טבלת הניתוב המלאה — כדי שלפני הדגמה רואים בעין אחת לאן כל בקשה הולכת,
+  // ובאיזה ערוץ. מודפסת תמיד, גם (ובמיוחד) כשחסר איש קשר.
+  printRoutingTable();
+
   const contacts = checkDepartmentContacts();
   if (contacts.ok) {
     console.log(`✅  אנשי קשר של כל ${DEPARTMENTS.length} המחלקות מוגדרים (וואטסאפ + מייל)`);

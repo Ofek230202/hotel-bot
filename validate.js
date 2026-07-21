@@ -10,6 +10,8 @@
 //     גם אם הקוד שמעליה פספס.
 // ════════════════════════════════════════════════════════
 
+import { wordsToDigits } from "./numbers.js";
+
 // ── 1. חיטוי פלט — תגים פנימיים ────────────────────────
 // כל תג בצורה [TAG] או [TAG:payload] באותיות גדולות הוא *פנימי* לפי
 // הגדרה — אף הודעה לאורח לא אמורה להכיל כזה. מסננים גנרית (ולא רק
@@ -329,10 +331,19 @@ function findRelTokens(text) {
   return found.sort((a, b) => a.index - b.index);
 }
 
+// תאריך לתצוגה לאורח — DD/MM/YYYY, אותו פורמט שהוא עצמו מקליד.
+const asDmy = (d) => {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
+};
+
 export function validateStayDates(raw, now = new Date()) {
-  const text = String(raw ?? "").trim();
-  if (!text) return { ok: false, reason: "empty" };
-  if (text.length > 120) return { ok: false, reason: "unclear" };
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) return { ok: false, reason: "empty" };
+  if (trimmed.length > 120) return { ok: false, reason: "unclear" };
+  // מספרים שנכתבו במילים הופכים לספרות *לפני* כל פרסור: "שתי לילות"
+  // ו-"2 לילות" הם אותו דבר מכאן והלאה, וכך גם "בעוד שלושה ימים".
+  const text = wordsToDigits(trimmed);
 
   const today = israelToday(now);
   const toks  = findDateTokens(text);
@@ -361,9 +372,10 @@ export function validateStayDates(raw, now = new Date()) {
   }
 
   const nightsM = masked.match(/(\d{1,3})\s*(?:לילות|לילה|nights?)/i);
-  // "לילה אחד" / "one night" — נפוץ בדיבור, ואין בו ספרה.
+  // "לילה 1" — הצורה שנוצרת מ"לילה אחד" אחרי נרמול המילים לספרות.
+  const nightsAfter = masked.match(/(?:לילות|לילה)\s*(\d{1,3})/);
   const nights  = nightsM ? +nightsM[1]
-                : /לילה\s+אחד/.test(masked) || /\bone\s+night\b/i.test(masked) ? 1
+                : nightsAfter ? +nightsAfter[1]
                 : null;
   if (nights !== null && nights < 1)          return { ok: false, reason: "not_after" };
   if (nights !== null && nights > MAX_NIGHTS) return { ok: false, reason: "too_long" };
@@ -391,7 +403,19 @@ export function validateStayDates(raw, now = new Date()) {
 
   if (refs.length === 1) {
     const r = refs[0];
-    if (nights == null) return { ok: false, reason: "one_date" };
+    if (nights == null) {
+      // 🔴 תאריך שכבר עבר נעצר *ברגע שהוא נמסר*, לא אחרי עוד סבב שאלות.
+      // בבדיקה החיה האורח כתב "10.7" (כשהיום ה-21.7), קיבל "קיבלתי תאריך
+      // אחד" — וכאילו הכול תקין — ורק אחרי שמסר תאריך עזיבה נאמר לו
+      // שההגעה כבר עברה. פקיד קבלה אמיתי היה עוצר מיד. אין שום צורך
+      // בתאריך השני כדי לדעת שהראשון בעבר.
+      const only = resolve(r, r.role === "departure" ? addDays(today, -1) : today,
+                           r.role === "departure" ? "departure" : "arrival").date;
+      if (only && only.getTime() < today.getTime() - DAY_MS) {
+        return { ok: false, reason: "past", pastDate: asDmy(only), today: asDmy(today) };
+      }
+      return { ok: false, reason: "one_date" };
+    }
 
     if (r.role === "departure") {
       // ⭐ התיקון: "4 לילות עד ה-21/7" — התאריך הוא העזיבה, וההגעה
@@ -434,7 +458,9 @@ export function validateStayDates(raw, now = new Date()) {
     return { ok: false, reason: depRolled ? "not_after" : "too_long" };
   }
   // הגעה בעבר — מלבד אתמול, שנשאר קביל (אורח שמאחר בלילה).
-  if (checkIn.getTime() < today.getTime() - DAY_MS) return { ok: false, reason: "past" };
+  if (checkIn.getTime() < today.getTime() - DAY_MS) {
+    return { ok: false, reason: "past", pastDate: asDmy(checkIn), today: asDmy(today) };
+  }
   // הגעה רחוקה מדי בעתיד — טעות הקלדה, לא הזמנה (למשל "1.1.2050").
   if (checkIn.getTime() > today.getTime() + MAX_AHEAD_DAYS * DAY_MS) {
     return { ok: false, reason: "too_far" };
@@ -500,14 +526,49 @@ export function isSkipWord(raw) {
   return SKIP_WORDS.has(t);
 }
 
-// שעת הגעה משוערת — מזהה "15:00", "15.00", "3pm", "3 pm", "בסביבות 20:00".
+// ── חלקי היום → שעון 24 שעות ───────────────────────────
+// "בשמונה בערב" הוא 20:00, לא 08:00. בלי זה הצוות היה מקבל שעת הגעה
+// מוקדמת ב-12 שעות מהאמת — וזה משנה אם החדר מוכן ומי ממתין בלובי.
+// ⚠️ בלי \b אחרי מילה עברית: \b של JS מוגדר לפי [A-Za-z0-9_], ולכן
+// "בערב," (מילה עברית ואחריה פסיק) *אינו* גבול מילה — והתנאי נכשל בשקט.
+// זה בדיוק מה שהחזיר "בשמונה בערב" כ-08:00 במקום 20:00.
+const DAY_PARTS = [
+  { re: /(?:בערב|בלילה|in the evening|at night|tonight|\bpm\b)/i, add: (h) => (h < 12 ? h + 12 : h) },
+  { re: /(?:אחר\s*הצה?ריי?ם|אחה"?צ|in the afternoon)/i,          add: (h) => (h < 12 ? h + 12 : h) },
+  { re: /(?:בצה?ריי?ם|at noon)/i,                                 add: (h) => (h === 12 ? 12 : h < 11 ? h + 12 : h) },
+  { re: /(?:בבוקר|in the morning|\bam\b)/i,                       add: (h) => (h === 12 ? 0 : h) },
+];
+
+// שעת הגעה משוערת — "15:00", "15.00", "3pm", "בסביבות 20:00",
+// וגם "בשמונה בערב" / "at eight in the evening" (מילים → ספרות).
 // מחזיר מחרוזת מנורמלת ("15:00" / "3pm") או null.
-function extractEta(text) {
+// מחזיר { value, source } — source הוא הטקסט שממנו נגזרה השעה, כדי
+// שהקורא יוכל להסיר אותו מהשארית ("ב8" לא ייחשב בקשה מיוחדת).
+function extractEtaFull(raw) {
+  const text = String(raw ?? "");
   const m24 = text.match(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/);
-  if (m24) return `${m24[1].padStart(2, "0")}:${m24[2]}`;
+  if (m24) return { value: `${m24[1].padStart(2, "0")}:${m24[2]}`, source: m24[0] };
   const m12 = text.match(/\b(1[0-2]|0?[1-9])\s*([ap])\.?\s*m\.?\b/i);
-  if (m12) return `${m12[1]}${m12[2].toLowerCase()}m`;
+  if (m12) return { value: `${m12[1]}${m12[2].toLowerCase()}m`, source: m12[0] };
+
+  // שעה עגולה שנמסרה כמילה או כספרה, עם או בלי חלק-יום:
+  // "בשעה 8 בערב" → 20:00 · "מגיעים ב-9 בבוקר" → 09:00.
+  const digits = wordsToDigits(text);
+  const hourM = digits.match(/(?:בשעה|בסביבות\s*השעה|around|at|ב-)\s*(\d{1,2})(?![:.\d])/i)
+             || digits.match(/(\d{1,2})\s*(?=(?:בערב|בבוקר|בלילה|בצהריים|בצהרים|אחר\s*הצהריים|אחה"?צ))/);
+  if (hourM) {
+    let h = +hourM[1];
+    if (h >= 0 && h <= 23) {
+      const part = DAY_PARTS.find(p => p.re.test(digits));
+      if (part) h = part.add(h);
+      return { value: `${String(h).padStart(2, "0")}:00`, source: hourM[0] };
+    }
+  }
   return null;
+}
+
+function extractEta(raw) {
+  return extractEtaFull(raw)?.value ?? null;
 }
 
 // מספר רכב ישראלי — 7–8 ספרות, לרוב עם מקפים (12-345-67 / 123-45-678),
@@ -523,18 +584,14 @@ function extractVehicle(text) {
   return null;
 }
 
-// מספר אורחים — "2 אורחים", "שני אנשים", "for 3", "we are 4", או מספר בודד קטן.
+// מספר אורחים — "2 אורחים", "שני אנשים", "עשרה אורחים", "for 3", "we are 4".
+// הטקסט כבר עבר נרמול מילים→ספרות אצל הקורא, ולכן אין כאן רשימת מילים
+// כפולה: מקור אחד (numbers.js) מטפל גם ב"שני" וגם ב"עשרה".
 function extractGuests(text) {
-  const near = text.match(/(\d{1,2})\s*(?:אורחים|אורח|אנשים|נפשות|מבוגרים|סועדים|guests?|people|persons?|adults?|pax)/i);
+  const near = text.match(/(\d{1,2})\s*(?:אורחים|אורח|אנשים|איש|נפשות|מבוגרים|סועדים|guests?|people|persons?|adults?|pax)/i);
   if (near) { const n = +near[1]; if (n >= 1 && n <= 20) return n; }
   const phrase = text.match(/(?:אנחנו|נהיה|נהייה|נגיע|נהיו|party of|table of|we\s*(?:are|'?re)|for)\s*(\d{1,2})\b/i);
   if (phrase) { const n = +phrase[1]; if (n >= 1 && n <= 20) return n; }
-  const words = { "אחד": 1, "אחת": 1, "יחיד": 1, "שניים": 2, "שני": 2, "שתיים": 2, "זוג": 2,
-                  "שלושה": 3, "שלוש": 3, "ארבעה": 4, "ארבע": 4, "חמישה": 5, "חמש": 5,
-                  "one": 1, "single": 1, "two": 2, "couple": 2, "three": 3, "four": 4, "five": 5 };
-  for (const [w, n] of Object.entries(words)) {
-    if (new RegExp(`(?:^|[^A-Za-z֐-׿])${w}(?:[^A-Za-z֐-׿]|$)`, "i").test(text)) return n;
-  }
   return null;
 }
 
@@ -545,6 +602,7 @@ const DETAILS_FILLER = new Set([
   "רכב", "מכונית", "רישוי", "חניה", "חנייה", "car", "vehicle", "plate", "parking", "eta",
   "הגעה", "נגיע", "נגיעה", "מגיעים", "מגיע", "מגיעה", "arriving", "arrive", "arrival",
   "בסביבות", "בערך", "בשעה", "בשעות", "around", "about", "at",
+  "יום", "ביום", "היום", "day", "on",
   // אורחים / מספרים במילים
   "אורחים", "אורח", "אנשים", "נפשות", "מבוגרים", "סועדים", "אנחנו", "we", "are", "re",
   "people", "persons", "person", "adults", "adult", "pax", "guest", "guests", "for",
@@ -556,10 +614,14 @@ const DETAILS_FILLER = new Set([
 // האורח ביקש לדלג / ההודעה ריקה. requests = מה שנשאר אחרי חילוץ השדות
 // המזוהים (אם נותר טקסט משמעותי) — למשל "קומה גבוהה, מיטה זוגית".
 export function parseCheckinDetails(raw) {
-  const text = String(raw ?? "").replace(/\s+/g, " ").trim();
-  if (isSkipWord(text)) return { guests: null, eta: null, vehicle: null, requests: null, skipped: true };
+  const original = String(raw ?? "").replace(/\s+/g, " ").trim();
+  if (isSkipWord(original)) return { guests: null, eta: null, vehicle: null, requests: null, skipped: true };
 
-  const eta     = extractEta(text);
+  // "שני אורחים, מגיעים בשמונה בערב" — המילים הופכות לספרות פעם אחת,
+  // וכל החילוצים למטה עובדים על אותו טקסט מנורמל.
+  const text    = wordsToDigits(original);
+  const etaHit  = extractEtaFull(text);
+  const eta     = etaHit?.value ?? null;
   const vehicle = extractVehicle(text);
   const guests  = extractGuests(text);
 
@@ -568,14 +630,22 @@ export function parseCheckinDetails(raw) {
   //    עליו למחיקת מילים. במקום זה מפצלים לטוקנים ומסננים מילות מילוי,
   //    בצורה שעובדת גם בעברית וגם באנגלית.
   let rest = text;
-  for (const hit of [eta, vehicle]) if (hit) rest = rest.split(hit).join(" ");
+  for (const hit of [etaHit?.source, vehicle]) if (hit) rest = rest.split(hit).join(" ");
+  // מילות חלק-היום ("בערב", "in the morning") כבר נספגו ב-eta — הן לא בקשה.
+  rest = rest.replace(/(?:בערב|בלילה|בבוקר|בצה?ריי?ם|אחר\s*הצה?ריי?ם|אחה"?צ|in the (?:morning|evening|afternoon)|at night|tonight)/gi, " ");
 
   const tokens = rest.split(/[\s,.;·|/()-]+/).filter(Boolean);
+  // מספר האורחים כבר נקלט בשדה שלו — הופעה *אחת* שלו נמחקת מהשארית.
+  // כל מספר אחר נשאר, כי הוא לרוב חלק מהבקשה עצמה ("2 מיטות נפרדות").
+  let guestsDropped = guests == null;
   const kept = tokens.filter((tk) => {
     const t = tk.toLowerCase();
+    if (/^\d+$/.test(t)) {
+      if (!guestsDropped && +t === guests) { guestsDropped = true; return false; }
+      return true;                                // מספר שהוא חלק מהבקשה
+    }
     if (tk.length <= 1) return false;             // תו בודד (מ"ב-14:30" נשאר "ב")
     if (DETAILS_FILLER.has(t)) return false;      // מילת מילוי/מפתח
-    if (/^\d+$/.test(t)) return false;            // מספר בודד (אורחים/שאריות)
     if ((tk.match(/[A-Za-z֐-׿]/g) || []).length === 0) return false; // בלי אותיות
     return true;
   });
