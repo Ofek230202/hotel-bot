@@ -95,6 +95,8 @@ before(async () => {
     name: "Hotel B", name_he: "מלון ב",
     reception_email:    "reception@hotelb.test",   reception_number:    "+15559990000",
     housekeeping_email: "hk@hotelb.test",          housekeeping_number: "+15559990001",
+    // מלון ב' יושב בניו יורק — מיקום ואזור זמן משלו (חברה בינלאומית).
+    location: { address: "5th Ave, New York, NY", lat: 40.7580, lng: -73.9855, timezone: "America/New_York", search_radius_m: 3000 },
   });
   globalThis.__HOTEL_A_NUM = HOTEL_A_NUM;
   globalThis.__HOTEL_B_NUM = HOTEL_B_NUM;
@@ -224,6 +226,29 @@ test("runInTenant: currentHotelId מבודד בין הקשרים מקבילים"
 // ══════════════════════════════════════════════════════════
 //  3. state — בידוד סשנים בין מלונות
 // ══════════════════════════════════════════════════════════
+test("קונסיירז' רב-מלונות: המיקום נלקח מה-hotelId הנכון — ת\"א מול ניו יורק, בלי ערבוב", async () => {
+  const { runInTenant, currentHotelId } = tenant;
+  // בדיוק מה ש-runPlacesTool עושה: configFor(currentHotelId()).location.
+  const locFor = () => config.configFor(currentHotelId()).location;
+
+  const a = await runInTenant(tenant.DEFAULT_HOTEL_ID, async () => locFor());
+  const b = await runInTenant("hotelb", async () => locFor());
+
+  assert.ok(Math.abs(a.lat - 32.0746) < 0.001, "מלון א' → תל אביב");
+  assert.equal(a.timezone, "Asia/Jerusalem");
+  assert.ok(Math.abs(b.lat - 40.7580) < 0.001, "מלון ב' → ניו יורק");
+  assert.equal(b.timezone, "America/New_York");
+  assert.notEqual(a.lat, b.lat, "שני מלונות → שני מיקומים שונים");
+
+  // בידוד תחת מקביליות: הקשרים מקבילים לא דולפים מיקום זה לזה.
+  const [ra, rb] = await Promise.all([
+    runInTenant(tenant.DEFAULT_HOTEL_ID, async () => { await new Promise(r => setTimeout(r, 8)); return locFor().timezone; }),
+    runInTenant("hotelb", async () => { await new Promise(r => setTimeout(r, 4)); return locFor().timezone; }),
+  ]);
+  assert.equal(ra, "Asia/Jerusalem", "מלון א' נשאר ת\"א גם במקביל");
+  assert.equal(rb, "America/New_York", "מלון ב' נשאר ניו יורק גם במקביל");
+});
+
 test("getSession: אותו טלפון בשני מלונות = שני סשנים נפרדים", () => {
   const phone = freshPhone();
   const a = state.getSession(phone, "kempinski");

@@ -172,6 +172,16 @@ test("retentionDays פר-מלון: purge_after מחושב לפי הימים שנ
   assert.ok(Math.abs(deltaDays - 1) < 0.01, `purge_after ~יום אחד אחרי היצירה (קיבלנו ${deltaDays})`);
 });
 
+test("בינלאומי: ה-prompt מנחה לקבל מסמכים מכל מדינה ושפה, ועדיין דוחה סלפי/רישיון", async () => {
+  const { SYSTEM } = await import("./idverify/vision.js");
+  assert.match(SYSTEM, /ANY country/i, "מסמך מכל מדינה");
+  assert.match(SYSTEM, /ANY language or script/i, "כל שפה/כתב");
+  assert.match(SYSTEM, /passport/i);
+  assert.match(SYSTEM, /national ID card/i);
+  assert.match(SYSTEM, /SELFIE/i, "עדיין דוחה סלפי");
+  assert.match(SYSTEM, /driver's license/i, "עדיין דוחה רישיון נהיגה");
+});
+
 test("retention: מסמך שפג תוקפו נמחק — הקובץ נעלם והקריאה מחזירה 'נמחק'", async () => {
   const { docId, path: p } = await makeDoc({ hotelId: "kempinski", reservationId: "resExpire" });
   // דוחפים את purge_after לעבר ישירות (מדמה מסמך ישן).

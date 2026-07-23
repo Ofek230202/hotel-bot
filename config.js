@@ -85,6 +85,12 @@ const DEFAULTS = {
     lat:             32.0746,
     lng:             34.7661,
     search_radius_m: 3000,
+    // ⚠️ אזור הזמן של *המלון* — קריטי לרשת רב-מלונות בינלאומית. שעות
+    //    הפתיחה "של היום" ו"פתוח עכשיו" נגזרות מהיום/השעה במקום שבו המלון
+    //    נמצא, לא בישראל. מלון בניו יורק חייב "America/New_York" כאן, אחרת
+    //    אורח יקבל את שעות היום הלא נכון. ברירת המחדל היא ישראל (הדמו).
+    timezone:        "Asia/Jerusalem",
+    country:         "IL",
   },
 
   // ── Building / layout (מבנה המלון) ───────────────────
@@ -738,15 +744,15 @@ const DEFAULTS = {
     },
     {
       en: { q: "Airport transfer?",    a: "We offer private transfers to Ben Gurion Airport. Please book 24h in advance via reception. Rate from ₪180." },
-      he: { q: "הסעה לשדה התעופה?",   a: "אנו מציעים העברות פרטיות לנתב\"ג. יש לתאם 24 שעות מראש דרך הקבלה. החל מ-180₪." },
+      he: { q: "הסעה לשדה התעופה?",   a: "אנו מציעים העברות פרטיות לנתב\"ג. יש לתאם 24 שעות מראש דרך הקבלה. החל מ-₪180." },
     },
     {
       en: { q: "Accessible rooms?",    a: "We have 6 fully accessible rooms with adaptive equipment. Please mention during booking." },
-      he: { q: "חדרי נגישות?",         a: "יש לנו 6 חדרים נגישים מלאים עם ציוד מותאם. אנא ציין בעת ההזמנה." },
+      he: { q: "חדרי נגישות?",         a: "יש לנו 6 חדרים נגישים מלאים עם ציוד מותאם. נא לציין זאת בעת ההזמנה." },
     },
     {
       en: { q: "Kosher food?",         a: "Our restaurant offers a kosher menu by advance arrangement. Contact concierge." },
-      he: { q: "אוכל כשר?",            a: "המסעדה מציעה תפריט כשר בתיאום מראש. פנה לקונסיירז'." },
+      he: { q: "אוכל כשר?",            a: "המסעדה מציעה תפריט כשר בתיאום מראש. אפשר לפנות לקונסיירז'." },
     },
     {
       en: { q: "Business center?",     a: "Our business center is open 24/7, Level 1. Printing, scanning and meeting rooms available." },

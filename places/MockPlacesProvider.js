@@ -51,7 +51,7 @@ const SAMPLES = {
 };
 
 export class MockPlacesProvider extends PlacesProvider {
-  async searchNearby({ query, category, keyword, lang = "he", location, limit = 6 } = {}) {
+  async searchNearby({ query, category, keyword, lang = "he", location, limit = 6, timeZone } = {}) {
     if (!location || location.lat == null || location.lng == null) {
       return { ok: false, results: [], reason: "no_location", provider: "mock" };
     }
@@ -59,6 +59,7 @@ export class MockPlacesProvider extends PlacesProvider {
     const base  = SAMPLES[category] || SAMPLES.default;
     const tag   = (keyword || query || "").trim();
     const hours = lang === "he" ? DEMO_HOURS_HE : DEMO_HOURS_EN;
+    const tz    = timeZone || location.timezone || "Asia/Jerusalem";
 
     const results = base.slice(0, limit).map((s) => {
       const loc    = { lat: location.lat + s.d[0], lng: location.lng + s.d[1] };
@@ -76,7 +77,7 @@ export class MockPlacesProvider extends PlacesProvider {
         priceSymbol:    s.price ? "₪".repeat(s.price) : null,
         openNow:        true,
         openingHours:   hours,
-        todayHours:     todayHoursLine(hours, new Date(), lang),
+        todayHours:     todayHoursLine(hours, new Date(), lang, tz),
         phone:          "03-000-0000",
         website:        null,
         distanceMeters: meters,
