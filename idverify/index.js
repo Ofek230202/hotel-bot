@@ -13,3 +13,11 @@
 import { MockIdProvider } from "./MockIdProvider.js";
 
 export const idVerify = new MockIdProvider();
+
+// ── ניהול מסמכי הזיהוי (רישום, גישה מבוקרת + audit, retention) ──
+// מיוצא מכאן — נקודת ההחלפה האחת. כשעוברים ל-vault/PMS אמיתי, מחליפים
+// את הספק למעלה *וגם* את המימוש של הפונקציות האלה במקום אחד.
+export {
+  recordIdDocument, retrieveIdDocument, listIdDocuments,
+  purgeExpiredIdDocuments, accessLogFor, logIdAccess, RETENTION_DAYS,
+} from "./registry.js";

@@ -3,11 +3,19 @@
 // ════════════════════════════════════════════════════════
 import { v4 as uuidv4 } from "uuid";
 import { wa, notifyStaff } from "./bot.js";
-import { logAlert, stats, patchSession, sessions } from "./state.js";
+import { logAlert, stats, patchSession, peekSession } from "./state.js";
 import { payments, PAYMENT_CURRENCY } from "./payments/index.js";
 import { nameFor } from "./names.js";
-import { hotelConfig } from "./config.js";
+import { configFor } from "./config.js";
 import { db, DEFAULT_HOTEL_ID } from "./db.js";
+import { currentHotelId } from "./tenant.js";
+
+// הקונפיג של המלון שאליו שייכת ההזמנה. הזמנה נושאת hotelId משלה, ולכן
+// גם פונקציות שרצות *מחוץ* להקשר ה-tenant (למשל דף התשלום ב-checkin-routes)
+// יבנו את ההודעה עם הקונפיג הנכון של אותו מלון. נופל להקשר הנוכחי אם אין.
+function cfgOf(res) {
+  return configFor(res?.hotelId || currentHotelId());
+}
 
 // נקרא תמיד בזמן-קריאה (lazy), אחרי ש-dotenv.config() כבר רץ.
 // אם נשמר כקבוע בראש הקובץ הוא נתפס כ-undefined בגלל סדר טעינת המודולים
@@ -39,7 +47,7 @@ const resUpsert = db.prepare(`
 function persist(res) {
   resUpsert.run({
     id:            res.id,
-    hotel_id:      HOTEL,
+    hotel_id:      res.hotelId || HOTEL,
     phone:         res.phone ?? null,
     room_number:   res.roomNumber ?? null,
     stage:         res.stage ?? null,
@@ -48,19 +56,24 @@ function persist(res) {
   });
 }
 
-// הידרציה: טעינת ההזמנות מה-DB ל-cache בעליית התהליך.
-for (const row of db.prepare(`SELECT data FROM reservations WHERE hotel_id = ?`).all(HOTEL)) {
+// הידרציה: טעינת ההזמנות מה-DB ל-cache בעליית התהליך (כל המלונות).
+// הזמנות ממופתחות לפי id (uuid גלובלי), אבל כל אחת נושאת hotelId משלה
+// כדי שחיפושים לפי טלפון/חדר יסננו לפי המלון הנכון.
+for (const row of db.prepare(`SELECT hotel_id, data FROM reservations`).all()) {
   try {
     const r = JSON.parse(row.data);
-    if (r && r.id) reservations[r.id] = r;
+    if (r && r.id) {
+      if (!r.hotelId) r.hotelId = row.hotel_id || HOTEL;
+      reservations[r.id] = r;
+    }
   } catch { /* שורה פגומה — מדלגים */ }
 }
 
 // ── סכומים — מקור אמת אחד ─────────────────────────────
 // סכום הפיקדון מגיע מ-hotelConfig (per-hotel, מוכן למולטי-טננט) ולא
 // מקבוע מפוזר. `shekels` מעצב אגורות → "₪500" בכל ההודעות.
-export function depositAmount() {
-  return hotelConfig.deposit_amount ?? 50000;
+export function depositAmount(hotelId = currentHotelId()) {
+  return configFor(hotelId).deposit_amount ?? 50000;
 }
 export function shekels(agorot) {
   const n = (agorot || 0) / 100;
@@ -175,7 +188,8 @@ export async function startCheckin(phone, nameInput, reservationId, opts = {}) {
   const guestNameEn = obj ? (obj.guestNameEn || obj.guestName || "") : (nameInput || "");
   const guestName   = obj ? (obj.guestName || guestNameHe) : (nameInput || "");
   const id      = uuidv4();
-  const DEPOSIT = depositAmount();
+  const hotelId = currentHotelId();          // ← שיוך ההזמנה למלון (multi-tenant)
+  const DEPOSIT = depositAmount(hotelId);
   const stay    = opts.stay || null;
   const details = opts.details || {};
   // מספר הלילות מגיע מהאורח. אם משום מה אין (זרימה ישנה/חריגה) — לילה
@@ -184,7 +198,7 @@ export async function startCheckin(phone, nameInput, reservationId, opts = {}) {
   const NIGHTS  = stay?.nights || 1;
 
   reservations[id] = {
-    id, phone, guestName, guestNameHe, guestNameEn, reservationId,
+    id, phone, hotelId, guestName, guestNameHe, guestNameEn, reservationId,
     roomNumber: null,
     stage: "pending_payment",
     deposit: DEPOSIT,
@@ -223,7 +237,7 @@ export async function startCheckin(phone, nameInput, reservationId, opts = {}) {
     currency: PAYMENT_CURRENCY,
     guestName,
     phone,
-    description: `פיקדון שהייה — ${hotelConfig.name}`,
+    description: `פיקדון שהייה — ${configFor(hotelId).name}`,
     // עמוד התשלום (אצל ספק אמיתי — דף הסליקה המתארח שלו; אצל ה-Mock —
     // דף תשלום הדמו הפנימי שלנו). לשם נשלח האורח כדי "לשלם".
     paymentPageUrl: `${baseUrl()}/checkin/pay?rid=${id}`,
@@ -266,7 +280,7 @@ export async function completeCheckin(reservationId, roomNumber) {
   const nights = res.nights || 1;
   let coDate;
   if (res.stayCheckOut) {
-    coDate = israelDateTime(res.stayCheckOut, hotelConfig.checkout_time || "12:00");
+    coDate = israelDateTime(res.stayCheckOut, cfgOf(res).checkout_time || "12:00");
   } else {
     coDate = new Date(res.checkedInAt);
     coDate.setDate(coDate.getDate() + nights);
@@ -289,15 +303,15 @@ export async function completeCheckin(reservationId, roomNumber) {
     guestNameEn:   res.guestNameEn,
     checkinStage:  null,
     checkInAt:     res.checkedInAt,
-  });
+  }, res.hotelId);
 
   // ── הודעת האישור לאורח — בשפת השיחה שלו, מהתחלה ועד הסוף ──
   // כל הפרטים נשאבים מ-hotelConfig לפי השפה (ולא ממחרוזות קשיחות),
   // כדי שאורח אנגלי לא יקבל "מסעדת הגן, קומה 1" באמצע משפט באנגלית.
-  const lang = sessions[res.phone]?.lang === "en" ? "en" : "he";
+  const lang = peekSession(res.phone, res.hotelId)?.lang === "en" ? "en" : "he";
   const he   = lang === "he";
   const name = nameFor(res, lang); // שם בשפת השיחה — בלי ערבוב (Bug 2)
-  const cfg  = hotelConfig;
+  const cfg  = cfgOf(res);
   const svc  = (key) => cfg.services[key]?.[lang] || cfg.services[key]?.en || {};
   const bf   = svc("breakfast"), pool = svc("pool"), rs = svc("room_service");
   const stayLines = formatStayDates(stayOf(res), lang);
@@ -338,6 +352,7 @@ export async function completeCheckin(reservationId, roomNumber) {
   const stayShort = formatStayShort(stayOf(res), "he");
   await notifyStaff({
     phone: res.phone,
+    hotelId: res.hotelId,
     dept: "reception",
     roomNumber: res.roomNumber,
     guestName: res.guestName,
@@ -522,9 +537,10 @@ async function settleFolio(res, { overageDescription } = {}) {
 
 // ── Process check-out ─────────────────────────────────
 export async function processCheckout(phone, reservationId, lang = "he") {
+  const hid = currentHotelId();
   const res = reservationId
     ? reservations[reservationId]
-    : Object.values(reservations).find(r => r.phone === phone && r.stage === "checked_in");
+    : Object.values(reservations).find(r => r.phone === phone && r.stage === "checked_in" && (r.hotelId || HOTEL) === hid);
 
   if (!res) throw new Error("No active reservation found");
 
@@ -616,7 +632,7 @@ export async function processCheckout(phone, reservationId, lang = "he") {
     // הסלמה *פעילה* לקבלה (וואטסאפ + מייל), לא רק לוג בדשבורד — חיוב מעל
     // הפיקדון הוא אירוע שקבלה צריכה לדעת עליו בזמן אמת.
     await notifyStaff({
-      dept: "reception", phone: res.phone, roomNumber: res.roomNumber, guestName: res.guestName,
+      dept: "reception", hotelId: res.hotelId, phone: res.phone, roomNumber: res.roomNumber, guestName: res.guestName,
       message: `⚠️ חיובים ₪${totalStr} מעל פיקדון | הפרש ₪${balanceStr} חויב מכרטיס הפיקדון | הוצעה החלפת כרטיס`,
       priority: "high",
     });
@@ -626,7 +642,7 @@ export async function processCheckout(phone, reservationId, lang = "he") {
   // notifyStaff (ולא logAlert בלבד) — כדי שמשק הבית באמת יקבל וואטסאפ+מייל
   // ויכין את החדר לאורח הבא, בדיוק כמו שהקבלה מקבלת התראה בצ'ק אין.
   await notifyStaff({
-    dept: "housekeeping", phone: res.phone, roomNumber: res.roomNumber, guestName: res.guestName,
+    dept: "housekeeping", hotelId: res.hotelId, phone: res.phone, roomNumber: res.roomNumber, guestName: res.guestName,
     message: `🧹 חדר ${res.roomNumber} פנוי — ניקיון מלא נדרש`,
     priority: "normal",
   });
@@ -656,7 +672,7 @@ export async function switchOverageToAlternateCard(reservationId, lang = "he") {
   );
 
   await logAlert({
-    dept: "reception", phone: res.phone, roomNumber: res.roomNumber, guestName: res.guestName,
+    dept: "reception", hotelId: res.hotelId, phone: res.phone, roomNumber: res.roomNumber, guestName: res.guestName,
     message: `🔁 חדר ${res.roomNumber}: הפרש ₪${balanceStr} הועבר לכרטיס אחר (לבקשת האורח)`,
     priority: "normal",
   });
@@ -736,18 +752,18 @@ export async function autoChargeOnNoShow(reservationId, lang = "he") {
   // הסלמה פעילה (וואטסאפ + מייל) — no-show הוא אירוע שקבלה ומשק הבית
   // חייבים לדעת עליו בזמן אמת, לא רק כרשומה בדשבורד.
   await notifyStaff({
-    dept: "reception", phone: res.phone, roomNumber: res.roomNumber, guestName: res.guestName,
+    dept: "reception", hotelId: res.hotelId, phone: res.phone, roomNumber: res.roomNumber, guestName: res.guestName,
     message: `🏃 *NO-SHOW* חדר ${res.roomNumber} · ${res.guestName} — לא בוצע צ'ק אאוט; חויב אוטומטית ₪${totalStr}`,
     priority: "high",
   });
   await notifyStaff({
-    dept: "housekeeping", phone: res.phone, roomNumber: res.roomNumber, guestName: res.guestName,
+    dept: "housekeeping", hotelId: res.hotelId, phone: res.phone, roomNumber: res.roomNumber, guestName: res.guestName,
     message: `🧹 חדר ${res.roomNumber} פנוי (no-show) — ניקיון מלא נדרש`,
     priority: "normal",
   });
 
   // ── קישור session ↔ reservation ──────────────────────
-  patchSession(res.phone, { stage: "checked_out", checkinStage: null, checkoutStage: null });
+  patchSession(res.phone, { stage: "checked_out", checkinStage: null, checkoutStage: null }, res.hotelId);
 
   return { alreadyHandled: false, settlement: s, reservation: res };
 }
@@ -760,17 +776,19 @@ export function findNoShowReservations(now = new Date()) {
   );
 }
 
-export function getActiveReservation(phone) {
-  return Object.values(reservations).find(r => r.phone === phone && r.stage === "checked_in");
+export function getActiveReservation(phone, hotelId = currentHotelId()) {
+  return Object.values(reservations).find(
+    r => r.phone === phone && r.stage === "checked_in" && (r.hotelId || HOTEL) === hotelId
+  );
 }
 
 // ── הזמנה שממתינה לתשלום הפיקדון ──────────────────────
 // משמשת כדי *לחדש* את שלב הפיקדון בלי ליצור הזמנה חדשה: אורח שביקש
 // לעבור שפה באמצע, או שכתב "להמשיך בצ'ק אין", מקבל את אותו קישור תשלום
 // שוב — במקום להתחיל את הצ'ק אין מהתחלה. מחזירה את החדשה ביותר.
-export function getPendingReservation(phone) {
+export function getPendingReservation(phone, hotelId = currentHotelId()) {
   return Object.values(reservations)
-    .filter(r => r.phone === phone && r.stage === "pending_payment" && r.paymentUrl)
+    .filter(r => r.phone === phone && r.stage === "pending_payment" && r.paymentUrl && (r.hotelId || HOTEL) === hotelId)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
 }
 

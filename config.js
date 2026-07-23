@@ -118,6 +118,25 @@ const DEFAULTS = {
   // כדי שהסכום שהאורח מאשר בתנאים יהיה תמיד הסכום שבאמת מוקפא.
   deposit_amount: 50000,
 
+  // ── ID document policy (מדיניות מסמכי זיהוי) ───────────
+  // ⚠️ קריטי לפרטיות. ברירת המחדל היא **verify-then-discard**: הבוט
+  //    מאמת את המסמך, מחלץ *רק את השדות הנדרשים*, ומוחק את התמונה מיד.
+  //    זו העמדה המתכנסת של כל רשויות הפרטיות שנבדקו (CNIL/AEPD/Garante/
+  //    DPC + הרשות הישראלית) — ראה SECURITY.md §0. אל תשמור תמונה בלי סיבה.
+  //
+  //    מלון רשאי לשמור את התמונה *רק* אם יש לו **בסיס חוקי מתועד**
+  //    (למשל תיעוד תייר חוץ ל-מע"מ 0%, חוק מע"מ §30(א)(8)). אז — ורק
+  //    אז — קובעים `retain_image: true` **וגם** `legal_basis`, והתמונה
+  //    נשמרת מוצפנת, עם retention אוטומטי ו-audit על כל גישה.
+  id_policy: {
+    retain_image:  false,   // ברירת מחדל תואמת-רגולציה: לא שומרים תמונה
+    legal_basis:   null,    // חובה כש-retain_image=true, אחרת השמירה נחסמת
+    retention_days: 30,     // רלוונטי רק כששומרים; מומלץ לצמצם למינימום
+    // השדות המינימליים שמחלצים ושומרים במקום התמונה (מינימיזציית נתונים).
+    // רק מה שהמלון באמת צריך לפנקס האורחים — לא כתובת/חתימה/תמונת פנים.
+    extract_fields: ["full_name", "document_type", "document_number", "nationality", "date_of_birth", "expiry_date"],
+  },
+
   // ── Stay terms (תנאי שהייה) ───────────────────────────
   // ⚠️ תנאים *לדוגמה* בלבד — לצורכי הדמו.
   //    בפרודקשן כל מלון מחליף אותם בתנאים המשפטיים האמיתיים שלו,
@@ -843,6 +862,26 @@ export function updateConfig(patch) {
   hotelConfig = deepMerge(structuredClone(DEFAULTS), overrides);
   configCache.delete(HOTEL);
   return hotelConfig;
+}
+
+// ── עדכון קונפיג של מלון *מסוים* (multi-tenant onboarding) ──
+// כמו updateConfig, אבל לכל hotel_id. זו נקודת הכניסה להוספת/עריכת
+// מלון שאינו מלון ברירת המחדל: כותב overrides לשורה שלו ב-DB ומנקה
+// את ה-cache שלו. עבור מלון ברירת המחדל מפנה ל-updateConfig כדי שגם
+// hotelConfig החי יתעדכן. לעולם לא מערבב בין מלונות — כל מלון ושורתו.
+export function updateConfigFor(hotelId, patch) {
+  if (!hotelId || hotelId === HOTEL) return updateConfig(patch);
+  if (!isPlainObject(patch)) throw new TypeError("updateConfigFor expects a plain object");
+  let cur = {};
+  try {
+    const row = db.prepare(`SELECT data FROM config WHERE hotel_id = ?`).get(hotelId);
+    const parsed = row?.data ? JSON.parse(row.data) : null;
+    if (isPlainObject(parsed)) cur = parsed;
+  } catch { /* אין שורה עדיין */ }
+  const next = deepMerge(cur, patch);
+  persistStmt.run(hotelId, JSON.stringify(next), new Date().toISOString());
+  configCache.delete(hotelId);
+  return configFor(hotelId);
 }
 
 // ── איפוס לברירות המחדל שבקוד ──────────────────────────
