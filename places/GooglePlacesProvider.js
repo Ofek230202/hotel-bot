@@ -54,6 +54,49 @@ export class GooglePlacesProvider extends PlacesProvider {
 
   get hasKey() { return !!this.#apiKey; }
 
+  // בקשה בודדת ל-Google. מחזיר { data } בהצלחה, או { status, reason } בכשל.
+  // reason מפריד תקלה קבועה (invalid_key על 403, וגם 400 שלא התאושש)
+  // מתקלה חולפת (rate_limited/unavailable) — כדי ש-smoke-check ידע מתי לצעוק.
+  async #request(body, textQuery) {
+    let resp;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+    try {
+      resp = await fetch(SEARCH_TEXT_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type":     "application/json",
+          "X-Goog-Api-Key":   this.#apiKey, // ← המפתח, רק כאן, אף פעם לא בלוג
+          "X-Goog-FieldMask": FIELD_MASK,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (e) {
+      console.error(`Places(Google) fetch failed: ${e?.name || "Error"} ${e?.message || ""}`.trim());
+      return { status: 0, reason: "unavailable" };
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!resp.ok) {
+      // מדפיסים סטטוס בלבד — לעולם לא את גוף התשובה או המפתח.
+      console.error(`Places(Google) HTTP ${resp.status} for query="${String(textQuery).slice(0, 60)}"`);
+      const reason =
+        resp.status === 429 ? "rate_limited" :
+        resp.status === 403 ? "invalid_key"  :
+        resp.status === 400 ? "invalid_key"  :   // עשוי להתאושש אצל הקורא (ניסיון בלי includedType)
+                              "unavailable";
+      return { status: resp.status, reason };
+    }
+
+    try {
+      return { status: 200, data: await resp.json() };
+    } catch {
+      return { status: 200, reason: "bad_response" };
+    }
+  }
+
   async searchNearby({ query, category, keyword, openNow = false, lang = "he", location, radius, limit, timeZone } = {}) {
     if (!location || location.lat == null || location.lng == null) {
       return { ok: false, results: [], reason: "no_location", provider: "google" };
@@ -81,49 +124,18 @@ export class GooglePlacesProvider extends PlacesProvider {
     if (includedType) body.includedType = includedType;
     if (openNow)      body.openNow = true;
 
-    let resp;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
-    try {
-      resp = await fetch(SEARCH_TEXT_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type":      "application/json",
-          "X-Goog-Api-Key":    this.#apiKey, // ← המפתח, רק כאן, אף פעם לא בלוג
-          "X-Goog-FieldMask":  FIELD_MASK,
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-    } catch (e) {
-      // רשת נפלה / timeout — לא מדליפים פרטים, רק מסמנים "לא זמין".
-      console.error(`Places(Google) fetch failed: ${e?.name || "Error"} ${e?.message || ""}`.trim());
-      return { ok: false, results: [], reason: "unavailable", provider: "google" };
-    } finally {
-      clearTimeout(timer);
+    // ניסיון ראשון — עם includedType (אם יש). על 400 *כשהיה* includedType,
+    // מנסים שוב בלי הסינון: ייתכן שהסוג אינו נתמך, אבל טקסט חופשי ("וטרינר",
+    // "כספומט") עדיין יחזיר תוצאות. כך "אין לי מידע" לעולם לא נובע מקטגוריה.
+    let out = await this.#request(body, textQuery);
+    if (out.status === 400 && includedType) {
+      console.error(`Places(Google) 400 with includedType="${includedType}" — retrying as free text`);
+      const { includedType: _drop, ...noType } = body;
+      out = await this.#request(noType, textQuery);
     }
 
-    if (!resp.ok) {
-      // מדפיסים סטטוס בלבד — לעולם לא את גוף התשובה או המפתח.
-      console.error(`Places(Google) HTTP ${resp.status} for query="${textQuery.slice(0, 60)}"`);
-      // מפרידים בין תקלה *קבועה בהגדרות* לבין תקלה *חולפת*:
-      // 400/403 = מפתח לא תקין / ה-API לא מופעל בפרויקט / המפתח מוגבל —
-      // כאלה לא יתקנו את עצמן, וכל חיפוש עתידי ייכשל באותה צורה. הבחנה זו
-      // היא מה שמאפשר ל-smoke-check בהפעלה לצעוק על מפתח פסול במקום
-      // להיראות כמו תקלת רשת רגעית.
-      const reason =
-        resp.status === 429                          ? "rate_limited" :
-        (resp.status === 400 || resp.status === 403) ? "invalid_key"  :
-                                                       "unavailable";
-      return { ok: false, results: [], reason, provider: "google" };
-    }
-
-    let data;
-    try {
-      data = await resp.json();
-    } catch {
-      return { ok: false, results: [], reason: "bad_response", provider: "google" };
-    }
+    if (out.reason) return { ok: false, results: [], reason: out.reason, provider: "google" };
+    const data = out.data;
 
     const hotel = { lat: location.lat, lng: location.lng };
     const tz = timeZone || location.timezone || "Asia/Jerusalem";

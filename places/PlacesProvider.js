@@ -11,19 +11,87 @@
 // בוחר בכלי; הערך (מימין) הוא ה-includedType של Google Places שאליו הוא
 // מתורגם. טקסט חופשי ("מסעדת בשר כשרה") עדיין עובר כ-textQuery — הקטגוריה
 // רק ממקדת את סוג המקום (מסעדה מול בית קפה מול אטרקציה).
+// ⚠️ הערכים חייבים להיות includedType חוקיים של Google Places API (New),
+//    Table A — אחרת הבקשה מקבלת 400. כרשת ביטחון, GooglePlacesProvider
+//    מנסה שוב *בלי* includedType על 400, כך שגם קטגוריה לא-נתמכת עדיין
+//    מחזירה תוצאות דרך טקסט חופשי (query). המפתח משמאל הוא מה שה-AI בוחר.
 export const PLACE_CATEGORIES = Object.freeze({
-  restaurant: "restaurant",
-  cafe:       "cafe",
-  bar:        "bar",
-  bakery:     "bakery",
-  attraction: "tourist_attraction",
-  museum:     "museum",
-  park:       "park",
-  nightlife:  "night_club",
-  shopping:   "shopping_mall",
-  store:      "store",
-  spa:        "spa",
-  pharmacy:   "pharmacy",
+  // אוכל ושתייה
+  restaurant:   "restaurant",
+  cafe:         "cafe",
+  bar:          "bar",
+  bakery:       "bakery",
+  takeaway:     "meal_takeaway",
+  // בריאות ורווחה
+  pharmacy:     "pharmacy",
+  doctor:       "doctor",
+  dentist:      "dentist",
+  hospital:     "hospital",
+  physiotherapist: "physiotherapist",
+  vet:          "veterinary_care",
+  // יופי וטיפוח
+  spa:          "spa",
+  hair_salon:   "hair_salon",
+  beauty_salon: "beauty_salon",
+  nail_salon:   "nail_salon",
+  // כושר
+  gym:          "gym",
+  // קניות
+  supermarket:  "supermarket",
+  grocery:      "grocery_store",
+  convenience:  "convenience_store",
+  shopping:     "shopping_mall",
+  department_store: "department_store",
+  clothing:     "clothing_store",
+  shoe_store:   "shoe_store",
+  jewelry:      "jewelry_store",
+  book_store:   "book_store",
+  electronics:  "electronics_store",
+  gift:         "gift_shop",
+  florist:      "florist",
+  pet_store:    "pet_store",
+  liquor:       "liquor_store",
+  store:        "store",
+  // כספים
+  atm:          "atm",
+  bank:         "bank",
+  // רכב
+  gas_station:  "gas_station",
+  car_repair:   "car_repair",
+  car_wash:     "car_wash",
+  parking:      "parking",
+  ev_charging:  "electric_vehicle_charging_station",
+  // שירותים
+  laundry:      "laundry",
+  travel_agency:"travel_agency",
+  post_office:  "post_office",
+  // חינוך
+  preschool:    "preschool",
+  school:       "school",
+  library:      "library",
+  university:   "university",
+  // תרבות ובידור
+  attraction:   "tourist_attraction",
+  museum:       "museum",
+  art_gallery:  "art_gallery",
+  park:         "park",
+  nightlife:    "night_club",
+  movie_theater:"movie_theater",
+  theater:      "performing_arts_theater",
+  amusement_park:"amusement_park",
+  aquarium:     "aquarium",
+  zoo:          "zoo",
+  bowling:      "bowling_alley",
+  casino:       "casino",
+  // תחבורה
+  train_station:"train_station",
+  subway:       "subway_station",
+  bus_station:  "bus_station",
+  taxi:         "taxi_stand",
+  // דת
+  synagogue:    "synagogue",
+  church:       "church",
+  mosque:       "mosque",
 });
 
 export class PlacesProvider {

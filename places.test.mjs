@@ -306,12 +306,44 @@ test("PLACE_CATEGORIES: קטגוריות המפתח ממופות ל-includedType
 // הבחנה קריטית: 400/403 = תקלת *הגדרות* שלא תתקן את עצמה (מפתח שגוי /
 // Places API (New) לא מופעל / מפתח מוגבל). 429/500/רשת = תקלה *חולפת*.
 // בלי ההפרדה הזו, smoke-check לא יכול לדעת מתי לצעוק ומתי רק להזהיר.
-test("google: HTTP 400 → invalid_key (תקלת הגדרות קבועה, לא 'לא זמין')", async () => {
+test("google: HTTP 400 (בלי includedType) → invalid_key (תקלת הגדרות קבועה)", async () => {
   const g = new GooglePlacesProvider("BAD_KEY");
   stubFetch(() => ({ ok: false, status: 400, json: async () => ({}) }));
-  const res = await g.searchNearby({ query: "x", location: HOTEL });
+  const res = await g.searchNearby({ query: "x", location: HOTEL }); // בלי category
   assert.equal(res.ok, false);
   assert.equal(res.reason, "invalid_key");
+});
+
+test("עמידות: 400 עם includedType → ניסיון שני *בלי* הסינון, מחזיר תוצאות", async () => {
+  const g = new GooglePlacesProvider("KEY");
+  let call = 0;
+  stubFetch(() => {
+    call++;
+    // ניסיון ראשון (עם includedType) נכשל ב-400; השני (בלי) מצליח.
+    return call === 1 ? { ok: false, status: 400, json: async () => ({}) } : googleOkResponse();
+  });
+  const res = await g.searchNearby({ query: "veterinarian", category: "vet", location: HOTEL });
+  assert.equal(res.ok, true, "התאושש דרך טקסט חופשי");
+  assert.ok(res.results.length >= 1);
+  assert.equal(fetchCalls.length, 2, "בדיוק שני ניסיונות");
+  assert.ok(JSON.parse(fetchCalls[0].opts.body).includedType, "הראשון כלל includedType");
+  assert.ok(!JSON.parse(fetchCalls[1].opts.body).includedType, "השני בלי includedType");
+});
+
+test("עמידות: 400 עם includedType שגם השני נכשל → invalid_key (מפתח באמת פסול)", async () => {
+  const g = new GooglePlacesProvider("BAD_KEY");
+  stubFetch(() => ({ ok: false, status: 400, json: async () => ({}) }));
+  const res = await g.searchNearby({ query: "x", category: "vet", location: HOTEL });
+  assert.equal(res.reason, "invalid_key", "כשגם הניסיון בלי הסינון נכשל — זו תקלת מפתח אמיתית");
+  assert.equal(fetchCalls.length, 2);
+});
+
+test("קטגוריות: המפה מכסה מגוון רחב (מסעדה עד וטרינר/כספומט/מספרה)", () => {
+  for (const k of ["restaurant", "cafe", "bar", "pharmacy", "atm", "bank", "vet", "dentist",
+    "hair_salon", "nail_salon", "gym", "supermarket", "laundry", "gas_station", "car_repair",
+    "florist", "gift", "museum", "art_gallery", "theater", "movie_theater", "park", "spa"]) {
+    assert.ok(PLACE_CATEGORIES[k], `קטגוריה חסרה: ${k}`);
+  }
 });
 
 test("google: HTTP 403 → invalid_key (API לא מופעל / מפתח מוגבל)", async () => {
