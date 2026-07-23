@@ -4,8 +4,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import twilio    from "twilio";
 import dotenv    from "dotenv";
-import { hotelConfig, departmentContacts, TAG_DEPARTMENTS } from "./config.js";
-import { getSession, recordActivity, pushHistory, patchSession, logAlert, logIncident, stats, sessions } from "./state.js";
+import { departmentContacts, TAG_DEPARTMENTS, configFor } from "./config.js";
+import { getSession, peekSession, recordActivity, pushHistory, patchSession, logAlert, logIncident, stats } from "./state.js";
+import { runInTenant, resolveHotelId, currentHotelId, fromNumberFor, tenantKey } from "./tenant.js";
+import { withLock, createSemaphore, createRateLimiter, withTimeout, retryWithBackoff } from "./concurrency.js";
 import { detectLangSignal, detectLanguageRequest, stripLanguageRequest } from "./i18n.js";
 import { stripInternalTags, hasInternalTag, validateFullName, validateReservationNumber, validateIdMedia, validateStayDates, validateTermsConfirmation, parseCheckinDetails, isSkipWord } from "./validate.js";
 import { resolveNameForms, nameFor }                      from "./names.js";
@@ -27,14 +29,27 @@ const ai   = new Anthropic({
   timeout: 30_000, // 30s לכל ניסיון (max_tokens קטן, אין streaming)
 });
 
+// ── תקרת מקביליות לקריאות AI (עומס-על) ─────────────────
+// עם 1000 אורחים שכותבים בו-זמנית, בלי תקרה ניפתח 1000 חיבורים במקביל
+// ל-Anthropic — הצפה, 429, וזיכרון שמתפוצץ. הסמפור מגביל כמה קריאות
+// *פעילות* בו-זמנית; השאר ממתינות בתור FIFO ומשוחררות כשמתפנה מקום.
+// ניתן לכוונן לפי מכסת ה-API שלך דרך AI_MAX_CONCURRENCY.
+const AI_MAX_CONCURRENCY = Number(process.env.AI_MAX_CONCURRENCY) || 24;
+const aiSemaphore = createSemaphore(AI_MAX_CONCURRENCY);
+
+// קונפיג המלון של ההקשר הנוכחי (multi-tenant). מחוץ לכל הקשר tenant —
+// מלון ברירת המחדל, כלומר בדיוק hotelConfig (configFor מחזיר אותו ישירות).
+const hcfg = () => configFor(currentHotelId());
+
 // קריאה ל-AI עם retry ברמת האפליקציה + לוג ברור של השגיאה המדויקת.
 // חשוב: "Premature close" נזרק בזמן קריאת גוף התשובה — אחרי שה-headers כבר
 // הגיעו — ולכן ה-retry הפנימי של ה-SDK לא תמיד תופס אותו. עוטפים בעצמנו.
+// כל ניסיון עובר דרך הסמפור כדי לכבד את תקרת המקביליות.
 async function createMessageWithRetry(params, attempts = 3) {
   let lastErr;
   for (let i = 1; i <= attempts; i++) {
     try {
-      return await ai.messages.create(params);
+      return await aiSemaphore(() => ai.messages.create(params));
     } catch (e) {
       lastErr = e;
       const status = e?.status;
@@ -81,7 +96,7 @@ function tidyForWhatsApp(text) {
     .trim();
 }
 
-export async function wa(to, body, { lang = "he" } = {}) {
+export async function wa(to, body, { lang = "he", from } = {}) {
   const raw = String(body ?? "");
   if (hasInternalTag(raw)) {
     console.error(`🚨 תג פנימי נתפס לפני שליחה לאורח (${to.slice(-8)}) — סונן: ${raw.slice(0, 120)}`);
@@ -93,7 +108,15 @@ export async function wa(to, body, { lang = "he" } = {}) {
     text = FALLBACK_MSG[lang === "he" ? "he" : "en"];
   }
 
-  await tw.messages.create({ from: FROM, to, body: text });
+  // כל מלון עונה *מהמספר שלו*: המספר היוצא נגזר מהמלון של ההקשר הנוכחי
+  // (multi-tenant), ונופל למספר ה-env אם אין מיפוי. כך תשובה לאורח של
+  // מלון א' לעולם לא יוצאת מהמספר של מלון ב'.
+  const fromNumber = from || fromNumberFor(currentHotelId()) || FROM;
+  const fromArg = fromNumber
+    ? (String(fromNumber).startsWith("whatsapp:") ? fromNumber : `whatsapp:${fromNumber}`)
+    : FROM;
+
+  await tw.messages.create({ from: fromArg, to, body: text });
   console.log(`📤 → ${to.slice(-8)}: ${text.slice(0, 60)}…`);
 }
 
@@ -110,7 +133,7 @@ function israelTime() {
 // במקום מקף שקט שנראה כאילו המידע פשוט חסר.
 // `hotelId` הוא הפרמטר שהופך את זה למולטי-טננט: אנשי הקשר נשלפים
 // לפי המלון, מנקודה אחת (config.js), ולא מגלובל משותף.
-export async function notifyStaff({ dept, roomNumber, guestName, message, phone, priority = "normal", hotelId, roomNote }) {
+export async function notifyStaff({ dept, roomNumber, guestName, message, phone, priority = "normal", hotelId = currentHotelId(), roomNote }) {
   const { whatsapp: to, email: toEmail } = departmentContacts(dept, hotelId);
   const emoji = { housekeeping: "🧹", reception: "🏨", maintenance: "🔧", concierge: "⭐", security: "🚨", room_service: "🛎️" }[dept] || "🔔";
   // שם המחלקה בכותרת ההתראה — קריא לצוות (room_service → ROOM SERVICE).
@@ -159,7 +182,7 @@ export async function notifyStaff({ dept, roomNumber, guestName, message, phone,
     } catch (e) { console.error("Staff notify (email) failed:", e.message); }
   }
 
-  logAlert({ dept, roomNumber, guestName, message, priority });
+  logAlert({ dept, roomNumber, guestName, message, priority, hotelId });
   stats.serviceRequests++;
 }
 
@@ -374,7 +397,7 @@ const PLACES_TOOL = {
 // ומחזיר ל-AI מחרוזת JSON קומפקטית. לעולם לא זורק — כישלון/היעדר
 // תוצאות מוחזרים כ-status שה-AI יודע לתרגם ל"אבדוק ואחזור" + [RECEPTION].
 async function runPlacesTool(input = {}, lang = "he") {
-  const loc = hotelConfig.location;
+  const loc = hcfg().location;
   if (!loc || loc.lat == null || loc.lng == null) {
     return JSON.stringify({
       status: "no_location",
@@ -387,24 +410,41 @@ async function runPlacesTool(input = {}, lang = "he") {
     return JSON.stringify({ status: "no_results", message: "No search query was provided." });
   }
 
+  // עמידות לשירות איטי/תקלה חולפת: timeout קשיח לכל ניסיון + retry עם
+  // backoff על תקלות *חולפות* בלבד (רשת/timeout/429/5xx). תקלה קבועה
+  // (invalid_key) או "אין תוצאות" — לא מנסים שוב, זה לא ישתנה. כך חיפוש
+  // איטי לא תוקע את הבוט ולא מפילו, ותקלת רגע נבלעת בשקט מול האורח.
   let res;
   try {
-    res = await places.searchNearby({
-      query,
-      category: input.category,
-      keyword:  input.keyword,
-      openNow:  !!input.open_now,
-      lang,
-      location: { lat: loc.lat, lng: loc.lng, address: lang === "he" ? (loc.address_he || loc.address) : loc.address },
-      radius:   loc.search_radius_m || 4000,
-      limit:    6,
-    });
+    res = await retryWithBackoff(async () => {
+      const r = await withTimeout(
+        () => places.searchNearby({
+          query,
+          category: input.category,
+          keyword:  input.keyword,
+          openNow:  !!input.open_now,
+          lang,
+          location: { lat: loc.lat, lng: loc.lng, address: lang === "he" ? (loc.address_he || loc.address) : loc.address },
+          radius:   loc.search_radius_m || 4000,
+          limit:    6,
+        }),
+        9000, "places.searchNearby",
+      );
+      // תקלה חולפת שהוחזרה כ-ok:false → זורקים כדי לנסות שוב.
+      if (r && !r.ok && (r.reason === "rate_limited" || r.reason === "unavailable" || r.reason === "bad_response")) {
+        throw Object.assign(new Error(`places transient: ${r.reason}`), { _res: r });
+      }
+      return r;
+    }, { attempts: 3, baseMs: 300 });
   } catch (e) {
-    console.error("Places tool failed:", e?.message || e);
-    return JSON.stringify({
-      status: "unavailable",
-      message: "The live places search is temporarily unavailable. Tell the guest you'll check and come back, and escalate with [RECEPTION].",
-    });
+    console.error("Places tool failed (after retries):", e?.message || e);
+    res = e?._res || null; // אם התקלה נשאה תוצאה מובנית — נשתמש בה למטה
+    if (!res) {
+      return JSON.stringify({
+        status: "unavailable",
+        message: "The live places search is temporarily unavailable. Tell the guest you'll check and come back, and escalate with [RECEPTION].",
+      });
+    }
   }
 
   if (!res?.ok) {
@@ -510,7 +550,7 @@ async function runConciergeTurn(session, lang, phone) {
 }
 
 function buildPrompt(session, lang) {
-  const cfg = hotelConfig;
+  const cfg = hcfg();
   const L = lang === "he" ? "he" : "en";
   const { full: nowFull } = israelTime();
 
@@ -675,8 +715,9 @@ ${openOrderNote}
 - 🕐 *שעות פתיחה — הכלי מחזיר אותן, אז תמיד תמסור אותן:*
   לכל תוצאה יש שדה todayHours (השעות *היום*) ו-openingHours (כל השבוע), וכן
   phone, website ו-category (סוג המקום/המטבח). זה מידע אמיתי מגוגל — השתמש בו.
-  • בכל המלצה על מקום, כתוב *כתובת · שעות היום · דירוג · סוג המטבח · מרחק*.
-    אורח שמקבל המלצה בלי שעות לא יודע אם בכלל אפשר ללכת עכשיו.
+  • בכל המלצה על מקום, כתוב *כתובת · שעות היום · דירוג · סוג המטבח · טווח מחירים · מרחק*
+    (כל שדה שהכלי החזיר). אורח שמקבל המלצה בלי שעות לא יודע אם בכלל אפשר ללכת עכשיו.
+    יש טלפון/אתר בתוצאה? הצע אותם למי שירצה לתאם או לבדוק תפריט.
   • אורח ששואל על מקום ("עד איזו שעה פתוח?", "מה הכתובת?", "יש שם טלפון?") —
     ⛔ אסור לענות "אין לי מידע מדויק". קרא לכלי *שוב* עם שם המקום ב-query,
     וענה מהתוצאה. "אין לי מידע" כשהמידע קיים בגוגל היא תשובה כושלת.
@@ -1016,8 +1057,9 @@ name, address, rating, price level and distance from the hotel.
   Every result carries todayHours (today's hours) and openingHours (the whole week),
   plus phone, website and category (the kind of place / cuisine). That is real data
   from Google — use it.
-  • In every recommendation, give the *address · today's hours · rating · cuisine · distance*.
-    A guest handed a recommendation without hours doesn't know whether they can go now.
+  • In every recommendation, give the *address · today's hours · rating · cuisine · price range · distance*
+    (every field the tool returned). A guest handed a recommendation without hours doesn't
+    know whether they can go now. If the result has a phone/website, offer them for booking or menus.
   • If a guest asks about a place ("how late is it open?", "what's the address?",
     "do they have a phone number?") — ⛔ never answer "I don't have exact details".
     Call the tool *again* with the place name in the query field and answer from the result.
@@ -1303,7 +1345,7 @@ Examples:
 //     בקשה של אורח לא נעלמת בשקט, גם כשה-AI מפספס.
 // ════════════════════════════════════════════════════════
 function menuDishNames(lang) {
-  const svc  = hotelConfig.services?.room_service || {};
+  const svc  = hcfg().services?.room_service || {};
   const menu = (lang === "he" ? svc.he?.menu : svc.en?.menu) || svc.en?.menu || {};
   return Object.values(menu).flat().map(i => i?.name).filter(Boolean);
 }
@@ -1365,7 +1407,7 @@ function flagDuplicateOrder(phone, session, payload) {
 const ASKS_SOMETHING = /[?？]/;
 
 async function trackFoodOrder(phone, lang, { guestText, reply, sent }) {
-  const s    = sessions[phone] || getSession(phone);
+  const s    = getSession(phone);
   const open = s.openFoodOrder || null;
 
   // ההזמנה נשלחה → סוגרים את המעקב.
@@ -1576,6 +1618,7 @@ async function runActions(raw, session, phone) {
 
     await notifyStaff({
       phone,
+      hotelId: session.hotelId,   // ← בקשה נשלחת למחלקה של *המלון של האורח* בלבד
       dept,
       roomNumber: session.roomNumber,
       guestName: session.guestName,
@@ -1672,7 +1715,7 @@ function datesHint(state, lang) {
 // מרכיבים אותו להודעת וואטסאפ ומחליפים placeholders בערכים האמיתיים
 // של המלון — כדי שהתנאים לא יסתרו את מה שהמערכת עושה בפועל.
 function renderTerms(lang) {
-  const cfg  = hotelConfig;
+  const cfg  = hcfg();
   const he   = lang === "he";
   const list = cfg.terms?.[he ? "he" : "en"] || [];
   const vars = {
@@ -2077,7 +2120,7 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
     patchSession(phone, {
       checkinStage:    "waiting_payment",
       termsAcceptedAt: new Date().toISOString(),
-      termsVersion:    hotelConfig.terms?.version || null,
+      termsVersion:    hcfg().terms?.version || null,
     });
     await promptStage(phone, "waiting_payment", lang, {
       prefix: lang === "he"
@@ -2504,15 +2547,52 @@ async function handleEmergency(phone, text, lang, kind) {
   }
 }
 
+// ── מגביל קצב per-guest (הגנה מפני הצפה/abuse) ──────────
+// דלי אסימונים לכל אורח: פרץ קצר מותר (capacity), אך אורח (או תקלה)
+// שמפציץ הודעות ברצף נבלם בנימוס במקום להעמיס את המערכת ואת ה-AI.
+// ברירות מחדל שמרניות; ניתן לכוונן דרך env.
+// ברירות מחדל נדיבות בכוונה: נועדו לבלום *הצפה אמיתית* (מאות הודעות
+// בשנייה מאותו מספר — תקלה או abuse), בלי לפגוע לעולם באורח אמיתי.
+// מלון עמוס יכול להדק דרך env. הלוגיקה עצמה מכוסה בבדיקת יחידה דטרמיניסטית.
+const guestRateLimiter = createRateLimiter({
+  capacity:     Number(process.env.GUEST_BURST) || 60,
+  refillPerSec: Number(process.env.GUEST_RATE)  || 2,
+});
+
 // ── שער הכניסה — לעולם לא משאיר אורח בלי מענה (Bug #2) ──
 // כל שגיאה, מכל מקום בזרימה, נתפסת כאן: האורח תמיד מקבל הודעה,
 // והתקלה מוסלמת לקבלה (אדם) כדי שמישהו יטפל. אף פעם לא שקט מוחלט.
-export async function handleIncoming(phone, text, media = null) {
+//
+// שלוש הגנות עומס עוטפות כל הודעה:
+//  1. runInTenant — כל הטיפול רץ תחת זהות המלון (מ-To של Twilio), כך
+//     ש-currentHotelId() מחזיר את המלון הנכון בכל קריאה פנימית. הבידוד
+//     בין מלונות מתחיל כאן, לפני שנוגעים בכל state.
+//  2. withLock(tenantKey) — הודעות של *אותו אורח באותו מלון* מעובדות
+//     בזו אחר זו. שתי הודעות מהירות לא ירוצו במקביל, לא ידרסו מצב זו
+//     של זו, ולא ייצרו כפילויות (למשל הזמנת אוכל כפולה). אורחים ומלונות
+//     שונים רצים במקביל בלי חסימה.
+//  3. rate limit — אורח שמפציץ הודעות נבלם.
+//
+// meta.to = המספר של המלון (To של Twilio) → ממנו נגזר hotelId. נשמר
+// תואם-לאחור: קריאה בלי meta (בדיקות/סימולציה) → מלון ברירת המחדל.
+export async function handleIncoming(phone, text, media = null, meta = {}) {
+  const hotelId = meta.hotelId || resolveHotelId(meta.to);
+  return runInTenant(hotelId, () => withLock(tenantKey(hotelId, phone), () => guardedHandle(phone, text, media)));
+}
+
+async function guardedHandle(phone, text, media = null) {
+  // בלימת קצב per-guest — לפני כל עיבוד יקר. חורגים מהקצב → הודעה קצרה
+  // ויוצאים; לא מפילים ולא מעמיסים. (חירום עדיין נבדק קודם בתוך processIncoming
+  // רק אם עברנו; לכן נותנים לחירום לעקוף את הבלימה.)
+  if (!guestRateLimiter(phone) && !detectEmergency(text)) {
+    console.warn(`⏳ rate-limit: ${String(phone).slice(-8)} — הודעה נבלמה זמנית`);
+    return;
+  }
   try {
     await processIncoming(phone, text, media);
   } catch (e) {
     console.error("🚨 handleIncoming failed:", e?.stack || e?.message || e);
-    const lang = sessions[phone]?.lang || detectLangSignal(text) || "he";
+    const lang = peekSession(phone)?.lang || detectLangSignal(text) || "he";
 
     try {
       await wa(phone, FALLBACK_MSG[lang], { lang });
@@ -2524,8 +2604,8 @@ export async function handleIncoming(phone, text, media = null) {
       await notifyStaff({
         phone,
         dept: "reception",
-        roomNumber: sessions[phone]?.roomNumber,
-        guestName: sessions[phone]?.guestName,
+        roomNumber: peekSession(phone)?.roomNumber,
+        guestName: peekSession(phone)?.guestName,
         message: `⚠️ תקלה טכנית בטיפול בהודעת אורח (${phone}). האורח קיבל הודעת המתנה — נדרש מעקב אנושי.\nשגיאה: ${e?.message || e}`,
         priority: "high",
       });
@@ -2620,7 +2700,7 @@ async function processIncoming(phone, text, media = null) {
 
     if (room) {
       patchSession(phone, { roomNumber: room, pendingRoomActionRaw: null, pendingRoomLang: null, pendingRoomAttempts: 0 });
-      let reply = stripInternalTags(await runActions(heldRaw, sessions[phone] || session, phone));
+      let reply = stripInternalTags(await runActions(heldRaw, getSession(phone), phone));
       if (!reply) reply = heldLang === "he"
         ? `מצוין — חדר *${room}*! 🌟 העברתי את הבקשה לצוות המתאים, והם מטפלים בזה כעת.`
         : `Perfect — room *${room}*! 🌟 I've passed your request to the right team and they're on it.`;
@@ -2640,7 +2720,7 @@ async function processIncoming(phone, text, media = null) {
     // אחרי שני ניסיונות בלי מספר חדר — לא מאבדים את הבקשה: מעבירים לצוות
     // (הקבלה מזהה את האורח לפי הטלפון), ומטפלים בהודעה הנוכחית כרגיל.
     patchSession(phone, { pendingRoomActionRaw: null, pendingRoomLang: null, pendingRoomAttempts: 0 });
-    await runActions(heldRaw, sessions[phone] || session, phone).catch(() => {});
+    await runActions(heldRaw, getSession(phone), phone).catch(() => {});
   }
 
   // הודעה ראשונה: שולחים תפריט/פתיחה רק אם זו ברכה כללית בלבד ("שלום"/"היי").
@@ -2649,7 +2729,7 @@ async function processIncoming(phone, text, media = null) {
   if (session.messageCount === 1) {
     patchSession(phone, { stage: "active" });
     if (isGenericGreeting(body)) {
-      const welcome = hotelConfig.welcome[lang] || hotelConfig.welcome.en;
+      const welcome = hcfg().welcome[lang] || hcfg().welcome.en;
       await wa(phone, welcome, { lang });
       pushHistory(phone, "assistant", welcome);
       return;
@@ -2743,7 +2823,7 @@ async function processIncoming(phone, text, media = null) {
   pushHistory(phone, "user", userMsg);
   let raw;
   try {
-    raw = await runConciergeTurn(sessions[phone] || session, lang, phone);
+    raw = await runConciergeTurn(getSession(phone), lang, phone);
     if (!raw) throw new Error("empty AI response");
   } catch (e) {
     console.error("AI error (all retries failed):", e?.message || e);
@@ -2793,7 +2873,7 @@ async function processIncoming(phone, text, media = null) {
   // (אורח שלא עשה צ'ק אין דרך הבוט). לא מעבירים בקשה בלי חדר — הצוות לא
   // יידע לאן ללכת. עוצרים, זוכרים את הבקשה, ומבקשים את מספר החדר. ההודעה
   // הבאה של האורח תשחרר את הבקשה עם החדר הנכון (הטיפול למעלה).
-  const sess = sessions[phone] || session;
+  const sess = getSession(phone);
   if (needsRoomNumber(raw) && !sess.roomNumber) {
     patchSession(phone, { pendingRoomActionRaw: raw, pendingRoomLang: lang, pendingRoomAttempts: 0 });
     const ask = lang === "he"
@@ -2806,7 +2886,7 @@ async function processIncoming(phone, text, media = null) {
 
   // runActions מטפל בתגי המחלקות ומסיר אותם; stripInternalTags מנקה כל
   // תג אחר שנותר (כולל כזה שהמצאנו/המצא ה-AI) לפני שליחה ולפני היסטוריה.
-  let reply = stripInternalTags(await runActions(raw, sessions[phone] || session, phone));
+  let reply = stripInternalTags(await runActions(raw, getSession(phone), phone));
 
   // התשובה הייתה תגים בלבד → אחרי הניקוי לא נשאר טקסט. שולחים אישור
   // אנושי במקום כלום — האורח לעולם לא נשאר בלי מענה (Bug #2).

@@ -510,5 +510,61 @@ Priority order (to be decided together):
 דרך הסשן לכל הקריאות. `checkDepartmentContacts()` רץ ב-`server.js` בעלייה ומתריע
 בקול על מחלקה בלי מספר או בלי מייל — אחרת הבקשה נעלמת בשקט.
 
+## 8. ארכיטקטורת עומס, מולטי-טננט מלא ואבטחת מסמכי זיהוי (23.07.2026)
+
+סבב "לבנות נכון ל-100 מלונות × 1000 אורחים". **כל 226 הבדיקות עוברות.**
+מסמכי עומק: **`SCALING.md`** (יכולת נוכחית, מה נדרש לסקייל, עלויות) ו-**`SECURITY.md`**
+(מסמכי זיהוי — GDPR + דין ישראלי).
+
+### 8.1 עומס ומקביליות — `concurrency.js` (חדש)
+- **`withLock(key, fn)`** — נעילה תורית per-key. `handleIncoming` מריץ כל הודעה
+  תחת `withLock(tenantKey(hotelId, phone))`: שתי הודעות מהירות של אותו אורח
+  מעובדות **בזו אחר זו** — אין דריסת מצב, אין כפילויות, אין אובדן. אורחים/מלונות
+  שונים רצים במקביל.
+- **`createSemaphore(max)`** — תקרת מקביליות לקריאות Claude (`AI_MAX_CONCURRENCY`, ברירת
+  מחדל 24). 1000 אורחים לא פותחים 1000 חיבורים ל-Anthropic.
+- **`retryWithBackoff` + `withTimeout`** — קריאות Google Places עטופות ב-timeout קשיח
+  (9ש') + 3 ניסיונות עם backoff על תקלה חולפת (רשת/429/5xx). שירות איטי לא תוקע ולא מפיל.
+- **`createRateLimiter`** — דלי אסימונים per-guest נגד הצפה/abuse (נדיב; לבלימת flood אמיתי).
+
+### 8.2 מולטי-טננט מלא — `tenant.js` (חדש) + AsyncLocalStorage
+- זהות המלון (`hotelId`) נפתרת מ-**`To` של Twilio** (`resolveHotelId`, טבלת `hotel_numbers`)
+  ומוזרקת ל-**AsyncLocalStorage** ב-`handleIncoming` → `runInTenant(hotelId, …)`. כל
+  קריאה פנימית קוראת `currentHotelId()` בלי לחווט פרמטר דרך 54 קריאות. הקשרים מקבילים
+  מבודדים אוטומטית.
+- **סשנים והזמנות ממופתחים/נושאים `hotelId`** (`state.js`: מפתח `tenantKey(hotelId,phone)`;
+  `checkin.js`: `res.hotelId` + סינון חיפושים). אותו מספר טלפון בשני מלונות = **שני סשנים
+  נפרדים**. `getSession/patchSession/pushHistory/peekSession` מקבלים `hotelId` (ברירת מחדל
+  `currentHotelId()` → תואם-לאחור מלא למלון בודד).
+- **תשובות יוצאות מהמספר של המלון** (`wa()` → `fromNumberFor(hotelId)`), הודעות צוות
+  למחלקות של המלון בלבד, קונפיג פר-מלון (`hcfg()` = `configFor(currentHotelId())` בכל
+  bot.js/checkin.js/checkin-routes.js). `updateConfigFor(hotelId, patch)` — onboarding מלון חדש.
+- מלון חדש = `registerHotelNumber(number, hotelId)` + `updateConfigFor(hotelId, {...})`. בלי קוד.
+
+### 8.3 אבטחת מסמכי זיהוי — `idverify/registry.js` (חדש) + `SECURITY.md`
+- **ממצא מחקר שמעצב את המדיניות:** כל רשויות הפרטיות (CNIL/AEPD/Garante/DPC + הרשות
+  הישראלית) — **verify-then-discard**: לאמת ולא לשמור את התמונה. AEPD קנסה מלון €30k על
+  שמירת סריקה; ה-Garante מסמן איסוף ת"ז דרך WhatsApp כאסור.
+- **מצב `ID_STORE_MODE=verify_discard`** (מומלץ לפרודקשן): מאמתים, שומרים רק *רישום אימות*
+  (proof) — בלי תמונה. `store_encrypted` (דמו, ברירת מחדל) נשאר להדגמה.
+- **retention** אוטומטי (`ID_RETENTION_DAYS`, ברירת מחדל 30; job כל 6ש'), **גישה מבוקרת
+  + audit** (טבלאות `id_documents`/`id_access_log`; endpoints `/api/id-document*`), **בידוד
+  מלון** (מלון א' לא פותח מסמך של מלון ב' — נחסם ונרשם). הצפנה AES-256-GCM נשארת.
+- ⚠️ דגל כן: האימות שולח את התמונה ל-Claude vision (Anthropic, ארה"ב) — נדרש DPA/region.
+
+### 8.4 בדיקות (חדש)
+- **`scale.test.mjs`** (16) — פרימיטיבי מקביליות, בידוד tenant, ו**עומס: 300 הודעות במקביל
+  בשני מלונות** — בלי קריסה, בלי דליפה, בלי אובדן, כל תשובה מהמספר הנכון, סמפור ≤24.
+- **`idsecurity.test.mjs`** (7) — round-trip הצפנה, מטא-דטא בלבד, audit, בידוד חוצה-מלונות,
+  verify-then-discard, ו-retention.
+
+### 8.5 מה עדיין דורש תשתית חיצונית (ראה SCALING.md, בכנות)
+המצב הנוכחי (תהליך בודד + SQLite) מספיק לפיילוט של כמה מלונות. ל-100×1000 בפרודקשן
+נדרש: **PostgreSQL** מנוהל (המעבר מרוכז אך דורש הפיכת שכבת ה-state ל-async — 2–4 ימים,
+לא "שורה"), **Redis** (סשנים+נעילות מבוזרות לריבוי תהליכים), עותקים מרובים + LB, מספר
+Twilio לכל מלון, ו-**vault/S3+KMS** למסמכי זיהוי. עלות תשתית התחלתית ~$80–440/חודש;
+המשתנים הדומיננטיים בסקייל הם Twilio ו-Anthropic לפי נפח.
+
 > Rule for future work: payments change in ONE place (the provider abstraction). Never re-couple
-> business logic to a specific payment vendor.
+> business logic to a specific payment vendor. Same rule for the DB (`db.js` + the repository
+> functions), the tenant boundary (`tenant.js`), and ID storage (`idverify/index.js`).

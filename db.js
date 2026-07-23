@@ -118,6 +118,64 @@ db.exec(`
     service_requests INTEGER NOT NULL DEFAULT 0,
     emergencies      INTEGER NOT NULL DEFAULT 0
   );
+
+  -- ── מיפוי מספר Twilio נכנס → מלון (multi-tenant routing) ──
+  -- כל מלון והמספר שלו. הודעה נכנסת מגיעה עם השדה To (המספר של המלון);
+  -- מכאן שולפים לאיזה hotel_id היא שייכת. from_number הוא המספר שממנו
+  -- *יוצאות* הודעות לאותו מלון (בד"כ זהה ל-number). זו הנקודה שמפרידה
+  -- בין מלונות כבר בכניסה — לפני שנוצר סשן.
+  CREATE TABLE IF NOT EXISTS hotel_numbers (
+    number      TEXT PRIMARY KEY,   -- E.164 מנורמל, ללא הקידומת whatsapp:
+    hotel_id    TEXT NOT NULL,
+    from_number TEXT,               -- מספר יוצא (ברירת מחדל: number)
+    updated_at  TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_hotel_numbers_hotel
+    ON hotel_numbers (hotel_id);
+
+  -- ── רישום מסמכי זיהוי (מטא-דטא בלבד — לא התמונה) ──────
+  -- התמונה עצמה מוצפנת בקובץ .enc (או ב-vault/PMS בפרודקשן). כאן נשמר
+  -- *רישום* לכל מסמך: מי, מתי, מאיזה סוג, איפה מאוחסן, ומתי צריך למחוק
+  -- אותו (retention). בלי רישום כזה אי אפשר לאכוף מדיניות שמירה/מחיקה
+  -- ולא לענות על בקשת "מחקו את המידע שלי" (GDPR/חוק הגנת הפרטיות).
+  CREATE TABLE IF NOT EXISTS id_documents (
+    id             TEXT PRIMARY KEY,
+    hotel_id       TEXT NOT NULL,
+    reservation_id TEXT,
+    phone          TEXT,
+    guest_name     TEXT,
+    doc_type       TEXT,
+    stored_path    TEXT,            -- נתיב הקובץ המוצפן (או מזהה ב-vault)
+    encrypted      INTEGER NOT NULL DEFAULT 1,
+    status         TEXT,            -- verified | manual_review
+    created_at     TEXT,
+    purge_after    TEXT,            -- תאריך שאחריו יימחק אוטומטית (retention)
+    deleted_at     TEXT             -- מתי נמחק בפועל (NULL = קיים)
+  );
+  CREATE INDEX IF NOT EXISTS idx_id_documents_hotel
+    ON id_documents (hotel_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_id_documents_purge
+    ON id_documents (purge_after);
+  CREATE INDEX IF NOT EXISTS idx_id_documents_res
+    ON id_documents (hotel_id, reservation_id);
+
+  -- ── יומן גישה למסמכי זיהוי (audit trail) ──────────────
+  -- כל פתיחה/צפייה/הורדה של מסמך זיהוי נרשמת: מי ניגש, מתי, למה, ומאיזה
+  -- IP. זו דרישה של אבטחת מידע — בלי audit אי אפשר לדעת מי ראה PII רגיש.
+  CREATE TABLE IF NOT EXISTS id_access_log (
+    id          TEXT PRIMARY KEY,
+    hotel_id    TEXT NOT NULL,
+    document_id TEXT NOT NULL,
+    actor       TEXT,              -- מי ניגש (משתמש/טוקן קבלה)
+    action      TEXT,              -- view | download | purge | create
+    purpose     TEXT,
+    ip          TEXT,
+    at          TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_id_access_doc
+    ON id_access_log (document_id, at DESC);
+  CREATE INDEX IF NOT EXISTS idx_id_access_hotel
+    ON id_access_log (hotel_id, at DESC);
 `);
 
 // מוודא שקיימת שורת stats למלון (idempotent). שלבים הבאים יעדכנו אותה.

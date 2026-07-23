@@ -4,9 +4,9 @@
 import express from "express";
 import { reservations, completeCheckin, depositExplainer, switchOverageToAlternateCard, markPaid, formatStayShort, stayOf, shekels } from "./checkin.js";
 import { payments } from "./payments/index.js";
-import { sessions } from "./state.js";
+import { peekSession } from "./state.js";
 import { nameFor } from "./names.js";
-import { hotelConfig } from "./config.js";
+import { hotelConfig, configFor } from "./config.js";
 
 const router = express.Router();
 
@@ -18,7 +18,7 @@ const router = express.Router();
 //   2. Accept-Language של הדפדפן — כשאין הזמנה/סשן (למשל דף שגיאה).
 //   3. עברית — ברירת מחדל של מלון ישראלי.
 function pageLang(req, reservation) {
-  const sessionLang = reservation && sessions[reservation.phone]?.lang;
+  const sessionLang = reservation && peekSession(reservation.phone, reservation.hotelId)?.lang;
   if (sessionLang === "en" || sessionLang === "he") return sessionLang;
 
   const accept = String(req?.headers?.["accept-language"] || "").toLowerCase();
@@ -164,7 +164,7 @@ router.post("/payments/webhook",
 // עברי מלא. כל הנתונים נשאבים מההזמנה ומ-hotelConfig לפי השפה.
 function successPage(reservation, roomNumber, lang = "he") {
   const he   = lang === "he";
-  const cfg  = hotelConfig;
+  const cfg  = configFor(reservation?.hotelId); // קונפיג המלון של ההזמנה (multi-tenant)
   const name = nameFor(reservation, lang); // שם בשפת העמוד — לא הצורה העברית הקבועה
   const svc  = (key) => cfg.services[key]?.[lang] || cfg.services[key]?.en || {};
   const bf   = svc("breakfast"), pool = svc("pool");
@@ -188,7 +188,7 @@ function successPage(reservation, roomNumber, lang = "he") {
   ].filter(Boolean);
 
   return shellPage({
-    lang, title: T.title, icon: "✅",
+    lang, title: T.title, icon: "✅", hotelName: cfg.name,
     body: `
   <h1>${T.heading}</h1>
   <p class="welcome">${T.sub}</p>
@@ -235,14 +235,14 @@ function errorPage(kind, lang = "he") {
 
 // ── שלד עמוד משותף ─────────────────────────────────────
 // dir/lang/יישור נגזרים משפת העמוד — כדי שעמוד באנגלית לא ייצא RTL.
-function shellPage({ lang, title, icon, body, accent = "rgba(201,168,76,0.2)" }) {
+function shellPage({ lang, title, icon, body, accent = "rgba(201,168,76,0.2)", hotelName = hotelConfig.name }) {
   const he = lang === "he";
   return `<!DOCTYPE html>
 <html lang="${he ? "he" : "en"}" dir="${he ? "rtl" : "ltr"}">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${title} — ${hotelConfig.name}</title>
+<title>${title} — ${hotelName}</title>
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;600;700&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -267,7 +267,7 @@ h1{font-family:'Playfair Display',serif;font-size:28px;margin-bottom:8px}
 <body>
 <div class="card">
   <div class="icon">${icon}</div>
-  <div class="hotel">✦ ${hotelConfig.name}</div>
+  <div class="hotel">✦ ${hotelName}</div>
   ${body}
 </div>
 </body>
@@ -277,6 +277,7 @@ h1{font-family:'Playfair Display',serif;font-size:28px;margin-bottom:8px}
 // ── Demo payment page HTML (bilingual) ────────────────
 function paymentPage(rid, reservation, lang = "he") {
   const he = lang === "he";
+  const cfg = configFor(reservation?.hotelId); // מיתוג לפי המלון של ההזמנה
   const amount = ((reservation.deposit || 50000) / 100).toFixed(0); // ₪500
   const stay = formatStayShort(stayOf(reservation), lang);
   const T = he
@@ -446,6 +447,7 @@ input::placeholder{color:rgba(250,250,248,0.25)}
 // אמיתית ושום פרט כרטיס לא נשמר. מבנה זהה לעמוד הפיקדון.
 function balancePage(rid, reservation, lang = "he") {
   const he = lang === "he";
+  const cfg = configFor(reservation?.hotelId); // מיתוג לפי המלון של ההזמנה
   const amount = ((reservation.balanceAmount || 0) / 100).toFixed(0);
   const name = nameFor(reservation, lang); // שם בשפת העמוד — לא הצורה העברית
   const T = he

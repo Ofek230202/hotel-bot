@@ -9,6 +9,8 @@ import { hotelConfig, updateConfig, resetConfig, checkDepartmentContacts, printR
 import { reservations, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES, autoChargeOnNoShow, findNoShowReservations } from "./checkin.js";
 import checkinRouter from "./checkin-routes.js";
 import { smokePlaces } from "./places/index.js";
+import { listIdDocuments, retrieveIdDocument, accessLogFor, purgeExpiredIdDocuments, RETENTION_DAYS } from "./idverify/index.js";
+import { DEFAULT_HOTEL_ID } from "./tenant.js";
 
 dotenv.config();
 
@@ -40,6 +42,7 @@ function auth(req, res, next) {
 // ── WhatsApp Webhook ──────────────────────────────────
 app.post("/webhook", async (req, res) => {
   const from = req.body.From;
+  const to   = req.body.To;           // ← המספר של המלון: ממנו נגזר hotelId (multi-tenant)
   const body = req.body.Body?.trim() || "";
 
   // ── מדיה נכנסת (תמונה וכו') מטוויליו ─────────────────
@@ -53,8 +56,10 @@ app.post("/webhook", async (req, res) => {
 
   // הודעה ריקה לגמרי (בלי טקסט ובלי מדיה) — מתעלמים.
   if (!from || (!body && !media)) return res.sendStatus(200);
-  console.log(`📩 [${from.slice(-8)}] ${body || `<media:${media?.contentType || "?"}>`}`);
-  handleIncoming(from, body, media).catch(console.error);
+  console.log(`📩 [${from.slice(-8)} → ${String(to || "").slice(-8)}] ${body || `<media:${media?.contentType || "?"}>`}`);
+  // meta.to מזהה את המלון. handleIncoming עוטף הכול ב-runInTenant + נעילה
+  // per-guest, כך שהודעות מקבילות של מלונות/אורחים שונים לא מתערבבות.
+  handleIncoming(from, body, media, { to }).catch(console.error);
   res.type("text/xml").send("<Response></Response>");
 });
 
@@ -251,6 +256,55 @@ app.post("/api/config/reset", auth, (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+// ════════════════════════════════════════════════════════
+//  מסמכי זיהוי — גישה מבוקרת + מתועדת לקבלה (Part 3)
+//  ----------------------------------------------------------
+//  זו הדרך היחידה שהקבלה מקבלת תעודות זהות: מאחורי אימות (token),
+//  מבודד לפי מלון (hotelId), וכל פתיחה נרשמת ב-audit log. לעולם לא
+//  נחשפת התמונה בלי הרשאה ובלי תיעוד. ⚠️ אחסון דמו — בפרודקשן זה
+//  יוחלף ב-vault/PMS (idverify/index.js), אבל הממשק והאבטחה זהים.
+// ════════════════════════════════════════════════════════
+
+// רשימת מסמכים (מטא-דטא בלבד — לעולם לא התמונה).
+app.get("/api/id-documents", auth, (req, res) => {
+  const hotelId = req.query.hotelId || DEFAULT_HOTEL_ID;
+  res.json(listIdDocuments({ hotelId, reservationId: req.query.reservationId || null }));
+});
+
+// שליפת התמונה עצמה — מפוענחת לפי דרישה, מבודדת למלון, ומתועדת.
+// דורש purpose (למה ניגשים) — נרשם ב-audit. actor = מזהה המשתמש/קבלה.
+app.get("/api/id-document/:id/image", auth, async (req, res) => {
+  const hotelId = req.query.hotelId || DEFAULT_HOTEL_ID;
+  const out = await retrieveIdDocument(req.params.id, {
+    hotelId,
+    actor:   req.query.actor || req.headers["x-actor"] || "dashboard",
+    purpose: req.query.purpose || "reception check-in review",
+    ip:      req.headers["x-forwarded-for"] || req.socket?.remoteAddress || null,
+  });
+  if (out.notFound) return res.status(404).json({ error: "not found" });
+  if (out.denied)   return res.status(403).json({ error: "cross-tenant access denied (logged)" });
+  if (out.deleted)  return res.status(410).json({ error: "document purged (retention)" });
+  if (out.noImage)  return res.status(410).json({ error: "verify-then-discard: no image retained; verification is recorded", meta: out.meta });
+  if (out.error || !out.buffer) return res.status(500).json({ error: "could not read document" });
+  res.set("Content-Type", "image/jpeg");
+  res.set("Cache-Control", "no-store"); // PII — לא נשמר במטמון הדפדפן
+  res.send(out.buffer);
+});
+
+// יומן הגישות של מסמך (audit trail).
+app.get("/api/id-document/:id/access-log", auth, (req, res) => {
+  res.json(accessLogFor(req.params.id));
+});
+
+// הרצת מדיניות המחיקה (retention). נועד ל-cron; מפעילים גם ידנית.
+app.post("/api/id-documents/purge", auth, async (req, res) => {
+  try {
+    res.json({ ok: true, retentionDays: RETENTION_DAYS, ...(await purgeExpiredIdDocuments()) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.get("/health", (req, res) => res.json({ status: "ok", uptime: process.uptime() }));
 app.use(express.static("dashboard/public"));
 
@@ -264,6 +318,12 @@ app.listen(PORT, () => {
   // הדגמה מול לקוח. לא ממתינים לו — השרת כבר מקבל בקשות; הכשל מטופל
   // בתוך smokePlaces ולעולם לא מפיל את התהליך.
   smokePlaces(hotelConfig.location).catch(() => {});
+
+  // ── מדיניות שמירה (retention) של מסמכי זיהוי ──────────
+  // מוחק אוטומטית מסמכים שעבר זמנם (ברירת מחדל 30 יום). רץ בעלייה
+  // ואז כל 6 שעות. unref כדי שלא יעכב יציאה תקינה של התהליך.
+  purgeExpiredIdDocuments().catch(() => {});
+  setInterval(() => purgeExpiredIdDocuments().catch(() => {}), 6 * 3600_000).unref();
 
   // מחלקה בלי מספר/מייל = בקשות אורחים שנעלמות בשקט. מדווחים בעלייה.
   // טבלת הניתוב המלאה — כדי שלפני הדגמה רואים בעין אחת לאן כל בקשה הולכת,

@@ -845,6 +845,26 @@ export function updateConfig(patch) {
   return hotelConfig;
 }
 
+// ── עדכון קונפיג של מלון *מסוים* (multi-tenant onboarding) ──
+// כמו updateConfig, אבל לכל hotel_id. זו נקודת הכניסה להוספת/עריכת
+// מלון שאינו מלון ברירת המחדל: כותב overrides לשורה שלו ב-DB ומנקה
+// את ה-cache שלו. עבור מלון ברירת המחדל מפנה ל-updateConfig כדי שגם
+// hotelConfig החי יתעדכן. לעולם לא מערבב בין מלונות — כל מלון ושורתו.
+export function updateConfigFor(hotelId, patch) {
+  if (!hotelId || hotelId === HOTEL) return updateConfig(patch);
+  if (!isPlainObject(patch)) throw new TypeError("updateConfigFor expects a plain object");
+  let cur = {};
+  try {
+    const row = db.prepare(`SELECT data FROM config WHERE hotel_id = ?`).get(hotelId);
+    const parsed = row?.data ? JSON.parse(row.data) : null;
+    if (isPlainObject(parsed)) cur = parsed;
+  } catch { /* אין שורה עדיין */ }
+  const next = deepMerge(cur, patch);
+  persistStmt.run(hotelId, JSON.stringify(next), new Date().toISOString());
+  configCache.delete(hotelId);
+  return configFor(hotelId);
+}
+
 // ── איפוס לברירות המחדל שבקוד ──────────────────────────
 // מוחק את כל ה-overrides. משמש איפוס דמו/סביבת בדיקה.
 export function resetConfig() {
