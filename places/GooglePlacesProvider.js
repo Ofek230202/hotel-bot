@@ -54,7 +54,7 @@ export class GooglePlacesProvider extends PlacesProvider {
 
   get hasKey() { return !!this.#apiKey; }
 
-  async searchNearby({ query, category, keyword, openNow = false, lang = "he", location, radius, limit } = {}) {
+  async searchNearby({ query, category, keyword, openNow = false, lang = "he", location, radius, limit, timeZone } = {}) {
     if (!location || location.lat == null || location.lng == null) {
       return { ok: false, results: [], reason: "no_location", provider: "google" };
     }
@@ -126,8 +126,9 @@ export class GooglePlacesProvider extends PlacesProvider {
     }
 
     const hotel = { lat: location.lat, lng: location.lng };
+    const tz = timeZone || location.timezone || "Asia/Jerusalem";
     const results = (data.places || [])
-      .map((p) => normalizePlace(p, hotel, lang))
+      .map((p) => normalizePlace(p, hotel, lang, tz))
       .filter(Boolean)
       // הקרוב ביותר קודם — קונסיירז' מציע קודם את מה שקרוב למלון.
       .sort((a, b) => (a.distanceMeters ?? 1e9) - (b.distanceMeters ?? 1e9));
@@ -138,7 +139,7 @@ export class GooglePlacesProvider extends PlacesProvider {
 
 // תשובת Google הגולמית → אובייקט נקי, אחיד, מוכן להצגה. אותו מבנה בדיוק
 // שהמוק מחזיר — כדי שהבוט לא יבחין בין אמיתי למדומה.
-function normalizePlace(p, hotel, lang) {
+function normalizePlace(p, hotel, lang, timeZone = "Asia/Jerusalem") {
   const name = p.displayName?.text;
   if (!name) return null;
 
@@ -166,8 +167,9 @@ function normalizePlace(p, hotel, lang) {
     priceSymbol:    price ? price.symbol : null,
     openNow:        p.currentOpeningHours?.openNow ?? null,
     openingHours:   weekly,
-    // שם היום מחושב בשפת התוצאה — סדר הימים של Google שונה בין השפות.
-    todayHours:     todayHoursLine(weekly, new Date(), lang),
+    // שם היום מחושב בשפת התוצאה ובאזור הזמן של *המלון* (לא ישראל) — סדר
+    // הימים של Google שונה בין השפות, ו"היום" תלוי במיקום המלון.
+    todayHours:     todayHoursLine(weekly, new Date(), lang, timeZone),
     phone:          p.nationalPhoneNumber || null,
     website:        p.websiteUri || null,
     distanceMeters: meters,

@@ -815,8 +815,12 @@ export function saveFeedback(reservationId, { rating = null, text = null } = {})
 }
 
 // ── Demo helper — adds sample charges for presentation ─
-export function addDemoCharges(reservationId) {
-  addFolioItem(reservationId, "RESTAURANT",   "ארוחת בוקר × 2",     18000);
-  addFolioItem(reservationId, "MINIBAR",      "מיני בר",              9500);
-  addFolioItem(reservationId, "SPA",          "עיסוי שוודי 60 דק",  35000);
+// bilingual: תיאורי הפריטים בשפת האורח, כדי שאורח אנגלי לא יראה עברית
+// בחשבון. שפה נגזרת מההזמנה (res.lang) ואפשר לדרוס דרך הפרמטר.
+export function addDemoCharges(reservationId, lang) {
+  const res = reservations[reservationId];
+  const he  = (lang || res?.lang || "he") === "he";
+  addFolioItem(reservationId, "RESTAURANT", he ? "ארוחת בוקר × 2"    : "Breakfast × 2",        18000);
+  addFolioItem(reservationId, "MINIBAR",    he ? "מיני בר"           : "Mini bar",              9500);
+  addFolioItem(reservationId, "SPA",        he ? "עיסוי שוודי 60 דק" : "Swedish massage 60 min", 35000);
 }

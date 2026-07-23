@@ -15,8 +15,10 @@
 // ════════════════════════════════════════════════════════
 import { GooglePlacesProvider } from "./GooglePlacesProvider.js";
 import { MockPlacesProvider }   from "./MockPlacesProvider.js";
+import { CachedPlaces }         from "./cache.js";
 
 export { PLACE_CATEGORIES } from "./PlacesProvider.js";
+export { CachedPlaces }     from "./cache.js";
 
 const forceMock = (process.env.PLACES_PROVIDER || "").toLowerCase() === "mock";
 const hasKey    = !!process.env.GOOGLE_PLACES_API_KEY;
@@ -24,14 +26,16 @@ const hasKey    = !!process.env.GOOGLE_PLACES_API_KEY;
 // האם חיפוש חי אמיתי פעיל (משפיע רק על לוגים — לא על שם המפתח).
 export const placesLive = hasKey && !forceMock;
 
-export const places = placesLive
-  ? new GooglePlacesProvider()
-  : new MockPlacesProvider();
+// כל בקשה עוברת דרך CachedPlaces: cache (TTL) + הגבלת קצב מעל הספק. כך
+// פרץ של אלפי אורחים מ-100 מלונות לא חורג ממכסת Google ולא קורס — רוב
+// הבקשות נבלעות ב-cache, והשאר מוגבלות בקצב. ראה places/cache.js.
+const baseProvider = placesLive ? new GooglePlacesProvider() : new MockPlacesProvider();
+export const places = new CachedPlaces(baseProvider);
 
 console.log(
   placesLive
-    ? "🗺️  Places: Google Places API (live) פעיל"
-    : `🗺️  Places: MOCK (${forceMock ? "PLACES_PROVIDER=mock" : "אין GOOGLE_PLACES_API_KEY"})`
+    ? "🗺️  Places: Google Places API (live) פעיל — עם cache והגבלת קצב"
+    : `🗺️  Places: MOCK (${forceMock ? "PLACES_PROVIDER=mock" : "אין GOOGLE_PLACES_API_KEY"}) — עם cache והגבלת קצב`
 );
 
 // ════════════════════════════════════════════════════════
@@ -60,7 +64,11 @@ export async function smokePlaces(location) {
 
   let r;
   try {
-    r = await places.searchNearby({
+    // בודקים את החיבור החי ל-Google ישירות דרך הספק — *עוקפים את ה-cache*.
+    // ה-smoke-check נועד לאמת שהמפתח/ה-API עובדים, ולכן חייב לפגוע ברשת,
+    // לא לקבל תוצאה שמורה מבקשה קודמת (וגם לא ללכלך את ה-cache).
+    const probe = places.provider || places;
+    r = await probe.searchNearby({
       query: "restaurant", category: "restaurant",
       lang: "en", location, limit: 1,
     });

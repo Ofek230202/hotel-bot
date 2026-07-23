@@ -68,7 +68,7 @@ const FROM = process.env.TWILIO_WHATSAPP_NUMBER;
 
 // ── הודעות מוכנות למקרי קצה — לעולם לא שקט מוחלט (Bug #2) ──
 const FALLBACK_MSG = {
-  he: "אירעה תקלה קלה אצלנו — אני חוזר אליך מיד 🙏\nאם זה דחוף, הקבלה זמינה בשלוחה 0.",
+  he: "אירעה תקלה קלה אצלנו — אחזור אליך מיד 🙏\nאם זה דחוף, הקבלה זמינה בשלוחה 0.",
   en: "We hit a small glitch on our side — I'll be right back with you 🙏\nIf it's urgent, reception is available at Ext. 0.",
 };
 
@@ -425,7 +425,8 @@ async function runPlacesTool(input = {}, lang = "he") {
           keyword:  input.keyword,
           openNow:  !!input.open_now,
           lang,
-          location: { lat: loc.lat, lng: loc.lng, address: lang === "he" ? (loc.address_he || loc.address) : loc.address },
+          location: { lat: loc.lat, lng: loc.lng, address: lang === "he" ? (loc.address_he || loc.address) : loc.address, timezone: loc.timezone },
+          timeZone: loc.timezone || "Asia/Jerusalem",
           radius:   loc.search_radius_m || 4000,
           limit:    6,
         }),
@@ -2180,7 +2181,7 @@ async function handleTermsDeclined(phone, lang) {
   });
 
   await wa(phone, he
-    ? `אני מבין, ותודה על הכנות 🙏\n\nבלי אישור תנאי השהייה איני יכול להשלים את הצ'ק אין הדיגיטלי — ` +
+    ? `מובן, ותודה על הכנות 🙏\n\nבלי אישור תנאי השהייה אין באפשרותי להשלים את הצ'ק אין הדיגיטלי — ` +
       `אבל זו ממש לא בעיה: מהקבלה יחזרו אליך בהקדם ויענו על כל שאלה לגבי התנאים.\n\n` +
       `אפשר לחזור לכאן בכל שלב ולכתוב *אני מאשר* — ונמשיך מהנקודה הזו.`
     : `I understand, and thank you for telling me 🙏\n\nWithout accepting the stay terms I can't complete the digital check-in — ` +
@@ -2233,7 +2234,7 @@ async function handleIdStage(phone, media, lang) {
   const reservationNumber = s.pendingReservation || "";
 
   await wa(phone, he
-    ? "🔎 רגע אחד, בודק את המסמך…"
+    ? "🔎 רגע אחד — בודקים את המסמך…"
     : "🔎 One moment, I'm checking your document…", { lang });
 
   // 2. אימות אמיתי דרך שכבת idverify המבודדת (Claude vision).
