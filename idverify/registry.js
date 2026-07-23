@@ -24,8 +24,8 @@ export const RETENTION_DAYS = Number(process.env.ID_RETENTION_DAYS) || 30;
 
 const insertDocStmt = db.prepare(`
   INSERT INTO id_documents
-    (id, hotel_id, reservation_id, phone, guest_name, doc_type, stored_path, encrypted, status, created_at, purge_after)
-  VALUES (@id, @hotel_id, @reservation_id, @phone, @guest_name, @doc_type, @stored_path, @encrypted, @status, @created_at, @purge_after)
+    (id, hotel_id, reservation_id, phone, guest_name, doc_type, stored_path, encrypted, status, created_at, purge_after, extracted_fields)
+  VALUES (@id, @hotel_id, @reservation_id, @phone, @guest_name, @doc_type, @stored_path, @encrypted, @status, @created_at, @purge_after, @extracted_fields)
 `);
 const insertAccessStmt = db.prepare(`
   INSERT INTO id_access_log (id, hotel_id, document_id, actor, action, purpose, ip, at)
@@ -45,16 +45,20 @@ export function logIdAccess({ hotelId, documentId, actor, action, purpose, ip } 
 }
 
 // רושם מסמך שנשמר, וקובע לו תאריך מחיקה. מחזיר את מזהה הרישום.
-export function recordIdDocument({ id, hotelId, reservationId, phone, guestName, docType, storedPath, encrypted = true, status } = {}) {
+// `fields` — שדות מינימליים שחולצו (verify-then-discard), נשמרים במקום התמונה.
+// `retentionDays` — דריסה פר-מלון של חלון השמירה (ברירת מחדל RETENTION_DAYS).
+export function recordIdDocument({ id, hotelId, reservationId, phone, guestName, docType, storedPath, encrypted = true, status, fields = null, retentionDays } = {}) {
   const docId = id || `iddoc_${uuidv4()}`;
   const now = new Date();
-  const purgeAfter = new Date(now.getTime() + RETENTION_DAYS * 86400_000).toISOString();
+  const days = Number(retentionDays) > 0 ? Number(retentionDays) : RETENTION_DAYS;
+  const purgeAfter = new Date(now.getTime() + days * 86400_000).toISOString();
   try {
     insertDocStmt.run({
       id: docId, hotel_id: hotelId || DEFAULT_HOTEL_ID, reservation_id: reservationId || null,
       phone: phone || null, guest_name: guestName || null, doc_type: docType || null,
       stored_path: storedPath || null, encrypted: encrypted ? 1 : 0, status: status || null,
       created_at: now.toISOString(), purge_after: purgeAfter,
+      extracted_fields: fields ? JSON.stringify(fields) : null,
     });
     logIdAccess({ hotelId, documentId: docId, actor: "system", action: "create", purpose: "check-in verification" });
   } catch (e) {
@@ -65,10 +69,15 @@ export function recordIdDocument({ id, hotelId, reservationId, phone, guestName,
 
 // מטא-דטא בלבד — לקבלה. לעולם לא מחזיר את התמונה עצמה.
 export function listIdDocuments({ hotelId = DEFAULT_HOTEL_ID, reservationId = null } = {}) {
-  const cols = `id, hotel_id, reservation_id, phone, guest_name, doc_type, status, created_at, purge_after, deleted_at`;
-  return reservationId
+  const cols = `id, hotel_id, reservation_id, phone, guest_name, doc_type, status, created_at, purge_after, deleted_at, extracted_fields`;
+  const rows = reservationId
     ? db.prepare(`SELECT ${cols} FROM id_documents WHERE hotel_id = ? AND reservation_id = ? ORDER BY created_at DESC`).all(hotelId, reservationId)
     : db.prepare(`SELECT ${cols} FROM id_documents WHERE hotel_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 500`).all(hotelId);
+  // extracted_fields נשמר כ-JSON — מפענחים לאובייקט נוח לקבלה (מטא-דטא בלבד, לא תמונה).
+  for (const r of rows) {
+    if (r.extracted_fields) { try { r.extracted_fields = JSON.parse(r.extracted_fields); } catch { /* משאירים כמחרוזת */ } }
+  }
+  return rows;
 }
 
 // ── שליפה מבוקרת + מתועדת של התמונה ─────────────────────

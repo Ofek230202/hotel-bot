@@ -147,10 +147,11 @@ db.exec(`
     doc_type       TEXT,
     stored_path    TEXT,            -- נתיב הקובץ המוצפן (או מזהה ב-vault)
     encrypted      INTEGER NOT NULL DEFAULT 1,
-    status         TEXT,            -- verified | manual_review
+    status         TEXT,            -- verified | verified_discarded | manual_review
     created_at     TEXT,
     purge_after    TEXT,            -- תאריך שאחריו יימחק אוטומטית (retention)
-    deleted_at     TEXT             -- מתי נמחק בפועל (NULL = קיים)
+    deleted_at     TEXT,            -- מתי נמחק בפועל (NULL = קיים)
+    extracted_fields TEXT           -- שדות מינימליים שחולצו (JSON) — במקום התמונה
   );
   CREATE INDEX IF NOT EXISTS idx_id_documents_hotel
     ON id_documents (hotel_id, created_at DESC);
@@ -177,6 +178,15 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_id_access_hotel
     ON id_access_log (hotel_id, at DESC);
 `);
+
+// ── מיגרציות idempotent לטבלאות קיימות (DB שכבר נוצר לפני שדה חדש) ──
+// CREATE TABLE IF NOT EXISTS לא מוסיף עמודה לטבלה קיימת, ולכן שדה חדש
+// מתווסף כאן דרך ALTER TABLE עטוף ב-try (נכשל בשקט אם העמודה כבר קיימת).
+for (const alter of [
+  `ALTER TABLE id_documents ADD COLUMN extracted_fields TEXT`,
+]) {
+  try { db.exec(alter); } catch { /* העמודה כבר קיימת — זה תקין */ }
+}
 
 // מוודא שקיימת שורת stats למלון (idempotent). שלבים הבאים יעדכנו אותה.
 db.prepare(

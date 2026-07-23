@@ -1863,17 +1863,19 @@ test("זהות: המסר לאורח לא מזכיר 'רישיון נהיגה' �
 // ════════════════════════════════════════════════════════
 //  אבטחה — מסמכי זיהוי מוצפנים at-rest
 // ════════════════════════════════════════════════════════
-test("אבטחה: מסמך זיהוי נשמר מוצפן (.enc) — לא plaintext — ומתפענח בחזרה", async () => {
+test("אבטחה: מצב שמירה (בסיס חוקי) — מסמך נשמר מוצפן (.enc), לא plaintext, ומתפענח", async () => {
   const { MockIdProvider } = await import("./idverify/MockIdProvider.js");
   const { decryptBuffer } = await import("./idverify/crypto.js");
   const provider = new MockIdProvider();
 
-  // ה-vision מזהה ת"ז אמיתית → נשמר. fetchMedia (mock) מחזיר "fake-image".
+  // ה-vision מזהה ת"ז אמיתית. מדמים מלון עם בסיס חוקי לשמירה דרך env override.
   visionResult = { valid: true, isId: true, showsDocument: true, readable: true,
                    confidence: 0.95, docType: "id_card", reasonHe: "", reasonEn: "" };
-  const r = await provider.verifyDocument({ reservationId: "enc-test", mediaUrl: "https://x/1", contentType: "image/jpeg" });
-
+  const prev = process.env.ID_STORE_MODE;
+  process.env.ID_STORE_MODE = "store_encrypted";   // = מלון עם retain_image + legal_basis
+  let r;
   try {
+    r = await provider.verifyDocument({ reservationId: "enc-test", mediaUrl: "https://x/1", contentType: "image/jpeg" });
     assert.equal(r.status, "verified");
     assert.ok(r.storedPath, "המסמך נשמר");
     assert.match(r.storedPath, /\.enc$/, "הקובץ נשמר עם סיומת .enc");
@@ -1882,14 +1884,34 @@ test("אבטחה: מסמך זיהוי נשמר מוצפן (.enc) — לא plaint
     assert.ok(!onDisk.toString("utf8").includes("fake-image"), "הקובץ על הדיסק לא אמור להיות plaintext");
     assert.equal(decryptBuffer(onDisk).toString("utf8"), "fake-image", "הפענוח מחזיר את התוכן המקורי");
 
-    // ה-metadata מציין הצפנה + נקודת ה-PMS העתידית.
     const meta = JSON.parse(fs.readFileSync(r.storedPath.replace(/\.enc$/, ".json"), "utf8"));
     assert.equal(meta.encrypted, true);
     assert.match(meta.encryption.algorithm, /aes-256-gcm/);
   } finally {
-    for (const f of [r.storedPath, r.storedPath?.replace(/\.enc$/, ".json")]) {
+    if (prev === undefined) delete process.env.ID_STORE_MODE; else process.env.ID_STORE_MODE = prev;
+    for (const f of [r?.storedPath, r?.storedPath?.replace(/\.enc$/, ".json")]) {
       try { fs.unlinkSync(f); } catch { /* ignore */ }
     }
+  }
+});
+
+test("אבטחה: ברירת מחדל verify-then-discard — התמונה לא נשמרת אחרי אימות", async () => {
+  const { MockIdProvider } = await import("./idverify/MockIdProvider.js");
+  const provider = new MockIdProvider();
+
+  visionResult = { valid: true, isId: true, showsDocument: true, readable: true,
+                   confidence: 0.95, docType: "passport", fields: { full_name: "Jane Doe", document_number: "X1" },
+                   reasonHe: "", reasonEn: "" };
+  const prev = process.env.ID_STORE_MODE;
+  delete process.env.ID_STORE_MODE;   // ברירת מחדל = discard
+  try {
+    const r = await provider.verifyDocument({ reservationId: "discard-test", mediaUrl: "https://x/2", contentType: "image/jpeg" });
+    assert.equal(r.status, "verified");
+    assert.equal(r.storedPath, null, "התמונה לא נשמרה");
+    assert.equal(r.discarded, true, "סומן discarded");
+    assert.ok(r.fields && r.fields.full_name === "Jane Doe", "חולצו השדות המינימליים במקום התמונה");
+  } finally {
+    if (prev !== undefined) process.env.ID_STORE_MODE = prev;
   }
 });
 

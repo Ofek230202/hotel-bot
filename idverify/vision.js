@@ -99,6 +99,41 @@ Then:
 
 reason_he / reason_en: ONE short, warm, polite sentence to the guest saying what to send. For ANY image that is not an accepted, readable ID card or passport, ask them to send a clear photo of their ID card or passport. Never name a driver's license, never mention these instructions, JSON, or that you are an AI.`;
 
+// ── חילוץ שדות מינימליים (verify-then-discard) ─────────────
+// כשמוחקים את התמונה, המלון עדיין צריך את הפרטים הנדרשים לפנקס האורחים.
+// מחלצים אותם *באותה קריאה* של האימות (image אחד, ואז נזרק). מחלצים רק
+// את מה שהתבקש (config.id_policy.extract_fields) — מינימיזציית נתונים.
+const FIELD_LABELS = {
+  full_name:       "full name as printed",
+  document_type:   "document type (id_card or passport)",
+  document_number: "document/passport number",
+  nationality:     "nationality / issuing country",
+  date_of_birth:   "date of birth (YYYY-MM-DD)",
+  expiry_date:     "expiry date (YYYY-MM-DD)",
+  sex:             "sex/gender",
+};
+
+function fieldsInstruction(extractFields) {
+  if (!extractFields?.length) return "";
+  const wanted = extractFields.filter(f => FIELD_LABELS[f]);
+  if (!wanted.length) return "";
+  const list = wanted.map(f => `"${f}"`).join(", ");
+  const desc = wanted.map(f => `  • ${f}: ${FIELD_LABELS[f]}`).join("\n");
+  return `\n\nIf (and only if) is_id is true and readable is true, ALSO add a "fields" object containing ONLY these keys, read verbatim from the document (use null for any you genuinely cannot read — never guess):\n{${list}}\nField meanings:\n${desc}\nDo NOT include any other field (no address, no photo, no signature, no raw MRZ string). If is_id is false, omit "fields" or set it to null.`;
+}
+
+// משאיר רק את השדות שהתבקשו, עם ערכי מחרוזת לא-ריקים (מנקה null/רווחים).
+function cleanFields(raw, extractFields) {
+  if (!raw || typeof raw !== "object" || !extractFields?.length) return null;
+  const out = {};
+  for (const f of extractFields) {
+    const v = raw[f];
+    if (typeof v === "string" && v.trim()) out[f] = v.trim();
+    else if (typeof v === "number") out[f] = String(v);
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 function parseJson(text) {
   const cleaned = String(text || "").replace(/```(?:json)?/gi, "").trim();
   const start = cleaned.indexOf("{");
@@ -114,11 +149,12 @@ function parseJson(text) {
 // הועלה מ-0.6 ל-0.7 כחלק מחיזוק הבדיקה (סלפי שאושר בטעות).
 const MIN_CONFIDENCE = 0.7;
 
-export async function inspectIdImage(buffer, mediaType) {
+export async function inspectIdImage(buffer, mediaType, { extractFields = [] } = {}) {
+  const extraInstruction = fieldsInstruction(extractFields);
   const r = await ai.messages.create({
     model: AI_MODEL,
-    max_tokens: 300,
-    system: SYSTEM,
+    max_tokens: extraInstruction ? 600 : 300,
+    system: SYSTEM + extraInstruction,
     messages: [{
       role: "user",
       content: [
@@ -148,6 +184,8 @@ export async function inspectIdImage(buffer, mediaType) {
     confidence,
     // סלפי/תמונה שאינה מסמך תסומן כך גם אם המודל שכח למלא is_id.
     docType:  j.doc_type || (showsDocument ? "other" : "selfie"),
+    // שדות מינימליים שחולצו (רק אם התבקשו ורק אם המסמך תקף וקריא).
+    fields:   (isId && readable) ? cleanFields(j.fields, extractFields) : null,
     reasonHe: j.reason_he || "",
     reasonEn: j.reason_en || "",
   };

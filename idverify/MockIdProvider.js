@@ -27,6 +27,7 @@ import { IdProvider } from "./IdProvider.js";
 import { fetchMedia, inspectIdImage } from "./vision.js";
 import { encryptBuffer, isUsingDemoKey, ENC_ALGO } from "./crypto.js";
 import { recordIdDocument } from "./registry.js";
+import { resolveIdPolicy } from "./policy.js";
 import { currentHotelId } from "../tenant.js";
 
 const STORE_DIR = path.resolve("id-documents");
@@ -37,13 +38,13 @@ const EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "im
 // לאותה עמדה: *לאמת* את המסמך ולשמור רק את מה שנדרש — **לא לשמור את
 // תמונת המסמך** אחרי האימות (AEPD קנסה מלון €30k על שמירת סריקה; ה-Garante
 // מסמן איסוף ת"ז דרך WhatsApp כאסור). ראה SECURITY.md.
-//   • verify_discard (מומלץ לפרודקשן): מאמתים ולא שומרים תמונה כלל.
-//   • store_encrypted (דמו): שומרים מוצפן עם retention — כדי שההדגמה של
-//     "הקבלה מושכת את התעודה" תעבוד. ⚠️ לא לפרודקשן מול אורחים אמיתיים.
+//
+// ההכרעה *לכל מלון בנפרד* יושבת ב-idverify/policy.js (resolveIdPolicy):
+//   • ברירת מחדל: verify-then-discard — מאמתים, מחלצים שדות, מוחקים תמונה.
+//   • שמירה: רק אם למלון יש בסיס חוקי מתועד (id_policy.legal_basis) — אז
+//     נשמר מוצפן עם retention ו-audit. בלי בסיס חוקי — לא נשמר.
 // שים לב: *manual_review* (האימות האוטומטי נכשל) שומר את התמונה בכל מצב —
 // כי אדם *חייב* לראות אותה; retention עדיין חל, והיא נמחקת אוטומטית.
-const STORE_MODE = (process.env.ID_STORE_MODE || "store_encrypted").toLowerCase();
-const DISCARD    = STORE_MODE === "verify_discard" || STORE_MODE === "discard";
 
 // ── מדיניות: אילו מסמכים קבילים לצ'ק אין ───────────────
 // אכיפה *בקוד*, לא רק ב-prompt. במלון מקבלים תעודת זהות או דרכון בלבד;
@@ -87,6 +88,8 @@ function safe(s) {
 export class MockIdProvider extends IdProvider {
   async verifyDocument({ reservationId, phone, guestName, mediaUrl, contentType, documentType } = {}) {
     const documentId = `id_${uuidv4()}`;
+    const hotelId    = currentHotelId();
+    const policy     = resolveIdPolicy(hotelId);   // discard-by-default, per-hotel
 
     // ── 1. הורדת התמונה ──────────────────────────────────
     let media;
@@ -109,15 +112,16 @@ export class MockIdProvider extends IdProvider {
     // ── 2. בדיקה אמיתית: האם זו באמת תעודה? ─────────────
     let check;
     try {
-      check = await inspectIdImage(media.buffer, EXT[mediaType] ? mediaType : "image/jpeg");
+      check = await inspectIdImage(media.buffer, EXT[mediaType] ? mediaType : "image/jpeg", { extractFields: policy.extractFields });
     } catch (e) {
       // תקלה טכנית — לא מאשרים ולא דוחים. הצ'ק אין ממשיך, והקבלה
       // (אדם) תשלים את הבדיקה. לעולם לא אומרים "אומת" בלי שנבדק.
       console.error(`🪪 [ID] בדיקת ה-AI נכשלה: ${e.message}`);
       const storedPath = await this.#store(media.buffer, mediaType, { reservationId, phone, guestName, verified: false });
       if (storedPath) recordIdDocument({
-        id: documentId, hotelId: currentHotelId(), reservationId, phone, guestName,
+        id: documentId, hotelId, reservationId, phone, guestName,
         docType: documentType || "id", storedPath, encrypted: true, status: "manual_review",
+        retentionDays: policy.retentionDays,
       });
       return {
         success: true, documentId, documentType: documentType || "id",
@@ -152,23 +156,26 @@ export class MockIdProvider extends IdProvider {
     }
 
     // ── 4. אומת ──────────────────────────────────────────
-    // verify-then-discard (מומלץ): לא שומרים את התמונה — רק רושמים שהמסמך
-    // אומת, סוגו, ומתי. זו העמדה התואמת-רגולציה (ראה הערת STORE_MODE).
-    // store_encrypted (דמו): שומרים מוצפן, עם retention.
+    // verify-then-discard (ברירת המחדל): מחלצים רק את השדות הנדרשים, שומרים
+    // אותם *במקום* התמונה, ומוחקים את התמונה. זו העמדה התואמת-רגולציה.
+    // שמירת תמונה קורית רק אם policy.retainImage=true (בסיס חוקי מתועד).
+    const discard   = !policy.retainImage;
+    const fields    = check.fields || null;   // שדות מינימליים שחולצו מהמסמך
     let storedPath = null;
-    if (!DISCARD) {
-      storedPath = await this.#store(media.buffer, mediaType, { reservationId, phone, guestName, verified: true });
+    if (!discard) {
+      storedPath = await this.#store(media.buffer, mediaType, { reservationId, phone, guestName, verified: true, legalBasis: policy.legalBasis });
     }
-    console.log(`🪪 [ID] אומת (${check.docType}, conf=${check.confidence}) → ${DISCARD ? "התמונה לא נשמרה (verify-then-discard)" : `נשמר: ${storedPath || "—"}`}`);
+    console.log(`🪪 [ID] אומת (${check.docType}, conf=${check.confidence}) → ${discard ? `התמונה לא נשמרה (verify-then-discard) — חולצו ${fields ? Object.keys(fields).length : 0} שדות` : `נשמר: ${storedPath || "—"}`}`);
     recordIdDocument({
-      id: documentId, hotelId: currentHotelId(), reservationId, phone, guestName,
+      id: documentId, hotelId, reservationId, phone, guestName,
       docType: check.docType, storedPath, encrypted: !!storedPath,
-      status: DISCARD ? "verified_discarded" : "verified",
+      status: discard ? "verified_discarded" : "verified",
+      fields, retentionDays: policy.retentionDays,
     });
 
     return {
       success: true, documentId, documentType: check.docType,
-      status: "verified", storedPath, discarded: DISCARD,
+      status: "verified", storedPath, discarded: discard, fields,
       confidence: check.confidence, reasonHe: "", reasonEn: "",
     };
   }

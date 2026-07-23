@@ -14,6 +14,7 @@ import { resolveNameForms, nameFor }                      from "./names.js";
 import { startCheckin, processCheckout, getActiveReservation, getPendingReservation, formatFolio, depositExplainer, formatStayDates, saveFeedback } from "./checkin.js";
 import { email }                                          from "./email/index.js";
 import { idVerify }                                       from "./idverify/index.js";
+import { resolveIdPolicy, idCollectionNotice }            from "./idverify/policy.js";
 import { concierge, REQUEST_TYPES }                       from "./concierge/index.js";
 import { places, PLACE_CATEGORIES, placesLive }           from "./places/index.js";
 import { detectEmergency, emergencyGuestMessage, emergencyKindHe, emergencyDial } from "./emergency.js";
@@ -1839,9 +1840,12 @@ async function promptStage(phone, stage, lang, { prefix = "", brief = false, wit
   }
 
   if (stage === "waiting_id") {
+    // הודעת איסוף (GDPR Arts. 13–14 / חוק הגנת הפרטיות §11): מסבירים לאורח
+    // *מה* נעשה עם התמונה — לפי המדיניות בפועל של המלון (מחיקה/שמירה מוצפנת).
+    const notice = idCollectionNotice(resolveIdPolicy(currentHotelId()), lang);
     return wa(phone, p + (he
-      ? `🪪 כדי להשלים את הצ'ק אין נדרש *אימות זהות*.\n\nאשמח לתמונה של *תעודת הזהות או הדרכון* — צילום ברור שבו כל הפרטים קריאים.`
-      : `🪪 To complete your check-in we need to *verify your identity*.\n\nPlease send a photo of your *ID card or passport* — a clear shot with all the details readable.`), { lang });
+      ? `🪪 כדי להשלים את הצ'ק אין נדרש *אימות זהות*.\n\nאשמח לתמונה של *תעודת הזהות או הדרכון* — צילום ברור שבו כל הפרטים קריאים.\n\n${notice}`
+      : `🪪 To complete your check-in we need to *verify your identity*.\n\nPlease send a photo of your *ID card or passport* — a clear shot with all the details readable.\n\n${notice}`), { lang });
   }
 
   if (stage === "waiting_terms") {
@@ -2197,6 +2201,20 @@ function docTypeHe(type) {
     || type || "—";
 }
 
+// שדות מינימליים שחולצו מהמסמך (verify-then-discard) — להצגה לצוות במקום
+// התמונה. תוויות עבריות; מציג רק את מה שבאמת חולץ.
+const ID_FIELD_LABELS_HE = {
+  full_name: "שם מלא", document_type: "סוג מסמך", document_number: "מספר מסמך",
+  nationality: "אזרחות", date_of_birth: "תאריך לידה", expiry_date: "בתוקף עד", sex: "מין",
+};
+function formatExtractedFields(fields) {
+  if (!fields || typeof fields !== "object") return "";
+  const lines = Object.entries(fields)
+    .filter(([, v]) => v)
+    .map(([k, v]) => `   • ${ID_FIELD_LABELS_HE[k] || k}: ${v}`);
+  return lines.length ? `📋 פרטים שחולצו (במקום התמונה):\n${lines.join("\n")}\n` : "";
+}
+
 // דחייה מנומסת, שמירה, והתראה לקבלה.
 async function handleIdStage(phone, media, lang) {
   const he = lang === "he";
@@ -2307,8 +2325,9 @@ async function handleIdStage(phone, media, lang) {
       `🔖 הזמנה: ${reservationNumber || "—"}\n` +
       `📄 סוג מסמך: ${docTypeHe(result.documentType)}\n` +
       (result.storedPath
-        ? `📸 המסמך נשמר: ${result.storedPath}\n   ⚠️ אחסון דמו מקומי — בפרודקשן: אחסון מאובטח ומוצפן\n`
-        : `📸 המסמך לא נשמר\n`) +
+        ? `📸 המסמך נשמר מוצפן (בסיס חוקי): ${result.storedPath}\n   ⚠️ אחסון דמו מקומי — בפרודקשן: אחסון מאובטח ומוצפן\n`
+        : `📸 התמונה נמחקה מיד לאחר האימות (verify-then-discard) — לא נשמרה תמונה.\n`) +
+      formatExtractedFields(result.fields) +
       (verified ? `ניתן להמשיך בהקצאת חדר/כרטיס.` : `נא לאמת את זהות האורח בקבלה.`),
     priority: verified ? "normal" : "high",
   });
