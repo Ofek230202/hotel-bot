@@ -117,7 +117,11 @@ export async function wa(to, body, { lang = "he", from } = {}) {
     ? (String(fromNumber).startsWith("whatsapp:") ? fromNumber : `whatsapp:${fromNumber}`)
     : FROM;
 
-  await tw.messages.create({ from: fromArg, to, body: text });
+  // ⏱️ timeout קשיח: זו הקריאה החיצונית היחידה בלי timeout מובנה. סוקט
+  //    תקוע של טוויליו (לא שגיאה — פשוט לא עונה) היה משאיר את שרשרת
+  //    הנעילה של האורח תלויה עד restart. עם timeout הקריאה *נכשלת* מהר,
+  //    השרשרת משתחררת, והאורח יכול לכתוב שוב. לא תוקע, לא קורס.
+  await withTimeout(() => tw.messages.create({ from: fromArg, to, body: text }), 15_000, "twilio.send");
   console.log(`📤 → ${to.slice(-8)}: ${text.slice(0, 60)}…`);
 }
 
@@ -2578,6 +2582,9 @@ const guestRateLimiter = createRateLimiter({
   capacity:     Number(process.env.GUEST_BURST) || 60,
   refillPerSec: Number(process.env.GUEST_RATE)  || 2,
 });
+// ניקוי מחזורי של דליי אורחים שלא פעילים — מונע גדילת זיכרון על uptime
+// ארוך (מפתח לכל מספר טלפון). לא חוסם, לא מפיל: unref + try/catch שקט.
+setInterval(() => { try { guestRateLimiter.sweep(); } catch { /* ignore */ } }, 3600_000).unref();
 
 // ── שער הכניסה — לעולם לא משאיר אורח בלי מענה (Bug #2) ──
 // כל שגיאה, מכל מקום בזרימה, נתפסת כאן: האורח תמיד מקבל הודעה,
