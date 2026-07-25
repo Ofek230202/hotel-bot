@@ -132,6 +132,23 @@ function israelTime() {
   return { time, date, full: `${date}, ${time}` };
 }
 
+// ── הזמן הנוכחי *באזור הזמן של המלון* ──────────────────
+// קריטי לרשת בינלאומית: הבוט חייב לדעת את התאריך/היום/השעה של המקום שבו
+// המלון נמצא — לא של ישראל. מלון בניו יורק חייב לדעת שאצלו 11:00 בבוקר,
+// כדי לומר נכון "המספרה פתוחה עכשיו" ו"נפתח מחר". נגזר בכל תור מחדש.
+function localNow(timeZone = "Asia/Jerusalem", lang = "he") {
+  const now = new Date();
+  const locale = lang === "he" ? "he-IL" : "en-GB";
+  try {
+    const time = now.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", timeZone });
+    const date = now.toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone });
+    return { time, date, full: `${date}, ${time}` };
+  } catch {
+    // אזור זמן לא חוקי בקונפיג — נופלים לישראל במקום לזרוק.
+    return israelTime();
+  }
+}
+
 // כל התראה חייבת להיות *ניתנת לפעולה*: מחלקה שמקבלת בקשה בלי מספר חדר
 // ובלי דרך להשיג את האורח לא יכולה לעשות דבר. לכן `phone` נכנס לכל
 // התראה, וכשמספר החדר לא ידוע ההתראה אומרת זאת במפורש ומורה ליצור קשר —
@@ -558,7 +575,9 @@ async function runConciergeTurn(session, lang, phone) {
 function buildPrompt(session, lang) {
   const cfg = hcfg();
   const L = lang === "he" ? "he" : "en";
-  const { full: nowFull } = israelTime();
+  // הזמן הנוכחי לפי אזור הזמן של *המלון הזה* (per-hotel), לא ישראל.
+  const tz = cfg.location?.timezone || "Asia/Jerusalem";
+  const { full: nowFull } = localNow(tz, lang);
 
   // כל שירות ככותרת + שדות מתויגים. `name` הופך לכותרת ולא חוזר בגוף.
   const svcs = Object.entries(cfg.services || {}).map(([key, val]) => {
@@ -604,7 +623,8 @@ function buildPrompt(session, lang) {
 
   if (lang === "he") {
     return `אתה הקונסיירז׳ הדיגיטלי של ${cfg.name_he}, מלון יוקרה 5 כוכבים.
-השעה הנוכחית בישראל: ${nowFull}
+התאריך והשעה עכשיו (שעון המלון): ${nowFull}
+השתמש בזה כדי לדעת איזה יום היום ומה השעה כעת — וכך לומר לאורח אם מקום *פתוח ברגע זה* (לפי openNow והשעות של היום), מתי הוא נסגר היום, ומתי ייפתח שוב.
 ${openOrderNote}
 
 🔴 שפת השיחה: *עברית* — חוק ברזל:
@@ -727,10 +747,14 @@ ${openOrderNote}
   • אורח ששואל על מקום ("עד איזו שעה פתוח?", "מה הכתובת?", "יש שם טלפון?") —
     ⛔ אסור לענות "אין לי מידע מדויק". קרא לכלי *שוב* עם שם המקום ב-query,
     וענה מהתוצאה. "אין לי מידע" כשהמידע קיים בגוגל היא תשובה כושלת.
-  • "פתוח עכשיו" — רק אם openNow חזר true. אין todayHours ואין openNow לאותו
-    מקום? אז גוגל באמת לא יודע: אל תכתוב שהוא פתוח, אל תכתוב שהוא סגור, ואמור
-    בכנות שתוודא מולם. אורח שילך 1.5 ק״מ ברגל למסעדה סגורה בגלל ניחוש שלך —
-    זה כישלון שירות.
+  • 🕐 *פתוח עכשיו — תמיד תגיד לרגע הזה, לא רק שעות כלליות:*
+    – openNow=true → "פתוח *עכשיו*, נסגר היום ב-<שעת הסגירה מ-todayHours>".
+    – openNow=false → "סגור *עכשיו*" + מתי ייפתח שוב (מ-openingHours: היום מאוחר
+      יותר, או "מחר ב-<שעה>", או היום הבא שהוא פתוח). השתמש בתאריך/שעה של המלון
+      שקיבלת למעלה כדי לדעת מה "היום" ומה "מחר".
+    – אין openNow ואין todayHours לאותו מקום? גוגל באמת לא יודע: אל תכתוב שהוא
+      פתוח ואל תכתוב שהוא סגור — אמור בכנות שתוודא מולם. אורח שילך 1.5 ק״מ ברגל
+      למסעדה סגורה בגלל ניחוש שלך — זה כישלון שירות.
 
 ⛔⛔ אסור להמציא מקומות — החוק החשוב ביותר בהמלצות:
 - מותר להמליץ *אך ורק* על מקומות שכתובים בנתונים למטה (שירותי המלון + הסביבה)
@@ -979,7 +1003,8 @@ ${faqs}
   }
 
   return `You are the digital concierge of ${cfg.name}, a 5-star luxury hotel.
-Current time in Israel: ${nowFull}
+Current date & time (hotel's local clock): ${nowFull}
+Use this to know what day it is and the time right now — so you can tell the guest whether a place is *open at this very moment* (from openNow and today's hours), when it closes today, and when it reopens.
 ${openOrderNote}
 
 🔴 CONVERSATION LANGUAGE: *English* — hard rule:
@@ -1070,10 +1095,14 @@ name, address, rating, price level and distance from the hotel.
     "do they have a phone number?") — ⛔ never answer "I don't have exact details".
     Call the tool *again* with the place name in the query field and answer from the result.
     "I don't know" when Google does know is a failed answer.
-  • "Open now" — only if openNow came back true. If a place has neither todayHours nor
-    openNow, Google genuinely doesn't know: don't say it's open, don't say it's closed,
-    and offer honestly to confirm with them. A guest walking 1.5 km to a closed
-    restaurant because you guessed is a real service failure.
+  • 🕐 *Open right now — always answer for THIS moment, not just general hours:*
+    – openNow=true → "open *now*, closes today at <closing time from todayHours>".
+    – openNow=false → "closed *now*" + when it next opens (from openingHours: later
+      today, or "tomorrow at <time>", or the next day it's open). Use the hotel's
+      current date/time given above to know what "today" and "tomorrow" are.
+    – If a place has neither openNow nor todayHours, Google genuinely doesn't know:
+      don't say it's open, don't say it's closed — offer honestly to confirm. A guest
+      walking 1.5 km to a closed restaurant because you guessed is a real service failure.
 
 ⛔⛔ NEVER INVENT A PLACE — the most important rule in recommendations:
 - You may recommend *only* places written in the data below (hotel services + the area)
