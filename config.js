@@ -164,6 +164,28 @@ const DEFAULTS = {
   payment_provider:    "mock",   // "mock" | "cardcom"
   payment_credentials: null,     // { terminalNumber, apiName, apiPassword } — מ-env/DB בפרודקשן
 
+  // ── Business & tax — חשבונית מס-קבלה (Part ה') ─────────
+  // ⚠️ נתוני דמו — כל מלון מזין את פרטי העוסק האמיתיים שלו. פרטים אלה
+  //    *חובה חוקית* על חשבונית מס בישראל (תקנות מע"מ / ניהול פנקסים),
+  //    ומודפסים על החשבונית שהאורח מקבל בצ'ק אאוט. ⚠️ לפני הפעלה מול
+  //    אורחים אמיתיים — להחליף בשם העוסק, מספר העוסק/ח.פ. והכתובת האמיתיים.
+  business: {
+    legal_name:    "מלון קמפינסקי בע\"מ",       // שם העוסק/החברה כחוק
+    legal_name_en: "Kempinski Hotel Ltd.",
+    business_id:   "514000000",                  // מספר עוסק מורשה / ח.פ.
+    business_type: "עוסק מורשה",
+    address:       "רחוב הירקון 51, תל אביב-יפו 6343203",
+    address_en:    "51 HaYarkon Street, Tel Aviv-Yafo 6343203, Israel",
+    phone:         "+972-3-000-0000",
+    email:         "billing@kempinski-demo.co.il",
+  },
+  // מע"מ בישראל 2026 = 18%. אין מס עירייה/תיירות בישראל (בניגוד לאירופה).
+  vat_rate: 0.18,
+  // מלונאות לתייר חוץ = 0% מע"מ (בכפוף לדרכון זר + תשלום במט"ח). ברירת
+  // המחדל להזמנה: תושב (18%). דגל isTourist על ההזמנה מפעיל את מסלול ה-0%.
+  tourist_zero_vat: true,
+  invoice_provider: "mock",   // "mock" | ספק ישראלי אמיתי (invoices/index.js)
+
   // ── ID document policy (מדיניות מסמכי זיהוי) ───────────
   // ⚠️ קריטי לפרטיות. ברירת המחדל היא **verify-then-discard**: הבוט
   //    מאמת את המסמך, מחלץ *רק את השדות הנדרשים*, ומוחק את התמונה מיד.

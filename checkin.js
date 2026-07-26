@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 import { wa, notifyStaff } from "./bot.js";
 import { logAlert, stats, patchSession, peekSession } from "./state.js";
 import { payments, paymentsFor, PAYMENT_CURRENCY } from "./payments/index.js";
+import { invoicesFor } from "./invoices/index.js";
 import { nameFor } from "./names.js";
 import { configFor, hotelModel } from "./config.js";
 import { db, DEFAULT_HOTEL_ID } from "./db.js";
@@ -578,6 +579,73 @@ export function formatFolio(res, lang = "he", { settled = false } = {}) {
   return header + `${RULE}\n${lines}\n${RULE}\n${totals}\n${RULE}\n${outcome}`;
 }
 
+// ════════════════════════════════════════════════════════
+//  חשבונית מס-קבלה (Part ה') — הפקה ותצוגה
+//  ----------------------------------------------------------
+//  בצ'ק אאוט, כשיש חיובים, מפיקים חשבונית מס-קבלה דרך שכבת invoices/
+//  המבודדת ושולחים לאורח סיכום בוואטסאפ + קישור למסמך המלא. בפרודקשן
+//  ספק אמיתי (Green Invoice / iCount / CardCom) יגיש לרשות המסים וייצר PDF.
+// ════════════════════════════════════════════════════════
+
+// שורות החשבונית מתוך ה-folio — פריט לכל חיוב (תיאור + סכום כולל מע"מ).
+function folioInvoiceLines(res, lang) {
+  const he = lang === "he";
+  return res.folio.map((item) => {
+    const cat = FOLIO_CATEGORIES[item.category] || FOLIO_CATEGORIES.OTHER;
+    return {
+      description: item.description || (he ? cat.he : cat.en),
+      amountInclVat: item.amount,
+    };
+  });
+}
+
+// מפיק חשבונית מס-קבלה ל-folio ושומר אותה על ההזמנה (שורד ריסטארט,
+// ומאפשר לעמוד /invoice/:rid לרנדר אותה). idempotent: אם כבר הופקה
+// חשבונית להזמנה — מחזיר אותה (לא מקצה מספר סידורי חדש).
+export async function issueFolioInvoice(res, lang = "he") {
+  if (res.invoice) return res.invoice;
+  const cfg = cfgOf(res);
+  const inv = await invoicesFor(res.hotelId).issueInvoice({
+    reservation: res,
+    cfg,
+    lang,
+    // תייר חוץ → 0% מע"מ, רק אם המלון מפעיל את המסלול (tourist_zero_vat).
+    isTourist: !!res.isTourist && cfg.tourist_zero_vat !== false,
+    paidMethod: res.depositMethod === "cash" ? "cash" : "card",
+    lines: folioInvoiceLines(res, lang),
+    baseUrl: baseUrl(),
+  });
+  res.invoice = inv;
+  persist(res);
+  return inv;
+}
+
+// סיכום חשבונית לוואטסאפ — שדות החובה בקצרה + קישור למסמך המלא.
+export function formatInvoiceSummary(inv, lang = "he") {
+  const he    = lang === "he";
+  const money = (a) => `₪${(a / 100).toFixed(2)}`;
+  const RULE  = "━━━━━━━━━━━━━━━━━━━━";
+  const vatPct = Math.round((inv.vatRate || 0) * 100);
+  const vatLine = inv.zeroRated
+    ? (he ? `מע"מ: 0% (מלונאות לתייר חוץ)` : `VAT: 0% (foreign-tourist accommodation)`)
+    : (he ? `מזה מע"מ ${vatPct}%: ${money(inv.vat)}` : `incl. VAT ${vatPct}%: ${money(inv.vat)}`);
+  const itemLines = inv.lines.map(l => `• ${l.description} — ${money(l.amountInclVat)}`).join("\n");
+
+  return [
+    he ? `🧾 *${inv.type}* — מס' ${inv.number}` : `🧾 *${inv.type}* — No. ${inv.number}`,
+    inv.seller.businessId
+      ? (he ? `${inv.seller.name} · ע.מ/ח.פ ${inv.seller.businessId}` : `${inv.seller.name} · Biz No. ${inv.seller.businessId}`)
+      : inv.seller.name,
+    RULE,
+    itemLines,
+    RULE,
+    he ? `סכום לפני מע"מ: ${money(inv.net)}` : `Amount before VAT: ${money(inv.net)}`,
+    vatLine,
+    he ? `*סה"כ כולל מע"מ: ${money(inv.totalInclVat)}*` : `*Total incl. VAT: ${money(inv.totalInclVat)}*`,
+    inv.url ? (he ? `📄 החשבונית המלאה: ${inv.url}` : `📄 Full invoice: ${inv.url}`) : "",
+  ].filter(Boolean).join("\n");
+}
+
 // ── מנוע סליקת החשבון — משותף לצ'ק אאוט ולחיוב no-show ──
 // מבצע את פעולות התשלום בפועל מול שכבת התשלום המבודדת (payments), לפי
 // היחס בין סך החיובים לפיקדון, ומעדכן את שדות ההזמנה. אינו שולח הודעות
@@ -774,6 +842,16 @@ export async function processCheckout(phone, reservationId, lang = "he") {
       message: `⚠️ חיובים ₪${totalStr} מעל פיקדון | הפרש ₪${balanceStr} חויב מכרטיס הפיקדון | הוצעה החלפת כרטיס`,
       priority: "high",
     });
+  }
+
+  // ── חשבונית מס-קבלה (Part ה') — נשלחת כשיש חיובים ─────
+  // מסמך המס נשלח *אחרי* הודעת הצ'ק אאוט: סיכום מובנה + קישור למסמך המלא.
+  // כשל בהפקה לעולם לא חוסם את הצ'ק אאוט (נכשל בשקט ללוג).
+  if (s.total > 0) {
+    try {
+      const inv = await issueFolioInvoice(res, lang);
+      await wa(res.phone, formatInvoiceSummary(inv, lang), { lang });
+    } catch (e) { console.error("Invoice issue/send failed:", e?.message || e); }
   }
 
   // ── פיקדון מזומן (Part ד'): הקבלה מסלקת פיזית — צריכה את הסכום המדויק ──

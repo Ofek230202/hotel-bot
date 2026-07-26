@@ -272,3 +272,68 @@ test("צ'ק אאוט מזומן, חיובים מעל הפיקדון: 'להשלי
   assert.ok(!/balance\/pay/.test(guest), "אין קישור תשלום כרטיס בזרימת מזומן");
   assert.match(staffMsgs(phone), /לגבות הפרש.*במזומן/s, "הקבלה מקבלת סכום ההפרש");
 });
+
+// ════════════════════════════════════════════════════════
+//  חשבונית מס-קבלה (Part ה')
+// ════════════════════════════════════════════════════════
+async function stayWithCharge(charge, { tourist = false, lang = "he" } = {}) {
+  const phone = freshGuest();
+  const { reservationId } = await checkin.startCheckin(phone, NAME, "ABC", { stay: STAY });
+  const res = checkin.reservations[reservationId];
+  if (tourist) res.isTourist = true;
+  await checkin.completeCheckin(reservationId, "512");
+  checkin.addFolioItem(reservationId, "RESTAURANT", lang === "he" ? "ארוחה" : "Meal", charge);
+  return { phone, reservationId, res: checkin.reservations[reservationId] };
+}
+
+test("חשבונית: מע\"מ 18% מופרד נכון מסכום כולל מע\"מ (תושב)", async () => {
+  const { res } = await stayWithCharge(11800); // ₪118 כולל מע"מ
+  const inv = await checkin.issueFolioInvoice(res, "he");
+  assert.equal(inv.totalInclVat, 11800);
+  assert.equal(inv.net, 10000, "₪100 לפני מע\"מ");
+  assert.equal(inv.vat, 1800,  "₪18 מע\"מ");
+  assert.equal(inv.zeroRated, false);
+  assert.match(inv.number, /^\d{4}-\d{5}$/, "מספר סידורי בפורמט שנה-רץ");
+  assert.ok(inv.seller.businessId, "מספר עוסק על החשבונית");
+});
+
+test("חשבונית: תייר חוץ → 0% מע\"מ (מלונאות לתייר)", async () => {
+  const { res } = await stayWithCharge(11800, { tourist: true, lang: "en" });
+  const inv = await checkin.issueFolioInvoice(res, "en");
+  assert.equal(inv.vat, 0);
+  assert.equal(inv.zeroRated, true);
+  assert.equal(inv.net, 11800, "אין הפרדת מע\"מ בזירו-רייטד");
+});
+
+test("חשבונית: מספרים סידוריים רצים ועולים ב-1", async () => {
+  const a = (await checkin.issueFolioInvoice((await stayWithCharge(5000)).res, "he")).number;
+  const b = (await checkin.issueFolioInvoice((await stayWithCharge(5000)).res, "he")).number;
+  assert.equal(+b.split("-")[1], +a.split("-")[1] + 1, "המספר עולה ב-1 בין חשבוניות");
+});
+
+test("צ'ק אאוט עם חיובים: האורח מקבל חשבונית מס-קבלה + קישור למסמך", async () => {
+  const { phone, reservationId } = await stayWithCharge(35000);
+  sent.length = 0;
+  await checkin.processCheckout(phone, reservationId, "he");
+  const guest = guestMsgs(phone);
+  assert.match(guest, /חשבונית מס-קבלה/, "נשלח מסמך מס");
+  assert.match(guest, /\/invoice\//, "קישור לחשבונית המלאה");
+  assert.match(guest, /מע"מ 18%/, "פירוט מע\"מ");
+});
+
+test("עמוד החשבונית מרנדר את כל שדות החובה", async () => {
+  const { reservationId, res } = await stayWithCharge(11800);
+  await checkin.issueFolioInvoice(res, "he");
+  const { default: router } = await import("./checkin-routes.js");
+  const layer = router.stack.find(l => l.route?.path === "/invoice/:rid");
+  let html = "";
+  await layer.route.stack[0].handle(
+    { params: { rid: reservationId }, query: {}, headers: {} },
+    { send: (h) => { html = h; } },
+  );
+  assert.match(html, /חשבונית מס-קבלה/, "סוג המסמך");
+  assert.match(html, /מקור/, "סימון 'מקור'");
+  assert.match(html, /עוסק/, "מספר עוסק");
+  assert.match(html, /מע"מ 18%/, "שיעור מע\"מ");
+  assert.match(html, /ישראל ישראלי/, "שם הלקוח");
+});

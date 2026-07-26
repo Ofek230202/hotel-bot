@@ -126,6 +126,19 @@ router.get("/checkout/skip", (req, res) => {
   res.send(balanceSkipPage(pageLang(req, reservation)));
 });
 
+// ── חשבונית מס-קבלה — מסמך HTML מלא (Part ה') ──────────
+// מרנדר את החשבונית שהופקה בצ'ק אאוט (reservation.invoice) כמסמך רשמי
+// עם כל שדות החובה. הקישור נשלח לאורח בוואטסאפ. בפרודקשן ספק אמיתי
+// יחזיר PDF; כאן המסמך הוא HTML נקי לתצוגה/הדפסה.
+router.get("/invoice/:rid", (req, res) => {
+  const reservation = reservations[req.params.rid];
+  if (!reservation || !reservation.invoice) {
+    return res.send(errorPage("no_reservation", pageLang(req, reservation)));
+  }
+  const lang = reservation.invoice.lang || pageLang(req, reservation);
+  res.send(invoicePage(reservation, lang));
+});
+
 // ── Payment Webhook ───────────────────────────────────
 router.post("/payments/webhook",
   express.raw({ type: "application/json" }),
@@ -155,6 +168,121 @@ router.post("/payments/webhook",
     res.json({ received: true });
   }
 );
+
+// ── חשבונית מס-קבלה — מסמך רשמי (Part ה') ──────────────
+// מסמך לבן, מודפס, עם כל שדות החובה: שם+מספר עוסק, מספר סידורי, תאריך,
+// לקוח, פירוט, מע"מ בנפרד, סה"כ, סימון "מקור". RTL/LTR לפי שפת החשבונית.
+function invoicePage(reservation, lang = "he") {
+  const he  = lang === "he";
+  const inv = reservation.invoice;
+  const cfg = configFor(reservation?.hotelId);
+  const money = (a) => `₪${((a || 0) / 100).toLocaleString(he ? "he-IL" : "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const dateStr = new Date(inv.issuedAt).toLocaleDateString(he ? "he-IL" : "en-GB", {
+    day: "2-digit", month: "2-digit", year: "numeric", timeZone: cfg.location?.timezone || "Asia/Jerusalem",
+  });
+  const vatPct = Math.round((inv.vatRate || 0) * 100);
+
+  const T = he ? {
+    original: "מקור", docType: inv.type, invNo: "מס' חשבונית", date: "תאריך",
+    billedTo: "לכבוד", room: "חדר", desc: "תיאור", amount: "סכום",
+    subtotal: "סכום לפני מע\"מ", vat: `מע"מ ${vatPct}%`, vatZero: "מע\"מ 0% — מלונאות לתייר חוץ",
+    total: "סה\"כ לתשלום", paid: "שולם", method: inv.paidMethod === "cash" ? "מזומן" : "כרטיס אשראי",
+    biz: "עוסק", note: "מסמך ממוחשב — הופק על ידי מערכת הצ'ק אין הדיגיטלי של המלון.",
+  } : {
+    original: "ORIGINAL", docType: inv.type, invNo: "Invoice No.", date: "Date",
+    billedTo: "Billed to", room: "Room", desc: "Description", amount: "Amount",
+    subtotal: "Amount before VAT", vat: `VAT ${vatPct}%`, vatZero: "VAT 0% — foreign-tourist accommodation",
+    total: "Total due", paid: "Paid", method: inv.paidMethod === "cash" ? "Cash" : "Credit card",
+    biz: "Business No.", note: "Computer-generated document — issued by the hotel's digital check-in system.",
+  };
+
+  const rows = inv.lines.map(l =>
+    `<tr><td class="desc">${escapeHtml(l.description)}</td><td class="amt">${money(l.amountInclVat)}</td></tr>`
+  ).join("\n");
+
+  const vatRow = inv.zeroRated
+    ? `<div class="sum-row"><span>${T.vatZero}</span><span>${money(0)}</span></div>`
+    : `<div class="sum-row"><span>${T.subtotal}</span><span>${money(inv.net)}</span></div>
+       <div class="sum-row"><span>${T.vat}</span><span>${money(inv.vat)}</span></div>`;
+
+  return `<!DOCTYPE html>
+<html lang="${he ? "he" : "en"}" dir="${he ? "rtl" : "ltr"}">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${T.docType} ${inv.number} — ${escapeHtml(inv.seller.name)}</title>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Heebo',Arial,sans-serif;background:#EEF0F3;color:#1A2238;padding:24px;line-height:1.5}
+.doc{background:#fff;max-width:640px;margin:0 auto;padding:40px;border-radius:12px;box-shadow:0 6px 30px rgba(0,0,0,.08)}
+.top{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #C9A84C;padding-bottom:18px;margin-bottom:22px;gap:16px}
+.seller-name{font-size:20px;font-weight:700}
+.seller-meta{font-size:12px;color:#555;margin-top:4px}
+.doc-title{text-align:${he ? "left" : "right"}}
+.doc-type{font-size:17px;font-weight:700;color:#0D1117}
+.original{display:inline-block;border:1px solid #C9A84C;color:#9c7f2e;font-size:11px;font-weight:700;padding:2px 10px;border-radius:4px;margin-top:6px;letter-spacing:1px}
+.meta-grid{display:flex;justify-content:space-between;gap:24px;font-size:13px;margin-bottom:22px}
+.meta-grid .label{color:#888;font-size:11px}
+.meta-grid .val{font-weight:600}
+table{width:100%;border-collapse:collapse;margin-bottom:18px;font-size:14px}
+th{text-align:${he ? "right" : "left"};border-bottom:2px solid #ddd;padding:8px 6px;font-size:12px;color:#666;text-transform:uppercase;letter-spacing:.5px}
+th.amt,td.amt{text-align:${he ? "left" : "right"};white-space:nowrap}
+td{padding:9px 6px;border-bottom:1px solid #eee}
+.summary{margin-${he ? "left" : "right"}:auto;width:60%;min-width:240px}
+.sum-row{display:flex;justify-content:space-between;padding:5px 0;font-size:13px;color:#444}
+.sum-total{display:flex;justify-content:space-between;padding:11px 0;margin-top:6px;border-top:2px solid #1A2238;font-size:17px;font-weight:700}
+.paid{margin-top:18px;text-align:center}
+.paid span{display:inline-block;border:2px solid #22a06b;color:#22a06b;font-weight:700;padding:6px 18px;border-radius:6px;transform:rotate(-3deg);letter-spacing:1px}
+.foot{margin-top:26px;padding-top:14px;border-top:1px solid #eee;font-size:11px;color:#999;text-align:center}
+@media print{body{background:#fff;padding:0}.doc{box-shadow:none;border-radius:0}}
+</style>
+</head>
+<body>
+<div class="doc">
+  <div class="top">
+    <div>
+      <div class="seller-name">${escapeHtml(inv.seller.name)}</div>
+      <div class="seller-meta">
+        ${inv.seller.businessType ? escapeHtml(inv.seller.businessType) + " · " : ""}${T.biz} ${escapeHtml(inv.seller.businessId || "—")}<br>
+        ${escapeHtml(inv.seller.address || "")}<br>
+        ${inv.seller.phone ? escapeHtml(inv.seller.phone) : ""} ${inv.seller.email ? "· " + escapeHtml(inv.seller.email) : ""}
+      </div>
+    </div>
+    <div class="doc-title">
+      <div class="doc-type">${T.docType}</div>
+      ${inv.original ? `<div class="original">${T.original}</div>` : ""}
+    </div>
+  </div>
+
+  <div class="meta-grid">
+    <div><div class="label">${T.invNo}</div><div class="val">${escapeHtml(inv.number)}</div></div>
+    <div><div class="label">${T.date}</div><div class="val">${dateStr}</div></div>
+    <div><div class="label">${T.billedTo}</div><div class="val">${escapeHtml(inv.customer.name || "—")}${inv.customer.room ? ` · ${T.room} ${escapeHtml(String(inv.customer.room))}` : ""}</div></div>
+  </div>
+
+  <table>
+    <thead><tr><th class="desc">${T.desc}</th><th class="amt">${T.amount}</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+
+  <div class="summary">
+    ${vatRow}
+    <div class="sum-total"><span>${T.total}</span><span>${money(inv.totalInclVat)}</span></div>
+  </div>
+
+  <div class="paid"><span>✓ ${T.paid} — ${T.method}</span></div>
+  <div class="foot">${T.note}${inv.allocationNumber ? `<br>מספר הקצאה: ${escapeHtml(inv.allocationNumber)}` : ""}</div>
+</div>
+</body>
+</html>`;
+}
+
+// בריחת HTML בסיסית — פרטי אורח/עסק לא ישברו את המסמך ולא יאפשרו הזרקה.
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
 
 // ── HTML Pages ────────────────────────────────────────
 // כל עמוד מקבל `lang` ומרנדר את *עצמו* בשפה הזו — כולל dir/lang של

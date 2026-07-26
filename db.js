@@ -160,6 +160,14 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_id_documents_res
     ON id_documents (hotel_id, reservation_id);
 
+  -- ── מונה מספרי חשבונית רץ, פר-מלון (Part ה') ──────────
+  -- חשבונית מס בישראל חייבת מספר סידורי *רץ ובלתי-שביר*. שומרים מונה
+  -- לכל מלון; nextInvoiceSeq מקדם אותו אטומית (node:sqlite סינכרוני).
+  CREATE TABLE IF NOT EXISTS invoice_counters (
+    hotel_id TEXT PRIMARY KEY,
+    seq      INTEGER NOT NULL DEFAULT 0
+  );
+
   -- ── יומן גישה למסמכי זיהוי (audit trail) ──────────────
   -- כל פתיחה/צפייה/הורדה של מסמך זיהוי נרשמת: מי ניגש, מתי, למה, ומאיזה
   -- IP. זו דרישה של אבטחת מידע — בלי audit אי אפשר לדעת מי ראה PII רגיש.
@@ -192,3 +200,12 @@ for (const alter of [
 db.prepare(
   `INSERT OR IGNORE INTO stats (hotel_id) VALUES (?)`
 ).run(DEFAULT_HOTEL_ID);
+
+// ── מספר חשבונית רץ הבא, פר-מלון (Part ה') ─────────────
+// node:sqlite סינכרוני ו-JS חד-חוטי, לכן שלושת הצעדים רצים ללא הפרעה =
+// אטומי בתהליך יחיד. מחזיר מספר רץ חדש (1, 2, 3, …) לכל מלון בנפרד.
+export function nextInvoiceSeq(hotelId = DEFAULT_HOTEL_ID) {
+  db.prepare(`INSERT INTO invoice_counters (hotel_id, seq) VALUES (?, 0) ON CONFLICT(hotel_id) DO NOTHING`).run(hotelId);
+  db.prepare(`UPDATE invoice_counters SET seq = seq + 1 WHERE hotel_id = ?`).run(hotelId);
+  return db.prepare(`SELECT seq FROM invoice_counters WHERE hotel_id = ?`).get(hotelId).seq;
+}
