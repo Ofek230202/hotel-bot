@@ -68,7 +68,9 @@ router.get("/checkin/success", async (req, res) => {
   // השיחה של האורח ולא תושפע מעדכוני הסשן שקורים בתוך הצ'ק אין.
   const lang = pageLang(req, reservation);
 
-  // Auto-assign room (in production: pull from PMS)
+  // 🔌 הקצאת חדר (Part ט'): בדמו ברירת מחדל "304". בפרודקשן עם PMS מחובר:
+  //    const { roomNumber } = await pmsFor(reservation.hotelId).assignRoom(reservation.id);
+  //    (nullish → נשארים על ברירת המחדל עד שה-PMS מחזיר חדר אמיתי.)
   const roomNumber = reservation.roomNumber || "304";
 
   try {

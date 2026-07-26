@@ -186,6 +186,21 @@ const DEFAULTS = {
   tourist_zero_vat: true,
   invoice_provider: "mock",   // "mock" | ספק ישראלי אמיתי (invoices/index.js)
 
+  // ── WhatsApp channel & PMS (Part ט') ───────────────────
+  // 🔌 ערוץ הוואטסאפ: "twilio" (ברירת מחדל) או "cloud" (Meta WhatsApp
+  //    Business Cloud API). מלון שמחבר מספר משלו דרך Meta מגדיר:
+  //       whatsapp_provider:    "cloud",
+  //       whatsapp_credentials: { phoneNumberId, token, appSecret }
+  //    ההחלפה אוטומטית ב-whatsapp/index.js. בלי credentials — נפילה בטוחה
+  //    ל-Twilio. ⚠️ credentials הם סודות — מ-env/DB מוצפן בפרודקשן.
+  whatsapp_provider:    "twilio",  // "twilio" | "cloud"
+  whatsapp_credentials: null,      // { phoneNumberId, token, appSecret }
+  // 🔌 מערכת ניהול המלון (PMS): "mock" (ברירת מחדל — מאגר ההזמנות המובנה)
+  //    או ספק אמיתי (Opera/OHIP, Mews, Apaleo, Cloudbeds). ההחלפה ב-
+  //    pms/index.js. credentials פר-מלון מ-env/DB.
+  pms_provider:    "mock",         // "mock" | "apaleo" | "mews" | "opera" | ...
+  pms_credentials: null,           // { clientId, clientSecret, propertyId, ... }
+
   // ── ID document policy (מדיניות מסמכי זיהוי) ───────────
   // ⚠️ קריטי לפרטיות. ברירת המחדל היא **verify-then-discard**: הבוט
   //    מאמת את המסמך, מחלץ *רק את השדות הנדרשים*, ומוחק את התמונה מיד.

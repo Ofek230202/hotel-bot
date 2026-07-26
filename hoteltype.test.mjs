@@ -59,7 +59,7 @@ mock.module("./email/index.js", {
   exports: { email: { send: async (m) => { emails.push(m); return { success: true, messageId: "mock" }; } } },
 });
 
-let bot, checkin, config, emergency, pay, cardcom, state;
+let bot, checkin, config, emergency, pay, cardcom, state, wa, cloud, pmsMod;
 before(async () => {
   bot       = await import("./bot.js");
   checkin   = await import("./checkin.js");
@@ -68,6 +68,9 @@ before(async () => {
   pay       = await import("./payments/index.js");
   cardcom   = await import("./payments/CardComProvider.js");
   state     = await import("./state.js");
+  wa        = await import("./whatsapp/index.js");
+  cloud     = await import("./whatsapp/CloudApiProvider.js");
+  pmsMod    = await import("./pms/index.js");
 });
 
 let phoneSeq = 0;
@@ -75,7 +78,12 @@ const freshGuest = () => `whatsapp:+9725200000${String(++phoneSeq).padStart(2, "
 beforeEach(() => { sent.length = 0; emails.length = 0; aiReply = "שלום!"; });
 // כל בדיקה שמשנה את הקונפיג חייבת לאפס — אחרת "בוטיק"/ספק סליקה דולף
 // לבדיקה הבאה. מנקים גם את מטמון ספק התשלום כדי שיקרא מחדש את הקונפיג.
-afterEach(() => { config.resetConfig(); pay.clearPaymentsCache(); });
+afterEach(() => {
+  config.resetConfig();
+  pay.clearPaymentsCache();
+  wa?.clearWhatsAppCache?.();
+  pmsMod?.clearPmsCache?.();
+});
 
 const guestMsgs = (g) => sent.filter(m => m.to === g).map(m => m.body).join("\n");
 const staffMsgs = (g) => sent.filter(m => m.to !== g).map(m => m.body).join("\n");
@@ -338,6 +346,60 @@ test("Part ו': מציאת שיחה לפי חדר → טלפון האורח נג
 
 test("Part ו': חדר לא מאוכלס → null (בלי לזרוק)", () => {
   assert.equal(state.sessionByRoom("9999"), null);
+});
+
+// ════════════════════════════════════════════════════════
+//  חיבורי PMS + Meta WhatsApp (Part ט')
+// ════════════════════════════════════════════════════════
+test("Part ט' whatsapp: ברירת מחדל = Twilio (אפס שינוי התנהגות)", () => {
+  assert.ok(wa.whatsappFor("kempinski") === wa.whatsapp);
+});
+
+test("Part ט' whatsapp: cloud בלי credentials נופל ל-Twilio", () => {
+  config.updateConfig({ whatsapp_provider: "cloud" });
+  wa.clearWhatsAppCache();
+  assert.ok(wa.whatsappFor("kempinski") === wa.whatsapp, "נפילה בטוחה");
+});
+
+test("Part ט' whatsapp: cloud עם credentials בוחר CloudApiProvider", () => {
+  config.updateConfig({ whatsapp_provider: "cloud", whatsapp_credentials: { phoneNumberId: "123", token: "t" } });
+  wa.clearWhatsAppCache();
+  assert.equal(wa.whatsappFor("kempinski").constructor.name, "CloudApiProvider");
+});
+
+test("Part ט' whatsapp: אימות HMAC של webhook Meta (תקין מול מזויף)", async () => {
+  const { createHmac } = await import("node:crypto");
+  const p = new cloud.CloudApiProvider({ phoneNumberId: "1", token: "t", appSecret: "secret" });
+  const body = JSON.stringify({ hello: "world" });
+  const sig  = "sha256=" + createHmac("sha256", "secret").update(body).digest("hex");
+  assert.equal(p.verifyWebhook({ rawBody: body, signature: sig }).valid, true, "חתימה תקינה עוברת");
+  assert.equal(p.verifyWebhook({ rawBody: body, signature: "sha256=deadbeef" }).valid, false, "חתימה מזויפת נדחית");
+  assert.equal(p.verifyWebhook({ rawBody: body }).valid, false, "בלי חתימה — נדחה");
+});
+
+test("Part ט' whatsapp: verifyMetaChallenge רק עם verify token תואם", () => {
+  assert.equal(cloud.verifyMetaChallenge({ "hub.mode": "subscribe", "hub.verify_token": "tok", "hub.challenge": "42" }, "tok"), "42");
+  assert.equal(cloud.verifyMetaChallenge({ "hub.mode": "subscribe", "hub.verify_token": "x", "hub.challenge": "42" }, "tok"), null);
+});
+
+test("Part ט' pms: ברירת מחדל = Mock — המאגר המובנה מקור האמת", async () => {
+  const p = pmsMod.pmsFor("kempinski");
+  assert.equal(p.isMock, true);
+  assert.equal(await p.getReservation({ confirmationNumber: "X" }), null, "אין רשומה חיצונית → מאגר מובנה");
+});
+
+test("Part ט' pms: apaleo עם credentials = scaffold שזורק בבירור", async () => {
+  config.updateConfig({ pms_provider: "apaleo", pms_credentials: { clientId: "a", clientSecret: "b", propertyId: "c" } });
+  pmsMod.clearPmsCache();
+  const p = pmsMod.pmsFor("kempinski");
+  await assert.rejects(() => p.getReservation({}), (e) => e.notConnected === true,
+    "scaffold זורק 'לא מחובר' — לא מדמה נתונים שקריים");
+});
+
+test("Part ט' pms: apaleo בלי credentials נופל ל-Mock", () => {
+  config.updateConfig({ pms_provider: "apaleo" });
+  pmsMod.clearPmsCache();
+  assert.equal(pmsMod.pmsFor("kempinski").isMock, true, "נפילה בטוחה למאגר המובנה");
 });
 
 test("עמוד החשבונית מרנדר את כל שדות החובה", async () => {

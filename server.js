@@ -12,6 +12,8 @@ import checkinRouter from "./checkin-routes.js";
 import { smokePlaces } from "./places/index.js";
 import { listIdDocuments, retrieveIdDocument, accessLogFor, purgeExpiredIdDocuments, RETENTION_DAYS } from "./idverify/index.js";
 import { DEFAULT_HOTEL_ID } from "./tenant.js";
+import { verifyMetaChallenge } from "./whatsapp/index.js";
+import { pmsHealth } from "./pms/index.js";
 
 dotenv.config();
 
@@ -62,6 +64,28 @@ app.post("/webhook", async (req, res) => {
   // per-guest, כך שהודעות מקבילות של מלונות/אורחים שונים לא מתערבבות.
   handleIncoming(from, body, media, { to }).catch(console.error);
   res.type("text/xml").send("<Response></Response>");
+});
+
+// ── Meta WhatsApp Cloud API webhook (Part ט') — נקודת חיבור ──
+// כשמלון עובר מ-Twilio ל-Meta, ההודעות הנכנסות מגיעות לכאן (לא ל-/webhook
+// של טוויליו). מוכן מראש:
+//   GET  — handshake אימות (Meta שולח hub.challenge; מחזירים אם ה-verify
+//          token תואם ל-WA_VERIFY_TOKEN).
+//   POST — הודעות נכנסות. מאמת חתימת X-Hub-Signature-256 (HMAC) לפני עיבוד,
+//          מחלץ את ההודעה ומעביר ל-handleIncoming עם המספר של המלון (To).
+// ⚠️ צריך express.raw כדי לאמת HMAC על הגוף הגולמי — לכן mount ייעודי.
+app.get("/webhook/meta", (req, res) => {
+  const challenge = verifyMetaChallenge(req.query, process.env.WA_VERIFY_TOKEN || "");
+  if (challenge) return res.status(200).send(challenge);
+  res.sendStatus(403);
+});
+app.post("/webhook/meta", express.raw({ type: "*/*" }), (req, res) => {
+  // 🔌 החיבור המלא: לפרש את req.body (JSON גולמי), לאמת HMAC דרך
+  //    verifyIncomingWebhook(hotelId, { rawBody: req.body, signature }),
+  //    לחלץ entry[].changes[].value.messages[] ולהעביר כל הודעה ל-
+  //    handleIncoming(from, text, media, { to: phoneNumberId→hotelId }).
+  //    כרגע: מאשרים קבלה (200) כדי ש-Meta לא ינסה שוב, בלי לעבד — מוכן לחיבור.
+  res.sendStatus(200);
 });
 
 // ── Check-in routes ───────────────────────────────────
@@ -372,6 +396,11 @@ app.listen(PORT, () => {
   // הדגמה מול לקוח. לא ממתינים לו — השרת כבר מקבל בקשות; הכשל מטופל
   // בתוך smokePlaces ולעולם לא מפיל את התהליך.
   smokePlaces(hotelConfig.location).catch(() => {});
+
+  // איזה PMS פעיל (Part ט'). Mock = המאגר המובנה הוא מקור האמת — תקין
+  // לפיילוט/דמו. מלון עם PMS אמיתי יראה כאן את שם הספק ו"מחובר".
+  const ph = pmsHealth(DEFAULT_HOTEL_ID);
+  console.log(`🏨  PMS: ${ph.provider}${ph.connected ? " (מחובר)" : " — המאגר המובנה מקור האמת"}`);
 
   // ── מדיניות שמירה (retention) של מסמכי זיהוי ──────────
   // מוחק אוטומטית מסמכים שעבר זמנם (ברירת מחדל 30 יום). רץ בעלייה

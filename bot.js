@@ -2,9 +2,9 @@
 //  BOT BRAIN v6 — Production Ready
 // ════════════════════════════════════════════════════════
 import Anthropic from "@anthropic-ai/sdk";
-import twilio    from "twilio";
 import dotenv    from "dotenv";
 import { createHash } from "node:crypto";
+import { whatsappFor } from "./whatsapp/index.js";
 import { departmentContacts, TAG_DEPARTMENTS, configFor, hotelModel } from "./config.js";
 import { getSession, peekSession, recordActivity, pushHistory, patchSession, logAlert, logIncident, stats } from "./state.js";
 import { runInTenant, resolveHotelId, currentHotelId, fromNumberFor, tenantKey } from "./tenant.js";
@@ -64,7 +64,8 @@ async function createMessageWithRetry(params, attempts = 3) {
   }
   throw lastErr;
 }
-const tw   = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+// שליחת הוואטסאפ עוברת דרך שכבת whatsapp/ המבודדת (Part ט') — Twilio
+// כברירת מחדל, Meta Cloud API כשמלון עובר. bot.js לא יודע מי הערוץ.
 const FROM = process.env.TWILIO_WHATSAPP_NUMBER;
 
 // ── הודעות מוכנות למקרי קצה — לעולם לא שקט מוחלט (Bug #2) ──
@@ -127,8 +128,10 @@ export async function wa(to, body, { lang = "he", from } = {}) {
   //    (שגיאה 21617). הודעה ארוכה — תנאי שהייה מלאים, חשבון מפורט, תשובת
   //    AI ארוכה — הייתה *נכשלת בשקט* והאורח לא היה מקבל כלום. מפצלים על
   //    גבולות טבעיים, שולחים לפי הסדר. הגנה כללית, לא רק לתנאים.
+  // ערוץ הוואטסאפ של *המלון הזה* (Part ט') — Twilio/Meta לפי הקונפיג שלו.
+  const channel = whatsappFor(currentHotelId());
   for (const part of splitForWhatsApp(text)) {
-    await withTimeout(() => tw.messages.create({ from: fromArg, to, body: part }), 15_000, "twilio.send");
+    await withTimeout(() => channel.sendText({ from: fromArg, to, body: part }), 15_000, "wa.send");
   }
   console.log(`📤 → ${to.slice(-8)}: ${text.slice(0, 60)}…`);
 }
