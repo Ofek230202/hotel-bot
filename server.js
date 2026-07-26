@@ -14,6 +14,8 @@ import { listIdDocuments, retrieveIdDocument, accessLogFor, purgeExpiredIdDocume
 import { DEFAULT_HOTEL_ID } from "./tenant.js";
 import { verifyMetaChallenge } from "./whatsapp/index.js";
 import { pmsHealth } from "./pms/index.js";
+import { timingSafeEqual } from "node:crypto";
+import twilio from "twilio";
 
 dotenv.config();
 
@@ -36,14 +38,43 @@ app.use("/payments/webhook", express.raw({ type: "application/json" }));
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
+// השוואת token בזמן-קבוע (Part ב') — מונעת timing attack שמדליף את הסיסמה
+// תו-תו. עדיף header על query (query נשמר בלוגים/היסטוריית דפדפן).
+function safeEqual(a, b) {
+  const ba = Buffer.from(String(a || ""));
+  const bb = Buffer.from(String(b || ""));
+  return ba.length === bb.length && timingSafeEqual(ba, bb);
+}
 function auth(req, res, next) {
   const token = req.headers["x-dashboard-token"] || req.query.token;
-  if (token === PASS) return next();
+  if (safeEqual(token, PASS)) return next();
   res.status(401).json({ error: "Unauthorized" });
+}
+
+// מסתיר סודות (credentials) מכל תגובת קונפיג — שלא ידלפו דרך ה-API (Part ב').
+function redactConfig(cfg) {
+  const clone = structuredClone(cfg);
+  for (const k of ["payment_credentials", "whatsapp_credentials", "pms_credentials"]) {
+    if (clone[k]) clone[k] = "[REDACTED]";
+  }
+  return clone;
 }
 
 // ── WhatsApp Webhook ──────────────────────────────────
 app.post("/webhook", async (req, res) => {
+  // ── אימות חתימת Twilio (Part ב') — opt-in דרך env ──────
+  // מונע זיוף webhooks (POST מזויף כאילו מטוויליו, שיכול להזריק "הודעות
+  // אורח" ולהפעיל התראות/חיובים). כבוי כברירת מחדל כדי לא לשבור הרצה
+  // מקומית/דמו; בפרודקשן מפעילים VALIDATE_TWILIO=true (דורש BASE_URL נכון).
+  if (process.env.VALIDATE_TWILIO === "true") {
+    const signature = req.headers["x-twilio-signature"];
+    const url = (process.env.BASE_URL || "") + req.originalUrl;
+    const valid = twilio.validateRequest(process.env.TWILIO_AUTH_TOKEN, signature, url, req.body || {});
+    if (!valid) {
+      console.warn(`🚫 Twilio webhook signature invalid — rejected (${String(req.body?.From || "").slice(-8)})`);
+      return res.status(403).send("invalid signature");
+    }
+  }
   const from = req.body.From;
   const to   = req.body.To;           // ← המספר של המלון: ממנו נגזר hotelId (multi-tenant)
   const body = req.body.Body?.trim() || "";
@@ -289,7 +320,7 @@ app.get("/api/routing", auth, (req, res) => res.json(routingTable()));
 
 app.get("/api/alerts", auth, (req, res) => res.json(staffAlerts));
 app.get("/api/incidents", auth, (req, res) => res.json(incidents));
-app.get("/api/config", auth, (req, res) => res.json(hotelConfig));
+app.get("/api/config", auth, (req, res) => res.json(redactConfig(hotelConfig)));
 
 // עדכון קונפיג — מיזוג *עמוק* ונשמר ל-DB (שורד ריסטארט).
 // שולחים רק את מה שמשנים: {"services":{"spa":{"he":{"hours":"10:00–22:00"}}}}
@@ -297,7 +328,7 @@ app.get("/api/config", auth, (req, res) => res.json(hotelConfig));
 // הטיפולים) מוחלף כמכלול — מי שמעדכן רשימה שולח אותה במלואה.
 app.post("/api/config", auth, (req, res) => {
   try {
-    res.json({ ok: true, config: updateConfig(req.body) });
+    res.json({ ok: true, config: redactConfig(updateConfig(req.body)) });
   } catch (e) {
     console.error("Config update failed:", e?.message || e);
     res.status(400).json({ ok: false, error: e.message });
@@ -307,7 +338,7 @@ app.post("/api/config", auth, (req, res) => {
 // איפוס הקונפיג לברירות המחדל שבקוד (מוחק את כל ה-overrides).
 app.post("/api/config/reset", auth, (req, res) => {
   try {
-    res.json({ ok: true, config: resetConfig() });
+    res.json({ ok: true, config: redactConfig(resetConfig()) });
   } catch (e) {
     console.error("Config reset failed:", e?.message || e);
     res.status(500).json({ ok: false, error: e.message });
@@ -401,6 +432,14 @@ app.listen(PORT, () => {
   // לפיילוט/דמו. מלון עם PMS אמיתי יראה כאן את שם הספק ו"מחובר".
   const ph = pmsHealth(DEFAULT_HOTEL_ID);
   console.log(`🏨  PMS: ${ph.provider}${ph.connected ? " (מחובר)" : " — המאגר המובנה מקור האמת"}`);
+
+  // ── אזהרות אבטחה בעלייה (Part ב') ────────────────────
+  if (PASS === "hotel2024") {
+    console.warn(`⚠️  אבטחה: DASHBOARD_PASSWORD בברירת מחדל ("hotel2024") — הגדירו סיסמה חזקה ב-env לפני פרודקשן.`);
+  }
+  if (process.env.VALIDATE_TWILIO !== "true") {
+    console.warn(`⚠️  אבטחה: אימות חתימת Twilio כבוי — בפרודקשן הגדירו VALIDATE_TWILIO=true (עם BASE_URL ציבורי) כדי לחסום webhooks מזויפים.`);
+  }
 
   // ── מדיניות שמירה (retention) של מסמכי זיהוי ──────────
   // מוחק אוטומטית מסמכים שעבר זמנם (ברירת מחדל 30 יום). רץ בעלייה

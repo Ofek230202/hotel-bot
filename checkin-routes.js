@@ -295,7 +295,8 @@ function escapeHtml(s) {
 function successPage(reservation, roomNumber, lang = "he") {
   const he   = lang === "he";
   const cfg  = configFor(reservation?.hotelId); // קונפיג המלון של ההזמנה (multi-tenant)
-  const name = nameFor(reservation, lang); // שם בשפת העמוד — לא הצורה העברית הקבועה
+  // escapeHtml על שם האורח — הוא קלט שהאורח שלט בו, ומוזרק ל-HTML (Part ב', XSS).
+  const name = escapeHtml(nameFor(reservation, lang));
   const svc  = (key) => cfg.services[key]?.[lang] || cfg.services[key]?.en || {};
   const bf   = svc("breakfast"), pool = svc("pool");
   const stay = formatStayShort(stayOf(reservation), lang);
@@ -579,7 +580,7 @@ function balancePage(rid, reservation, lang = "he") {
   const he = lang === "he";
   const cfg = configFor(reservation?.hotelId); // מיתוג לפי המלון של ההזמנה
   const amount = ((reservation.balanceAmount || 0) / 100).toFixed(0);
-  const name = nameFor(reservation, lang); // שם בשפת העמוד — לא הצורה העברית
+  const name = escapeHtml(nameFor(reservation, lang)); // escape — קלט אורח ב-HTML (Part ב')
   const T = he
     ? {
         title: `תשלום יתרה בכרטיס אחר — ${hotelConfig.name}`,

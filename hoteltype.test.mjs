@@ -402,6 +402,29 @@ test("Part ט' pms: apaleo בלי credentials נופל ל-Mock", () => {
   assert.equal(pmsMod.pmsFor("kempinski").isMock, true, "נפילה בטוחה למאגר המובנה");
 });
 
+// ════════════════════════════════════════════════════════
+//  אבטחה (Part ב')
+// ════════════════════════════════════════════════════════
+test("Part ב': שם אורח זדוני עובר escape בעמוד האישור (הגנת XSS)", async () => {
+  const phone = freshGuest();
+  const evil  = "<script>alert(1)</script>";
+  const { reservationId } = await checkin.startCheckin(
+    phone,
+    { guestName: evil, guestNameHe: evil, guestNameEn: "<img src=x onerror=alert(1)>" },
+    "ABC", { stay: STAY },
+  );
+  await checkin.completeCheckin(reservationId, "512");
+  const { default: router } = await import("./checkin-routes.js");
+  const layer = router.stack.find(l => l.route?.path === "/checkin/success");
+  let html = "";
+  await layer.route.stack[0].handle(
+    { query: { rid: reservationId }, headers: {} },
+    { send: (h) => { html = h; }, redirect: () => {} },
+  );
+  assert.ok(!/<script>alert/.test(html), "תגית script גולמית לא נכנסת ל-HTML");
+  assert.match(html, /&lt;script&gt;/, "השם עבר escape כראוי");
+});
+
 test("עמוד החשבונית מרנדר את כל שדות החובה", async () => {
   const { reservationId, res } = await stayWithCharge(11800);
   await checkin.issueFolioInvoice(res, "he");
