@@ -1021,10 +1021,32 @@ test("תוספת 2: אורח שמסרב לתנאים → נעצר בנימוס +
 test("תוספת 2: התנאים באנגלית לאורח אנגלי — בלי ערבוב שפות", async () => {
   const p = await checkinUpTo("waiting_terms", { lang: "en" });
 
-  assert.match(lastBody(), /Stay Terms/);
-  assert.match(lastBody(), /Non-smoking hotel/);
-  assert.match(lastBody(), /I confirm/);
-  assert.ok(!/[֐-׿]/.test(lastBody()), `ערבוב שפות בתנאים: ${lastBody()}`);
+  // התנאים המורחבים חוצים את מגבלת 1600 של טוויליו ולכן נשלחים בכמה
+  // מקטעים (wa() מפצל). בודקים את *כל* ההודעות לאורח, לא רק האחרונה.
+  const guestTerms = sent.filter(s => s.to === p).map(s => s.body).join("\n");
+  assert.match(guestTerms, /Stay Terms/);
+  assert.match(guestTerms, /Non-smoking hotel/);
+  assert.match(guestTerms, /I confirm/);
+  assert.ok(!/[֐-׿]/.test(guestTerms), `ערבוב שפות בתנאים: ${guestTerms}`);
+});
+
+test("Part ח': נשמרת רשומת אישור בת-אכיפה — נוסח מילולי, שפה, hash", async () => {
+  const { reservations } = await import("./checkin.js");
+  const p = await checkinUpTo("waiting_terms");
+  await bot.handleIncoming(p, "אני מאשר");
+  const res = Object.values(reservations).find(r => r.phone === p);
+  assert.equal(res.termsAcceptanceText, "אני מאשר", "הנוסח המילולי שהאורח כתב נשמר");
+  assert.equal(res.termsLang, "he", "השפה שהוצגה ואושרה נשמרת");
+  assert.match(res.termsHash || "", /^[a-f0-9]{64}$/, "SHA-256 של נוסח התנאים המדויק");
+});
+
+test("wa: הודעה ארוכה מעל מגבלת טוויליו מפוצלת ולא נכשלת בשקט", async () => {
+  const p = freshGuest();
+  aiReply = "פרט ".repeat(900); // ~3600 תווים — הרבה מעל 1600
+  await bot.handleIncoming(p, "ספר לי על הכל בהרחבה");
+  const parts = sent.filter(s => s.to === p);
+  assert.ok(parts.length >= 2, `הודעה ארוכה לא פוצלה: ${parts.length} חלקים`);
+  for (const m of parts) assert.ok(m.body.length <= 1500, `חלק חורג מהמגבלה: ${m.body.length}`);
 });
 
 // ════════════════════════════════════════════════════════

@@ -4,6 +4,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import twilio    from "twilio";
 import dotenv    from "dotenv";
+import { createHash } from "node:crypto";
 import { departmentContacts, TAG_DEPARTMENTS, configFor, hotelModel } from "./config.js";
 import { getSession, peekSession, recordActivity, pushHistory, patchSession, logAlert, logIncident, stats } from "./state.js";
 import { runInTenant, resolveHotelId, currentHotelId, fromNumberFor, tenantKey } from "./tenant.js";
@@ -121,8 +122,42 @@ export async function wa(to, body, { lang = "he", from } = {}) {
   //    תקוע של טוויליו (לא שגיאה — פשוט לא עונה) היה משאיר את שרשרת
   //    הנעילה של האורח תלויה עד restart. עם timeout הקריאה *נכשלת* מהר,
   //    השרשרת משתחררת, והאורח יכול לכתוב שוב. לא תוקע, לא קורס.
-  await withTimeout(() => tw.messages.create({ from: fromArg, to, body: text }), 15_000, "twilio.send");
+  //
+  // 📏 פיצול הודעה ארוכה: טוויליו דוחה הודעת וואטסאפ מעל ~1600 תווים
+  //    (שגיאה 21617). הודעה ארוכה — תנאי שהייה מלאים, חשבון מפורט, תשובת
+  //    AI ארוכה — הייתה *נכשלת בשקט* והאורח לא היה מקבל כלום. מפצלים על
+  //    גבולות טבעיים, שולחים לפי הסדר. הגנה כללית, לא רק לתנאים.
+  for (const part of splitForWhatsApp(text)) {
+    await withTimeout(() => tw.messages.create({ from: fromArg, to, body: part }), 15_000, "twilio.send");
+  }
   console.log(`📤 → ${to.slice(-8)}: ${text.slice(0, 60)}…`);
+}
+
+// מפצל טקסט למקטעים ≤ limit על גבולות טבעיים: קודם פסקאות (\n\n), ואז
+// שורות, ורק כמוצא אחרון חיתוך קשיח. שומר את התוכן במלואו ובסדר.
+const WA_LIMIT = 1500; // מרווח בטוח מתחת ל-1600 של טוויליו
+function splitForWhatsApp(text, limit = WA_LIMIT) {
+  if (text.length <= limit) return [text];
+  const parts = [];
+  let buf = "";
+  const flush = () => { if (buf.trim()) parts.push(buf.trim()); buf = ""; };
+  for (const para of text.split("\n\n")) {
+    if (para.length > limit) {
+      flush();
+      let lineBuf = "";
+      for (const line of para.split("\n")) {
+        if (lineBuf && (lineBuf + "\n" + line).length > limit) { parts.push(lineBuf.trim()); lineBuf = line; }
+        else lineBuf = lineBuf ? lineBuf + "\n" + line : line;
+      }
+      if (lineBuf) buf = lineBuf;
+      continue;
+    }
+    if (buf && (buf + "\n\n" + para).length > limit) { flush(); buf = para; }
+    else buf = buf ? buf + "\n\n" + para : para;
+  }
+  flush();
+  // מקרה קצה: מקטע בודד עדיין ארוך מהמגבלה → חיתוך קשיח.
+  return parts.flatMap(p => p.length <= limit ? [p] : (p.match(new RegExp(`[\\s\\S]{1,${limit}}`, "g")) || [p]));
 }
 
 function israelTime() {
@@ -1783,11 +1818,22 @@ function renderTerms(lang) {
   const list = cfg.terms?.[he ? "he" : "en"] || [];
   const vars = {
     "{hotel}":         he ? cfg.name_he : cfg.name,
+    "{checkin_time}":  cfg.checkin_time,
     "{checkout_time}": cfg.checkout_time,
     "{deposit}":       `₪${((cfg.deposit_amount ?? 50000) / 100).toFixed(0)}`,
   };
   const fill = (s) => Object.entries(vars).reduce((acc, [k, v]) => acc.split(k).join(v), String(s ?? ""));
   return list.map((item, i) => `${i + 1}. *${fill(item.title)}*\n${fill(item.body)}`).join("\n\n");
+}
+
+// ── טביעת אצבע של נוסח התנאים (Part ח') ────────────────
+// SHA-256 של הטקסט המדויק שהוצג לאורח (כולל הערכים שהוחלפו). נשמר על
+// ההזמנה ברגע האישור, כך שתמיד אפשר להוכיח *באיזה נוסח מדויק* האורח הסכים
+// — גם אם התנאים בקונפיג ישתנו בעתיד. גיבוי ל-termsVersion (המחרוזת לבדה
+// אינה מוכיחה את התוכן; ה-hash כן).
+function termsContentHash(lang) {
+  try { return createHash("sha256").update(renderTerms(lang), "utf8").digest("hex"); }
+  catch { return null; }
 }
 
 // ── תצוגת פרטי הצ'ק אין הנוספים ───────────────────────
@@ -1963,10 +2009,16 @@ async function ensureDepositLink(phone, lang) {
       { guestName: s.guestName, guestNameHe: s.guestNameHe, guestNameEn: s.guestNameEn },
       s.pendingReservation || "",
       {
-        // תאריכי השהייה שהאורח מסר, ואיזה נוסח תנאים אישר ומתי —
+        // תאריכי השהייה שהאורח מסר, ורשומת אישור התנאים המלאה (Part ח') —
         // עוברים אל ההזמנה כדי שיישמרו ב-DB וישרדו ריסטארט.
         stay:  s.pendingStay || null,
-        terms: { version: s.termsVersion || null, acceptedAt: s.termsAcceptedAt || null },
+        terms: {
+          version:    s.termsVersion        || null,
+          acceptedAt: s.termsAcceptedAt      || null,
+          text:       s.termsAcceptanceText  || null,
+          lang:       s.termsLang            || null,
+          hash:       s.termsHash            || null,
+        },
         // פרטי הצ'ק אין הנוספים (אורחים / ETA / רכב / בקשות) — אופציונליים.
         details: {
           guests:   s.pendingGuests   ?? null,
@@ -2010,7 +2062,13 @@ async function completeCashCheckin(phone, lang) {
       s.pendingReservation || "",
       {
         stay:  s.pendingStay || null,
-        terms: { version: s.termsVersion || null, acceptedAt: s.termsAcceptedAt || null },
+        terms: {
+          version:    s.termsVersion        || null,
+          acceptedAt: s.termsAcceptedAt      || null,
+          text:       s.termsAcceptanceText  || null,
+          lang:       s.termsLang            || null,
+          hash:       s.termsHash            || null,
+        },
         details: {
           guests:   s.pendingGuests   ?? null,
           eta:      s.pendingEta       ?? null,
@@ -2231,10 +2289,19 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
       return;
     }
 
+    // ── רשומת אישור בת-אכיפה (Part ח') ──────────────────
+    // אישור בוואטסאפ הוא חתימה אלקטרונית פשוטה תקפה (חוק חתימה אלקטרונית
+    // תיקון 3, 2018) + קיבול חוזה. הסיכון אינו התוקף אלא ה*הוכחה*: לכן
+    // שומרים על ההזמנה ראיה מלאה — *מה בדיוק* אושר, *מתי*, *באיזו שפה*,
+    // ו*בְּמָה הנוסח* (hash של הטקסט המדויק שהוצג), יחד עם הנוסח המילולי
+    // שהאורח כתב. כך אפשר לשחזר מאוחר יותר בדיוק את מה שהאורח ראה ואישר.
     patchSession(phone, {
-      checkinStage:    "waiting_payment",
-      termsAcceptedAt: new Date().toISOString(),
-      termsVersion:    hcfg().terms?.version || null,
+      checkinStage:        "waiting_payment",
+      termsAcceptedAt:     new Date().toISOString(),
+      termsVersion:        hcfg().terms?.version || null,
+      termsAcceptanceText: input.slice(0, 200),        // הנוסח המילולי ("אני מאשר")
+      termsLang:           lang,                         // השפה שהוצגה ואושרה
+      termsHash:           termsContentHash(lang),       // טביעת אצבע של הנוסח המדויק
     });
     await promptStage(phone, "waiting_payment", lang, {
       prefix: lang === "he"

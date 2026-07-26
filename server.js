@@ -305,6 +305,27 @@ app.post("/api/id-documents/purge", auth, async (req, res) => {
   }
 });
 
+// ── רשומת אישור תנאי השהייה (Part ח') — ראיה בת-אכיפה ──
+// משחזר בדיוק *מה* האורח אישר: איזה נוסח (version + hash של הטקסט),
+// הנוסח המילולי שכתב ("אני מאשר"), השפה שהוצגה, ומתי. זו הראיה שהופכת
+// אישור בוואטסאפ לבר-אכיפה — מענה ל"מה בדיוק אישרתי?" ולבירור משפטי.
+app.get("/api/terms-acceptance/:rid", auth, (req, res) => {
+  const r = reservations[req.params.rid];
+  if (!r) return res.status(404).json({ error: "reservation not found" });
+  res.json({
+    reservationId:  r.id,
+    hotelId:        r.hotelId,
+    guestName:      r.guestName,
+    phone:          r.phone,
+    room:           r.roomNumber,
+    termsVersion:   r.termsVersion,
+    termsHash:      r.termsHash,          // SHA-256 של נוסח התנאים המדויק
+    acceptanceText: r.termsAcceptanceText, // הנוסח המילולי שהאורח כתב
+    language:       r.termsLang,           // השפה שהוצגה ואושרה
+    acceptedAt:     r.termsAcceptedAt,
+  });
+});
+
 app.get("/health", (req, res) => res.json({ status: "ok", uptime: process.uptime() }));
 app.use(express.static("dashboard/public"));
 

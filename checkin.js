@@ -218,8 +218,12 @@ export async function startCheckin(phone, nameInput, reservationId, opts = {}) {
     nights: NIGHTS,
     stayCheckIn:  stay?.checkIn  || null,
     stayCheckOut: stay?.checkOut || null,
-    termsVersion:    opts.terms?.version    || null,
-    termsAcceptedAt: opts.terms?.acceptedAt || null,
+    // ── רשומת אישור התנאים (Part ח') — ראיה בת-אכיפה ────
+    termsVersion:        opts.terms?.version    || null,
+    termsAcceptedAt:     opts.terms?.acceptedAt || null,
+    termsAcceptanceText: opts.terms?.text       || null,  // הנוסח המילולי שהאורח כתב
+    termsLang:           opts.terms?.lang       || null,  // השפה שהוצגה ואושרה
+    termsHash:           opts.terms?.hash       || null,  // SHA-256 של נוסח התנאים המדויק
     // ── פרטי צ'ק אין נוספים (אופציונליים) — נאספו בשלב waiting_details ──
     guestsCount:     details.guests   ?? null,   // מספר אורחים
     eta:             details.eta       || null,  // שעת הגעה משוערת
