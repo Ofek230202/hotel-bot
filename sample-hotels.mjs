@@ -101,6 +101,34 @@ export const SAMPLE_HOTELS = [
       local_area: emptyLocalArea(),
     },
   },
+  {
+    // ── מלון בוטיק (Part א') — קוד לדלת, בלי צוות 24/7 ──────
+    // מדגים את הסוג השני: מנעול חכם (קוד דלת) במקום כרטיס, בלי קבלה
+    // מאוישת מסביב לשעון ובלי צוות ביטחון/רפואי במקום. חירום מופנה
+    // לשירותי החוץ (101/102/100) ולמנהל התורן מרחוק (duty_manager_number).
+    hotelId: "lala",
+    number:  "+15550001007",
+    label:   "Tel Aviv · LALA (boutique, door-code)",
+    config: {
+      name: "LALA Boutique", name_he: "לאלה בוטיק",
+      tagline: "A boutique hideaway on the Tel Aviv shoreline",
+      hotel_type: "boutique",             // ← קוד לדלת + בלי צוות במקום
+      duty_manager_number: "whatsapp:+9725559990000", // מנהל תורן מרחוק 24/7
+      location: {
+        address:    "Herbert Samuel Promenade, Tel Aviv-Yafo, Israel",
+        address_he: "טיילת הרברט סמואל, תל אביב-יפו",
+        lat: 32.0723, lng: 34.7640, timezone: "Asia/Jerusalem", country: "IL", search_radius_m: 2500,
+      },
+      // בוטיק קטן — מבנה פשוט (בלי לובי מאויש, בלי מעליות אורחים ייעודיות).
+      building: {
+        he: { floors: "4 קומות, 12 חדרים בלבד", lobby: "כניסה עצמאית עם קוד לדלת הראשית",
+              reception: "אין קבלה מאוישת 24/7 — צ'ק אין דיגיטלי וקוד לדלת" },
+        en: { floors: "4 floors, just 12 rooms", lobby: "Self-entry with a code on the main door",
+              reception: "No 24/7 staffed reception — digital check-in with a door code" },
+      },
+      local_area: emptyLocalArea(),
+    },
+  },
 ];
 
 // זורע את מלוני הדוגמה: כותב קונפיג לכל מלון (מלבד ברירת המחדל) וממפה

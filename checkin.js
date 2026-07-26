@@ -4,9 +4,9 @@
 import { v4 as uuidv4 } from "uuid";
 import { wa, notifyStaff } from "./bot.js";
 import { logAlert, stats, patchSession, peekSession } from "./state.js";
-import { payments, PAYMENT_CURRENCY } from "./payments/index.js";
+import { payments, paymentsFor, PAYMENT_CURRENCY } from "./payments/index.js";
 import { nameFor } from "./names.js";
-import { configFor } from "./config.js";
+import { configFor, hotelModel } from "./config.js";
 import { db, DEFAULT_HOTEL_ID } from "./db.js";
 import { currentHotelId } from "./tenant.js";
 
@@ -78,6 +78,18 @@ export function depositAmount(hotelId = currentHotelId()) {
 export function shekels(agorot) {
   const n = (agorot || 0) / 100;
   return `₪${Number.isInteger(n) ? n : n.toFixed(2)}`;
+}
+
+// ── קוד כניסה לחדר (מלון בוטיק / מנעול חכם) ─────────────
+// 🔌 נקודת חיבור (Part א'): במלון בוטיק אין כרטיס — יש קוד למנעול הדלת.
+//    בפרודקשן הקוד מגיע ממערכת המנעול החכם (Salto / RemoteLock / Yale /
+//    August) או מה-PMS, לכל חדר ולכל שהייה, ולעיתים גם קוד לדלת הכניסה
+//    הראשית של המבנה. כאן — קוד דמו בן 4 ספרות שנוצר מקומית, כדי שהזרימה
+//    תעבוד בלי ספק חיצוני. ההחלפה נעשית במקום אחד בלבד: doorCodeFor().
+//    idempotent: אם כבר נוצר קוד להזמנה, מחזירים אותו (הגנה על ריטריי).
+export function doorCodeFor(res) {
+  if (res.doorCode) return res.doorCode;
+  return String(Math.floor(1000 + Math.random() * 9000)); // 1000–9999
 }
 
 // ── תצוגת תאריכי שהייה — מקור אמת אחד ─────────────────
@@ -213,6 +225,11 @@ export async function startCheckin(phone, nameInput, reservationId, opts = {}) {
     vehiclePlate:    details.vehicle   || null,  // מספר רכב (לחניה)
     specialRequests: details.requests  || null,  // בקשות מיוחדות
     feedback:        null,                        // משוב האורח (נאסף בצ'ק אאוט)
+    // ── אמצעי תשלום הפיקדון (Part ד') ──────────────────
+    // "card" — הרשאה/חיוב דרך ספק הסליקה (ברירת המחדל).
+    // "cash" — האורח משלם בקבלה במזומן; אין הרשאת כרטיס, והפקיד גובה/מחזיר
+    //          מזומן ידנית. רלוונטי רק למלון עם קבלה מאוישת (staffed).
+    depositMethod:   opts.depositMethod === "cash" ? "cash" : "card",
     checkoutDate: null, // רגע הצ'ק אאוט בפועל — נקבע ב-completeCheckin
     currency: PAYMENT_CURRENCY,
     folio: [],
@@ -231,7 +248,15 @@ export async function startCheckin(phone, nameInput, reservationId, opts = {}) {
     confirmationSent: false, // הגנת idempotency — אישור צ'ק אין יישלח פעם אחת בלבד
   };
 
-  const auth = await payments.authorizeDeposit({
+  // פיקדון במזומן (Part ד'): אין הרשאת כרטיס ואין קישור תשלום — הפקיד
+  // גובה בקבלה. מדלגים על ספק הסליקה לגמרי.
+  if (reservations[id].depositMethod === "cash") {
+    persist(reservations[id]);
+    return { reservationId: id, paymentUrl: null, depositMethod: "cash" };
+  }
+
+  // ספק התשלום של *המלון הזה* (Part ג') — Mock/CardCom לפי הקונפיג שלו.
+  const auth = await paymentsFor(hotelId).authorizeDeposit({
     reservationId: id,
     amount: DEPOSIT,
     currency: PAYMENT_CURRENCY,
@@ -249,6 +274,24 @@ export async function startCheckin(phone, nameInput, reservationId, opts = {}) {
   reservations[id].paymentUrl = auth.redirectUrl;
   persist(reservations[id]);
   return { reservationId: id, paymentUrl: auth.redirectUrl };
+}
+
+// ── מעבר לתשלום פיקדון במזומן (Part ד') ────────────────
+// אורח שבחר לשלם את הפיקדון במזומן בקבלה, לאחר שכבר נוצרה הזמנה ממתינה
+// עם הרשאת כרטיס (mock/אמיתי): מבטלים את ההרשאה (כדי לא להשאיר hold תלוי)
+// ומסמנים את ההזמנה כ-cash. מכאן הצ'ק אין מסתיים בלי דף תשלום — הפקיד
+// גובה בקבלה. מחזיר את ההזמנה, או null אם לא נמצאה.
+export async function switchDepositToCash(reservationId) {
+  const res = reservations[reservationId];
+  if (!res) return null;
+  if (res.depositMethod !== "cash" && res.paymentId && !res.captured && !res.refunded) {
+    try { await paymentsFor(res.hotelId).cancel({ paymentId: res.paymentId }); }
+    catch (e) { console.error("Cash switch — cancel hold failed:", e.message); }
+  }
+  res.depositMethod = "cash";
+  res.paymentUrl    = null;
+  persist(res);
+  return res;
 }
 
 // ── Complete check-in ─────────────────────────────────
@@ -272,6 +315,15 @@ export async function completeCheckin(reservationId, roomNumber) {
   res.checkedInAt = new Date().toISOString();
   res.paidAt      = new Date().toISOString();
   stats.checkIns++;
+
+  // ── סוג המלון: כרטיס בקבלה מול קוד לדלת (Part א') ──────
+  // מלון בוטיק (door_code) נותן לאורח קוד למנעול הדלת ישירות; מלון מלא
+  // (reception_card) מכין כרטיס בקבלה. הקוד נוצר ונשמר על ההזמנה כדי
+  // שיהיה יציב ושהצוות יראה אותו בהתראה.
+  const model = hotelModel(res.hotelId);
+  if (model.keyDelivery === "door_code" && !res.doorCode) {
+    res.doorCode = doorCodeFor(res);
+  }
 
   // ── רגע הצ'ק אאוט ────────────────────────────────────
   // מקור ראשון: תאריך העזיבה שהאורח מסר, בשעת הצ'ק אאוט של המלון.
@@ -317,14 +369,38 @@ export async function completeCheckin(reservationId, roomNumber) {
   const stayLines = formatStayDates(stayOf(res), lang);
   const extras    = formatStayExtras(res, lang);
 
+  // ── שורת הכניסה לחדר — לפי סוג המלון (Part א') ─────────
+  // door_code (בוטיק): הקוד נמסר לאורח *ישירות* בהודעה — אין קבלה לאסוף
+  //   ממנה כרטיס. reception_card (מלון מלא): הכרטיס מחכה מוכן בקבלה.
+  const keyLineHe = model.keyDelivery === "door_code"
+    ? `🔑 *קוד הכניסה לחדר שלך: ${res.doorCode}*\n` +
+      `יש להקיש את הקוד על מקלדת המנעול בדלת החדר. הקוד תקף לכל משך השהייה, עד הצ'ק אאוט.`
+    : `🔑 *כרטיס החדר מחכה לך מוכן בקבלה* — אפשר לאסוף אותו בכל שעה, והוא מתוקף לכל משך השהייה`;
+  const keyLineEn = model.keyDelivery === "door_code"
+    ? `🔑 *Your room entry code: ${res.doorCode}*\n` +
+      `Enter it on the keypad on your room door. The code is valid for your entire stay, until check-out.`
+    : `🔑 *Your room key is ready and waiting at reception* — please pick it up; it's valid for your entire stay`;
+
+  // ── בלוק הפיקדון — לפי אמצעי התשלום (Part ד') ─────────
+  // card: ההסבר המלא על ההקפאה ושחרורה. cash: הסבר קצר על גבייה/החזר במזומן.
+  const cash = res.depositMethod === "cash";
+  const depositBlockHe = cash
+    ? `💵 *פיקדון במזומן:* הפיקדון (${shekels(res.deposit)}) נגבה במזומן בקבלה. ` +
+      `בצ'ק אאוט כל חיוב ינוכה ממנו, והיתרה תוחזר במזומן.`
+    : depositExplainer("he");
+  const depositBlockEn = cash
+    ? `💵 *Cash deposit:* your ${shekels(res.deposit)} deposit is collected in cash at reception. ` +
+      `At check-out, any charges are deducted from it and the balance returned in cash.`
+    : depositExplainer("en");
+
   await wa(res.phone, he
     ? `✅ *צ'ק אין אושר!*\n\n` +
       `ברוכים הבאים, *${name}*! 🌟\n\n` +
       `🚪 *חדר:* ${res.roomNumber}\n` +
       (stayLines ? `${stayLines}\n` : "") +
       (extras ? `${extras}\n` : "") +
-      `🔑 *כרטיס החדר מחכה לך מוכן בקבלה* — אפשר לאסוף אותו בכל שעה, והוא מתוקף לכל משך השהייה\n\n` +
-      `${depositExplainer("he")}\n\n` +
+      `${keyLineHe}\n\n` +
+      `${depositBlockHe}\n\n` +
       `📶 WiFi: ${cfg.wifi.name} | ${cfg.wifi.password}\n` +
       `🍳 ארוחת בוקר: ${bf.hours} | ${bf.location}\n` +
       `🏊 בריכה: ${pool.hours} | ${pool.location}\n` +
@@ -335,8 +411,8 @@ export async function completeCheckin(reservationId, roomNumber) {
       `🚪 *Room:* ${res.roomNumber}\n` +
       (stayLines ? `${stayLines}\n` : "") +
       (extras ? `${extras}\n` : "") +
-      `🔑 *Your room key is ready and waiting at reception* — please pick it up; it's valid for your entire stay\n\n` +
-      `${depositExplainer("en")}\n\n` +
+      `${keyLineEn}\n\n` +
+      `${depositBlockEn}\n\n` +
       `📶 WiFi: ${cfg.wifi.name} | ${cfg.wifi.password}\n` +
       `🍳 Breakfast: ${bf.hours} | ${bf.location}\n` +
       `🏊 Pool: ${pool.hours} | ${pool.location}\n` +
@@ -350,6 +426,17 @@ export async function completeCheckin(reservationId, roomNumber) {
   // הדרושים להכנת הכרטיס מראש, ומדגישה לתקף את הכרטיס לכל משך השהייה.
   // תמיד בעברית — צוות המלון עובד בעברית, ללא קשר לשפת האורח.
   const stayShort = formatStayShort(stayOf(res), "he");
+  // ── התראת הצוות — לפי סוג המלון (Part א') ─────────────
+  // door_code: אין כרטיס להכין; הצוות מקבל *רישום* שצ'ק אין עצמאי הושלם,
+  //   כולל הקוד שנמסר (למעקב/גיבוי). reception_card: הוראה להכין כרטיס.
+  const cardHeaderHe = model.keyDelivery === "door_code"
+    ? `🔑 *צ'ק אין עצמאי הושלם — קוד דלת נמסר לאורח*\n` +
+      `🔢 קוד כניסה לחדר: *${res.doorCode}* (נשלח לאורח בוואטסאפ)\n` +
+      `ℹ️ אין צורך בהכנת כרטיס.`
+    : `🔑 *להכין כרטיס לחדר מוכן לאיסוף בקבלה*`;
+  const cardFooterHe = model.keyDelivery === "door_code"
+    ? `⏳ הקוד תקף לכל משך השהייה (עד ${checkoutStr})`
+    : `⏳ *תקף את הכרטיס לכל משך השהייה* (עד ${checkoutStr}) — לא ליום אחד`;
   await notifyStaff({
     phone: res.phone,
     hotelId: res.hotelId,
@@ -357,14 +444,16 @@ export async function completeCheckin(reservationId, roomNumber) {
     roomNumber: res.roomNumber,
     guestName: res.guestName,
     message:
-      `🔑 *להכין כרטיס לחדר מוכן לאיסוף בקבלה*\n` +
-      `✅ צ'ק אין דיגיטלי הושלם | פיקדון ${shekels(res.deposit)} מאושר\n` +
+      `${cardHeaderHe}\n` +
+      (cash
+        ? `✅ צ'ק אין דיגיטלי הושלם | 💵 *פיקדון ${shekels(res.deposit)} — לגבות במזומן בקבלה*\n`
+        : `✅ צ'ק אין דיגיטלי הושלם | פיקדון ${shekels(res.deposit)} מאושר\n`) +
       (stayShort ? `📆 שהייה: ${stayShort}\n` : `🌙 לילות: ${nights}\n`) +
       `📅 צ'ק אאוט: ${checkoutStr}\n` +
       (formatStayExtras(res, "he") ? `${formatStayExtras(res, "he")}\n` : "") +
       (res.termsAcceptedAt ? `📝 תנאי שהייה: אושרו ע"י האורח (נוסח ${res.termsVersion || "—"})\n` : "") +
       `🗣️ שפת האורח: ${he ? "עברית" : "אנגלית"}\n` +
-      `⏳ *תקף את הכרטיס לכל משך השהייה* (עד ${checkoutStr}) — לא ליום אחד`,
+      cardFooterHe,
     priority: "normal",
   });
 
@@ -396,6 +485,7 @@ export function formatFolio(res, lang = "he", { settled = false } = {}) {
   const total   = getFolioTotal(res.id);
   const deposit = res.deposit;
   const he      = lang === "he";
+  const cash    = res.depositMethod === "cash"; // פיקדון מזומן (Part ד')
   const RULE    = "━━━━━━━━━━━━━━━━━━━━";
 
   // כותרת החשבון — כוללת את תאריכי השהייה כפי שהאורח מסר בצ'ק אין,
@@ -406,6 +496,13 @@ export function formatFolio(res, lang = "he", { settled = false } = {}) {
     : `📋 *Bill — Room ${res.roomNumber}*\n` + (stayShort ? `📆 ${stayShort}\n` : "");
 
   if (res.folio.length === 0) {
+    if (cash) {
+      return he
+        ? header + `${RULE}\n✅ אין חיובים\n${RULE}\n` +
+          `💵 פיקדון המזומן (${shekels(deposit)}) יוחזר לך במלואו בקבלה.`
+        : header + `${RULE}\n✅ No charges\n${RULE}\n` +
+          `💵 Your ${shekels(deposit)} cash deposit will be returned to you in full at reception.`;
+    }
     return he
       ? header +
         `${RULE}\n✅ אין חיובים\n${RULE}\n` +
@@ -452,7 +549,11 @@ export function formatFolio(res, lang = "he", { settled = false } = {}) {
   let outcome;
   if (total <= deposit) {
     const refund = ((deposit - total)/100).toFixed(2);
-    outcome = he
+    outcome = cash
+      ? (he
+          ? `💵 ינוכה מפיקדון המזומן: ₪${totalStr}\n💵 *יתרת המזומן (₪${refund}) תוחזר לך בקבלה*`
+          : `💵 Deducted from your cash deposit: ₪${totalStr}\n💵 *The remaining ₪${refund} in cash will be returned to you at reception*`)
+      : he
       ? (settled
           ? `💳 *נוכה מהפיקדון: ₪${totalStr}*\n💚 *יתרת הפיקדון (₪${refund}) תשוחרר* על ידי חברת האשראי תוך *3-5 ימי עסקים*`
           : `💳 ינוכה מהפיקדון: ₪${totalStr}\n💚 יתרת הפיקדון שתשתחרר: ₪${refund}`)
@@ -461,7 +562,11 @@ export function formatFolio(res, lang = "he", { settled = false } = {}) {
           : `💳 Deducted from deposit: ₪${totalStr}\n💚 Remaining deposit released: ₪${refund}`);
   } else {
     const balance = ((total - deposit)/100).toFixed(2);
-    outcome = he
+    outcome = cash
+      ? (he
+          ? `💵 פיקדון המזומן (₪${depositStr}) נוכה במלואו.\n🔴 *את ההפרש (₪${balance}) יש להשלים במזומן בקבלה.*`
+          : `💵 Your ₪${depositStr} cash deposit was applied in full.\n🔴 *The difference (₪${balance}) is to be settled in cash at reception.*`)
+      : he
       ? (settled
           ? `💳 *הפיקדון (₪${depositStr}) נוכה במלואו.*\n✅ *ההפרש (₪${balance}) חויב* מכרטיס האשראי שהזנת בצ'ק אין`
           : `💳 הפיקדון (₪${depositStr}) ינוכה במלואו\n🔴 *ההפרש מעל הפיקדון: ₪${balance}* — יחויב מהכרטיס`)
@@ -482,6 +587,22 @@ async function settleFolio(res, { overageDescription } = {}) {
   const total   = getFolioTotal(res.id);
   const deposit = res.deposit;
 
+  // ── פיקדון במזומן (Part ד') — אין ספק סליקה לערב ──────
+  // הכל מסולק ידנית בקבלה: הפקיד מנכה את החיובים מהמזומן שגבה, מחזיר
+  // עודף או גובה הפרש. אנחנו רק מחשבים ומדווחים — לא קוראים לספק תשלום.
+  if (res.depositMethod === "cash") {
+    const captured = Math.min(total, deposit);
+    if (!res.captured) { res.captured = true; res.capturedAmount = captured; persist(res); }
+    return {
+      total, deposit, captured,
+      overage:  Math.max(0, total - deposit),
+      released: Math.max(0, deposit - total),
+      method:   "cash",
+    };
+  }
+
+  const pay = paymentsFor(res.hotelId); // ספק התשלום של המלון (Part ג')
+
   // ── idempotency לכל שלב (הגנת חיוב כפול אחרי ריסטארט) ──
   // כל פעולת תשלום חיצונית מוגנת בדגל משלה ונשמרת ל-DB *מיד* אחריה.
   // כך, אם התהליך קרס בין הפעולה החיצונית לשמירה, ריצה חוזרת (למשל
@@ -490,7 +611,7 @@ async function settleFolio(res, { overageDescription } = {}) {
   // A: אין חיובים → ביטול ההרשאה, שום חיוב.
   if (total === 0) {
     if (!res.refunded && !res.captured) {
-      try { await payments.cancel({ paymentId: res.paymentId }); }
+      try { await pay.cancel({ paymentId: res.paymentId }); }
       catch (e) { console.error("Cancel error:", e.message); }
       res.refunded = true;
       persist(res);
@@ -504,7 +625,7 @@ async function settleFolio(res, { overageDescription } = {}) {
   const captureAmount = Math.min(total, deposit);
   if (!res.captured) {
     try {
-      const cap = await payments.capture({ paymentId: res.paymentId, amount: captureAmount });
+      const cap = await pay.capture({ paymentId: res.paymentId, amount: captureAmount });
       res.captured = true; res.capturedAmount = cap.capturedAmount;
     } catch (e) { console.error("Capture error:", e.message); }
     persist(res);
@@ -520,7 +641,7 @@ async function settleFolio(res, { overageDescription } = {}) {
   const overage = total - deposit;
   if (!res.overageCharged) {
     try {
-      const extra = await payments.chargeSameCard({
+      const extra = await pay.chargeSameCard({
         paymentId: res.paymentId,
         amount: overage,
         currency: res.currency || PAYMENT_CURRENCY,
@@ -591,13 +712,30 @@ export async function processCheckout(phone, reservationId, lang = "he") {
     );
   }
 
+  // ── C(cash): Charges > cash deposit → settle the difference in cash ──
+  // אין קישור כרטיס — האורח משלים את ההפרש במזומן בקבלה. formatFolio כבר
+  // אומר זאת; ההודעה מוסיפה רק את הפרידה, וההסלמה לקבלה נשלחת בסוף (למטה).
+  else if (res.depositMethod === "cash") {
+    await wa(res.phone, he
+      ? `🚪 *צ'ק אאוט הושלם — חדר ${res.roomNumber}*\n\n` +
+        `תודה, *${name}*! שמחנו לארח אותך 🌟\n\n` +
+        formatFolio(res, lang, { settled: true }) + "\n\n" +
+        `נא לגשת לקבלה להשלמת ההפרש במזומן. לשאלות: קבלה, שלוחה 0`
+      : `🚪 *Check-out complete — Room ${res.roomNumber}*\n\n` +
+        `Thank you, *${name}*! It was a pleasure hosting you 🌟\n\n` +
+        formatFolio(res, lang, { settled: true }) + "\n\n" +
+        `Please stop by reception to settle the difference in cash. Questions? Reception, Ext. 0`,
+      { lang }
+    );
+  }
+
   // ── C: Charges > deposit → deposit captured + overage charged to same card ──
   else {
     // אפשרות לאורח לשלם את ההפרש בכרטיס *אחר* במקום כרטיס הפיקדון.
     // הקישור מוביל לעמוד תשלום שבו הוא מזין כרטיס חדש; אם ישלם שם — ההפרש
     // "יעבור" לכרטיס האחר (ראה /checkout/balance/pay). בינתיים, כברירת מחדל,
     // ההפרש כבר חויב מכרטיס הפיקדון (settleFolio) כדי להגן על המלון.
-    const altPayment = await payments.createBalancePayment({
+    const altPayment = await paymentsFor(res.hotelId).createBalancePayment({
       reservationId: res.id,
       amount: s.overage,
       currency: PAYMENT_CURRENCY,
@@ -635,6 +773,21 @@ export async function processCheckout(phone, reservationId, lang = "he") {
       dept: "reception", hotelId: res.hotelId, phone: res.phone, roomNumber: res.roomNumber, guestName: res.guestName,
       message: `⚠️ חיובים ₪${totalStr} מעל פיקדון | הפרש ₪${balanceStr} חויב מכרטיס הפיקדון | הוצעה החלפת כרטיס`,
       priority: "high",
+    });
+  }
+
+  // ── פיקדון מזומן (Part ד'): הקבלה מסלקת פיזית — צריכה את הסכום המדויק ──
+  // הפקיד גובה/מחזיר מזומן. בלי הודעה מפורשת עם הסכום, הסילוק תלוי בזיכרון.
+  if (res.depositMethod === "cash") {
+    const money = (a) => `₪${(a / 100).toFixed(2)}`;
+    let cashAction;
+    if (s.total === 0)        cashAction = `להחזיר פיקדון מזומן מלא: ${money(s.deposit)}`;
+    else if (s.overage === 0) cashAction = `לנכות ${money(s.total)} מהפיקדון · להחזיר עודף ${money(s.released)} במזומן`;
+    else                      cashAction = `הפיקדון (${money(s.deposit)}) נוכה במלואו · *לגבות הפרש ${money(s.overage)} במזומן*`;
+    await notifyStaff({
+      dept: "reception", hotelId: res.hotelId, phone: res.phone, roomNumber: res.roomNumber, guestName: res.guestName,
+      message: `💵 *סילוק מזומן בצ'ק אאוט — חדר ${res.roomNumber}*\n${cashAction}`,
+      priority: s.overage > 0 ? "high" : "normal",
     });
   }
 

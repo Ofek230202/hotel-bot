@@ -40,6 +40,32 @@ const DEFAULTS = {
   tagline:       "Where luxury meets hospitality",
   default_lang:  "auto",   // "auto" | "he" | "en"
 
+  // ── Hotel type & operating model (סוג המלון ומודל התפעול) ──
+  // ⚠️ קריטי: המערכת משרתת *שני סוגי מלונות שונים לגמרי*, וההתנהגות
+  //    משתנה לפי הסוג — בלי לשבור אף אחד מהם.
+  //
+  // "full_service" — מלון מלא (קמפינסקי): קבלה מאוישת 24/7, צוות ביטחון/
+  //    מנהל תורן במקום, כרטיסי חדר. צ'ק אין → כרטיס מוכן בקבלה. חירום →
+  //    הסלמה לצוות הביטחון של המלון (אדם במקום).
+  // "boutique"     — מלון בוטיק (כמו LALA): קוד למנעול הדלת במקום כרטיס,
+  //    בלי קבלה 24/7, בלי צוות ביטחון/רפואי במקום. צ'ק אין → קוד דלת נמסר
+  //    לאורח ישירות. חירום → הפניה למד"א/כבאות/משטרה (101/102/100) ולמנהל
+  //    התורן מרחוק — *לא* מבטיחים "צוות במקום בדרך אליכם" כשאין כזה.
+  //
+  // הנגזרות (key_delivery / staffed_24_7 / on_site_security / on_site_medical)
+  // מקבלות ברירת מחדל לפי hotel_type דרך hotelModel(), וניתנות לעקיפה
+  // מפורשת פר-מלון. כך מלון חריג (בוטיק *עם* שומר לילה, למשל) מוגדר בשורה
+  // אחת בלי שינוי קוד.
+  hotel_type: "full_service",   // "full_service" | "boutique"
+  key_delivery:    null,   // null=ברירת מחדל | "reception_card" | "door_code"
+  staffed_24_7:    null,   // null=ברירת מחדל | true | false — קבלה מאוישת מסביב לשעון
+  on_site_security: null,  // null=ברירת מחדל | true | false — צוות ביטחון/מנהל תורן *במקום*
+  on_site_medical:  null,  // null=ברירת מחדל | true | false — צוות רפואי במקום (נדיר)
+  // מספר החירום/מנהל תורן החיצוני שאליו מסלימים במלון לא-מאויש. ברירת מחדל:
+  // מספר הביטחון (security_number). מלון בוטיק ממפה כאן את הטלפון של הבעלים/
+  // המנהל התורן שזמין מרחוק 24/7.
+  duty_manager_number: null,
+
   // ── Internal contacts (WhatsApp numbers) ─────────────
   housekeeping_number: "whatsapp:+9721234567",
   reception_number:    "whatsapp:+9727654321",
@@ -123,6 +149,20 @@ const DEFAULTS = {
   // את שכבת התשלום (checkin.js), את הסבר הפיקדון ואת תנאי השהייה —
   // כדי שהסכום שהאורח מאשר בתנאים יהיה תמיד הסכום שבאמת מוקפא.
   deposit_amount: 50000,
+
+  // ── Payment provider (ספק סליקה — Part ג') ─────────────
+  // 🔌 נקודת חיבור: כל מלון עובד עם חברת סליקה משלו. ברירת המחדל "mock"
+  //    (דמו — "תופס" פיקדון ומאשר, בלי חיוב אמיתי). מלון עם חשבון סוחר
+  //    אמיתי (CardCom / Tranzila / PayPlus…) מגדיר:
+  //       payment_provider:    "cardcom",
+  //       payment_credentials: { terminalNumber, apiName, apiPassword }
+  //    וההחלפה מתבצעת אוטומטית ב-payments/index.js (paymentsFor) — בלי
+  //    שינוי קוד עסקי. ⚠️ ה-credentials הם *סודות*: בפרודקשן מזינים אותם
+  //    ממשתני סביבה או מ-DB מוצפן פר-מלון, *לא* כאן בקוד. השדה כאן מתעד
+  //    את המבנה בלבד. מלון שסימן "cardcom" בלי credentials נופל אוטומטית
+  //    ל-Mock (עם אזהרה) כדי לא לשבור צ'ק אין.
+  payment_provider:    "mock",   // "mock" | "cardcom"
+  payment_credentials: null,     // { terminalNumber, apiName, apiPassword } — מ-env/DB בפרודקשן
 
   // ── ID document policy (מדיניות מסמכי זיהוי) ───────────
   // ⚠️ קריטי לפרטיות. ברירת המחדל היא **verify-then-discard**: הבוט
@@ -940,6 +980,38 @@ export function configFor(hotelId = HOTEL) {
     configCache.set(hotelId, deepMerge(structuredClone(DEFAULTS), ov));
   }
   return configCache.get(hotelId);
+}
+
+// ════════════════════════════════════════════════════════
+//  מודל התפעול של המלון — סוג המלון (full_service / boutique)
+//  ----------------------------------------------------------
+//  מקור אמת אחד לכל ההבדלים בין מלון מלא למלון בוטיק. כל מקום בקוד
+//  ששואל "כרטיס או קוד דלת?", "יש צוות במקום?" — קורא לכאן, ולכן אין
+//  שום ענף שמנחש. ברירות המחדל נגזרות מ-hotel_type, ועקיפה מפורשת
+//  (key_delivery / staffed_24_7 / on_site_security / on_site_medical)
+//  גוברת עליהן — כך מלון חריג מוגדר בקונפיג בלי נגיעה בקוד.
+// ════════════════════════════════════════════════════════
+export function hotelModel(hotelId = HOTEL) {
+  const cfg      = configFor(hotelId);
+  const boutique = cfg.hotel_type === "boutique";
+  // עקיפה מפורשת (true/false) גוברת; null/undefined → ברירת מחדל לפי הסוג.
+  const pick = (v, def) => (v === true || v === false ? v : def);
+  const onSiteSecurity = pick(cfg.on_site_security, !boutique);
+  return {
+    type:           boutique ? "boutique" : "full_service",
+    isBoutique:     boutique,
+    // איך האורח נכנס לחדר: כרטיס מוכן בקבלה, או קוד למנעול הדלת.
+    keyDelivery:    cfg.key_delivery || (boutique ? "door_code" : "reception_card"),
+    // קבלה מאוישת מסביב לשעון (משפיע על ניסוחים כמו "אפשר לאסוף בכל שעה").
+    staffed24_7:    pick(cfg.staffed_24_7, !boutique),
+    // צוות ביטחון/מנהל תורן *במקום* שאפשר להסלים אליו חירום ולומר "בדרך אליכם".
+    onSiteSecurity,
+    // צוות רפואי במקום (נדיר גם במלון מלא) — כמעט תמיד false.
+    onSiteMedical:  pick(cfg.on_site_medical, false),
+    // לאן מסלימים חירום במלון לא-מאויש: מנהל תורן חיצוני, ואם לא הוגדר —
+    // מספר הביטחון הרגיל (שבבוטיק הוא ממילא הטלפון של הבעלים/המנהל).
+    dutyManagerNumber: cfg.duty_manager_number || cfg.security_number || null,
+  };
 }
 
 // ── תג פנימי → מחלקה — מקור אמת אחד ────────────────────
