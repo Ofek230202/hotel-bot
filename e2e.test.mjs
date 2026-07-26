@@ -1021,10 +1021,32 @@ test("תוספת 2: אורח שמסרב לתנאים → נעצר בנימוס +
 test("תוספת 2: התנאים באנגלית לאורח אנגלי — בלי ערבוב שפות", async () => {
   const p = await checkinUpTo("waiting_terms", { lang: "en" });
 
-  assert.match(lastBody(), /Stay Terms/);
-  assert.match(lastBody(), /Non-smoking hotel/);
-  assert.match(lastBody(), /I confirm/);
-  assert.ok(!/[֐-׿]/.test(lastBody()), `ערבוב שפות בתנאים: ${lastBody()}`);
+  // התנאים המורחבים חוצים את מגבלת 1600 של טוויליו ולכן נשלחים בכמה
+  // מקטעים (wa() מפצל). בודקים את *כל* ההודעות לאורח, לא רק האחרונה.
+  const guestTerms = sent.filter(s => s.to === p).map(s => s.body).join("\n");
+  assert.match(guestTerms, /Stay Terms/);
+  assert.match(guestTerms, /Non-smoking hotel/);
+  assert.match(guestTerms, /I confirm/);
+  assert.ok(!/[֐-׿]/.test(guestTerms), `ערבוב שפות בתנאים: ${guestTerms}`);
+});
+
+test("Part ח': נשמרת רשומת אישור בת-אכיפה — נוסח מילולי, שפה, hash", async () => {
+  const { reservations } = await import("./checkin.js");
+  const p = await checkinUpTo("waiting_terms");
+  await bot.handleIncoming(p, "אני מאשר");
+  const res = Object.values(reservations).find(r => r.phone === p);
+  assert.equal(res.termsAcceptanceText, "אני מאשר", "הנוסח המילולי שהאורח כתב נשמר");
+  assert.equal(res.termsLang, "he", "השפה שהוצגה ואושרה נשמרת");
+  assert.match(res.termsHash || "", /^[a-f0-9]{64}$/, "SHA-256 של נוסח התנאים המדויק");
+});
+
+test("wa: הודעה ארוכה מעל מגבלת טוויליו מפוצלת ולא נכשלת בשקט", async () => {
+  const p = freshGuest();
+  aiReply = "פרט ".repeat(900); // ~3600 תווים — הרבה מעל 1600
+  await bot.handleIncoming(p, "ספר לי על הכל בהרחבה");
+  const parts = sent.filter(s => s.to === p);
+  assert.ok(parts.length >= 2, `הודעה ארוכה לא פוצלה: ${parts.length} חלקים`);
+  for (const m of parts) assert.ok(m.body.length <= 1500, `חלק חורג מהמגבלה: ${m.body.length}`);
 });
 
 // ════════════════════════════════════════════════════════
@@ -1110,6 +1132,26 @@ test("prompt: מחיר טיפול צמוד לשם ולמשך שלו — HE + EN"
   assert.match(en, /Swedish massage \| Duration: 60 min \| Price: ₪350/);
   assert.match(en, /Deep tissue massage \| Duration: 90 min \| Price: ₪480/);
   assert.match(en, /Signature facial \| Duration: 50 min \| Price: ₪280/);
+});
+
+test("Part ז': הקונסיירז' מונחה לעזור בבריאות/דחוף (רופא, בית מרקחת) + הבחנה מחירום", async () => {
+  const he = await askConcierge("איפה בית מרקחת קרוב?");
+  assert.match(he, /בית מרקחת/, "מודע לבית מרקחת");
+  assert.match(he, /category=pharmacy/, "מכוון להשתמש בקטגוריית הכלי הנכונה");
+  assert.match(he, /חירום/, "מבחין בין דחוף רגיל לחירום רפואי");
+  assert.match(he, /אין נושא בלי מענה/, "עקרון: שום נושא לא נשאר בלי תשובה");
+
+  const en = await askConcierge("I need a dentist");
+  assert.match(en, /pharmacy \/ doctor \/ dentist/, "מזכיר רופא/שיניים/בית מרקחת באנגלית");
+});
+
+test("Part י': הקונסיירז' מונחה בהתאוששות משירות (תלונה) + סטנדרט יוקרה", async () => {
+  const he = await askConcierge("החדר שלי מלוכלך ואני מאוד מאוכזב");
+  assert.match(he, /התאוששות משירות/, "יש בלוק התאוששות משירות");
+  assert.match(he, /התנצלות|הכרה/, "הכרה/התנצלות");
+  assert.match(he, /מעקב/, "מעקב אחרי פתרון");
+  const en = await askConcierge("something is wrong");
+  assert.match(en, /Service recovery/i, "בלוק באנגלית");
 });
 
 test("prompt: אותו שם טיפול בשני משכים → שני מחירים נפרדים, בלי בלבול", async () => {

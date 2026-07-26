@@ -4,13 +4,18 @@
 import express   from "express";
 import dotenv    from "dotenv";
 import { handleIncoming, wa, notifyStaff } from "./bot.js";
-import { allSessions, sessions, staffAlerts, incidents, stats, deleteSession, clearAllSessions } from "./state.js";
+import { allSessions, sessions, staffAlerts, incidents, stats, deleteSession, clearAllSessions, sessionByRoom, peekSession } from "./state.js";
+import { fromNumberFor } from "./tenant.js";
 import { hotelConfig, updateConfig, resetConfig, checkDepartmentContacts, printRoutingTable, routingTable, DEPARTMENTS } from "./config.js";
 import { reservations, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES, autoChargeOnNoShow, findNoShowReservations } from "./checkin.js";
 import checkinRouter from "./checkin-routes.js";
 import { smokePlaces } from "./places/index.js";
 import { listIdDocuments, retrieveIdDocument, accessLogFor, purgeExpiredIdDocuments, RETENTION_DAYS } from "./idverify/index.js";
 import { DEFAULT_HOTEL_ID } from "./tenant.js";
+import { verifyMetaChallenge } from "./whatsapp/index.js";
+import { pmsHealth } from "./pms/index.js";
+import { timingSafeEqual } from "node:crypto";
+import twilio from "twilio";
 
 dotenv.config();
 
@@ -33,14 +38,43 @@ app.use("/payments/webhook", express.raw({ type: "application/json" }));
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
+// השוואת token בזמן-קבוע (Part ב') — מונעת timing attack שמדליף את הסיסמה
+// תו-תו. עדיף header על query (query נשמר בלוגים/היסטוריית דפדפן).
+function safeEqual(a, b) {
+  const ba = Buffer.from(String(a || ""));
+  const bb = Buffer.from(String(b || ""));
+  return ba.length === bb.length && timingSafeEqual(ba, bb);
+}
 function auth(req, res, next) {
   const token = req.headers["x-dashboard-token"] || req.query.token;
-  if (token === PASS) return next();
+  if (safeEqual(token, PASS)) return next();
   res.status(401).json({ error: "Unauthorized" });
+}
+
+// מסתיר סודות (credentials) מכל תגובת קונפיג — שלא ידלפו דרך ה-API (Part ב').
+function redactConfig(cfg) {
+  const clone = structuredClone(cfg);
+  for (const k of ["payment_credentials", "whatsapp_credentials", "pms_credentials"]) {
+    if (clone[k]) clone[k] = "[REDACTED]";
+  }
+  return clone;
 }
 
 // ── WhatsApp Webhook ──────────────────────────────────
 app.post("/webhook", async (req, res) => {
+  // ── אימות חתימת Twilio (Part ב') — opt-in דרך env ──────
+  // מונע זיוף webhooks (POST מזויף כאילו מטוויליו, שיכול להזריק "הודעות
+  // אורח" ולהפעיל התראות/חיובים). כבוי כברירת מחדל כדי לא לשבור הרצה
+  // מקומית/דמו; בפרודקשן מפעילים VALIDATE_TWILIO=true (דורש BASE_URL נכון).
+  if (process.env.VALIDATE_TWILIO === "true") {
+    const signature = req.headers["x-twilio-signature"];
+    const url = (process.env.BASE_URL || "") + req.originalUrl;
+    const valid = twilio.validateRequest(process.env.TWILIO_AUTH_TOKEN, signature, url, req.body || {});
+    if (!valid) {
+      console.warn(`🚫 Twilio webhook signature invalid — rejected (${String(req.body?.From || "").slice(-8)})`);
+      return res.status(403).send("invalid signature");
+    }
+  }
   const from = req.body.From;
   const to   = req.body.To;           // ← המספר של המלון: ממנו נגזר hotelId (multi-tenant)
   const body = req.body.Body?.trim() || "";
@@ -61,6 +95,28 @@ app.post("/webhook", async (req, res) => {
   // per-guest, כך שהודעות מקבילות של מלונות/אורחים שונים לא מתערבבות.
   handleIncoming(from, body, media, { to }).catch(console.error);
   res.type("text/xml").send("<Response></Response>");
+});
+
+// ── Meta WhatsApp Cloud API webhook (Part ט') — נקודת חיבור ──
+// כשמלון עובר מ-Twilio ל-Meta, ההודעות הנכנסות מגיעות לכאן (לא ל-/webhook
+// של טוויליו). מוכן מראש:
+//   GET  — handshake אימות (Meta שולח hub.challenge; מחזירים אם ה-verify
+//          token תואם ל-WA_VERIFY_TOKEN).
+//   POST — הודעות נכנסות. מאמת חתימת X-Hub-Signature-256 (HMAC) לפני עיבוד,
+//          מחלץ את ההודעה ומעביר ל-handleIncoming עם המספר של המלון (To).
+// ⚠️ צריך express.raw כדי לאמת HMAC על הגוף הגולמי — לכן mount ייעודי.
+app.get("/webhook/meta", (req, res) => {
+  const challenge = verifyMetaChallenge(req.query, process.env.WA_VERIFY_TOKEN || "");
+  if (challenge) return res.status(200).send(challenge);
+  res.sendStatus(403);
+});
+app.post("/webhook/meta", express.raw({ type: "*/*" }), (req, res) => {
+  // 🔌 החיבור המלא: לפרש את req.body (JSON גולמי), לאמת HMAC דרך
+  //    verifyIncomingWebhook(hotelId, { rawBody: req.body, signature }),
+  //    לחלץ entry[].changes[].value.messages[] ולהעביר כל הודעה ל-
+  //    handleIncoming(from, text, media, { to: phoneNumberId→hotelId }).
+  //    כרגע: מאשרים קבלה (200) כדי ש-Meta לא ינסה שוב, בלי לעבד — מוכן לחיבור.
+  res.sendStatus(200);
 });
 
 // ── Check-in routes ───────────────────────────────────
@@ -95,7 +151,39 @@ app.get("/api/stats", auth, (req, res) => {
   });
 });
 
-app.get("/api/sessions", auth, (req, res) => res.json(allSessions()));
+app.get("/api/sessions", auth, (req, res) => res.json(allSessions(req.query.hotelId || null)));
+
+// ── מנהל/קבלה: כניסה לשיחה של חדר מסוים (Part ו') ──────
+// מנהל המלון נכנס לשיחה עם חדר דרך המספר של המלון: החדר → הטלפון של
+// האורח → היסטוריית השיחה המלאה + המספר של המלון שממנו לענות. הקבלה
+// יודעת בדיוק לאיזה מספר לפנות (guest phone) ומאיזה מספר לשלוח (fromNumber).
+//   GET /api/conversation?room=512[&hotelId=...]   — לפי חדר
+//   GET /api/conversation?phone=+9725...[&hotelId=] — לפי טלפון
+app.get("/api/conversation", auth, (req, res) => {
+  const hotelId = req.query.hotelId || DEFAULT_HOTEL_ID;
+  let s = null;
+  if (req.query.room) {
+    s = sessionByRoom(req.query.room, req.query.hotelId || null);
+  } else if (req.query.phone) {
+    const full = String(req.query.phone).startsWith("whatsapp:") ? req.query.phone : `whatsapp:${req.query.phone}`;
+    s = peekSession(full, hotelId);
+  } else {
+    return res.status(400).json({ error: "room or phone query param required" });
+  }
+  if (!s) return res.status(404).json({ error: "no conversation found for that room/phone" });
+  res.json({
+    hotelId:       s.hotelId,
+    room:          s.roomNumber,
+    guestPhone:    s.phone,                 // המספר לפנות אל האורח
+    hotelNumber:   fromNumberFor(s.hotelId), // המספר של המלון שממנו לענות
+    guestName:     s.guestName,
+    stage:         s.stage,
+    lastActiveAt:  s.lastActiveAt,
+    reservationId: s.reservationId,
+    messageCount:  s.messageCount,
+    history:       s.history || [],         // כל השיחה, לצפייה
+  });
+});
 
 app.post("/api/send", auth, async (req, res) => {
   const { to, message } = req.body;
@@ -232,7 +320,7 @@ app.get("/api/routing", auth, (req, res) => res.json(routingTable()));
 
 app.get("/api/alerts", auth, (req, res) => res.json(staffAlerts));
 app.get("/api/incidents", auth, (req, res) => res.json(incidents));
-app.get("/api/config", auth, (req, res) => res.json(hotelConfig));
+app.get("/api/config", auth, (req, res) => res.json(redactConfig(hotelConfig)));
 
 // עדכון קונפיג — מיזוג *עמוק* ונשמר ל-DB (שורד ריסטארט).
 // שולחים רק את מה שמשנים: {"services":{"spa":{"he":{"hours":"10:00–22:00"}}}}
@@ -240,7 +328,7 @@ app.get("/api/config", auth, (req, res) => res.json(hotelConfig));
 // הטיפולים) מוחלף כמכלול — מי שמעדכן רשימה שולח אותה במלואה.
 app.post("/api/config", auth, (req, res) => {
   try {
-    res.json({ ok: true, config: updateConfig(req.body) });
+    res.json({ ok: true, config: redactConfig(updateConfig(req.body)) });
   } catch (e) {
     console.error("Config update failed:", e?.message || e);
     res.status(400).json({ ok: false, error: e.message });
@@ -250,7 +338,7 @@ app.post("/api/config", auth, (req, res) => {
 // איפוס הקונפיג לברירות המחדל שבקוד (מוחק את כל ה-overrides).
 app.post("/api/config/reset", auth, (req, res) => {
   try {
-    res.json({ ok: true, config: resetConfig() });
+    res.json({ ok: true, config: redactConfig(resetConfig()) });
   } catch (e) {
     console.error("Config reset failed:", e?.message || e);
     res.status(500).json({ ok: false, error: e.message });
@@ -305,6 +393,27 @@ app.post("/api/id-documents/purge", auth, async (req, res) => {
   }
 });
 
+// ── רשומת אישור תנאי השהייה (Part ח') — ראיה בת-אכיפה ──
+// משחזר בדיוק *מה* האורח אישר: איזה נוסח (version + hash של הטקסט),
+// הנוסח המילולי שכתב ("אני מאשר"), השפה שהוצגה, ומתי. זו הראיה שהופכת
+// אישור בוואטסאפ לבר-אכיפה — מענה ל"מה בדיוק אישרתי?" ולבירור משפטי.
+app.get("/api/terms-acceptance/:rid", auth, (req, res) => {
+  const r = reservations[req.params.rid];
+  if (!r) return res.status(404).json({ error: "reservation not found" });
+  res.json({
+    reservationId:  r.id,
+    hotelId:        r.hotelId,
+    guestName:      r.guestName,
+    phone:          r.phone,
+    room:           r.roomNumber,
+    termsVersion:   r.termsVersion,
+    termsHash:      r.termsHash,          // SHA-256 של נוסח התנאים המדויק
+    acceptanceText: r.termsAcceptanceText, // הנוסח המילולי שהאורח כתב
+    language:       r.termsLang,           // השפה שהוצגה ואושרה
+    acceptedAt:     r.termsAcceptedAt,
+  });
+});
+
 app.get("/health", (req, res) => res.json({ status: "ok", uptime: process.uptime() }));
 app.use(express.static("dashboard/public"));
 
@@ -318,6 +427,19 @@ app.listen(PORT, () => {
   // הדגמה מול לקוח. לא ממתינים לו — השרת כבר מקבל בקשות; הכשל מטופל
   // בתוך smokePlaces ולעולם לא מפיל את התהליך.
   smokePlaces(hotelConfig.location).catch(() => {});
+
+  // איזה PMS פעיל (Part ט'). Mock = המאגר המובנה הוא מקור האמת — תקין
+  // לפיילוט/דמו. מלון עם PMS אמיתי יראה כאן את שם הספק ו"מחובר".
+  const ph = pmsHealth(DEFAULT_HOTEL_ID);
+  console.log(`🏨  PMS: ${ph.provider}${ph.connected ? " (מחובר)" : " — המאגר המובנה מקור האמת"}`);
+
+  // ── אזהרות אבטחה בעלייה (Part ב') ────────────────────
+  if (PASS === "hotel2024") {
+    console.warn(`⚠️  אבטחה: DASHBOARD_PASSWORD בברירת מחדל ("hotel2024") — הגדירו סיסמה חזקה ב-env לפני פרודקשן.`);
+  }
+  if (process.env.VALIDATE_TWILIO !== "true") {
+    console.warn(`⚠️  אבטחה: אימות חתימת Twilio כבוי — בפרודקשן הגדירו VALIDATE_TWILIO=true (עם BASE_URL ציבורי) כדי לחסום webhooks מזויפים.`);
+  }
 
   // ── מדיניות שמירה (retention) של מסמכי זיהוי ──────────
   // מוחק אוטומטית מסמכים שעבר זמנם (ברירת מחדל 30 יום). רץ בעלייה

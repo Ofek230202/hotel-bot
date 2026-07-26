@@ -2,22 +2,24 @@
 //  BOT BRAIN v6 — Production Ready
 // ════════════════════════════════════════════════════════
 import Anthropic from "@anthropic-ai/sdk";
-import twilio    from "twilio";
 import dotenv    from "dotenv";
-import { departmentContacts, TAG_DEPARTMENTS, configFor } from "./config.js";
+import { createHash } from "node:crypto";
+import { whatsappFor } from "./whatsapp/index.js";
+import { departmentContacts, TAG_DEPARTMENTS, configFor, hotelModel } from "./config.js";
 import { getSession, peekSession, recordActivity, pushHistory, patchSession, logAlert, logIncident, stats } from "./state.js";
 import { runInTenant, resolveHotelId, currentHotelId, fromNumberFor, tenantKey } from "./tenant.js";
 import { withLock, createSemaphore, createRateLimiter, withTimeout, retryWithBackoff } from "./concurrency.js";
 import { detectLangSignal, detectLanguageRequest, stripLanguageRequest } from "./i18n.js";
 import { stripInternalTags, hasInternalTag, validateFullName, validateReservationNumber, validateIdMedia, validateStayDates, validateTermsConfirmation, parseCheckinDetails, isSkipWord } from "./validate.js";
 import { resolveNameForms, nameFor }                      from "./names.js";
-import { startCheckin, processCheckout, getActiveReservation, getPendingReservation, formatFolio, depositExplainer, formatStayDates, saveFeedback } from "./checkin.js";
+import { startCheckin, processCheckout, getActiveReservation, getPendingReservation, formatFolio, depositExplainer, formatStayDates, saveFeedback, switchDepositToCash, completeCheckin, reservations } from "./checkin.js";
 import { email }                                          from "./email/index.js";
 import { idVerify }                                       from "./idverify/index.js";
 import { resolveIdPolicy, idCollectionNotice }            from "./idverify/policy.js";
 import { concierge, REQUEST_TYPES }                       from "./concierge/index.js";
 import { places, PLACE_CATEGORIES, placesLive }           from "./places/index.js";
 import { detectEmergency, emergencyGuestMessage, emergencyKindHe, emergencyDial } from "./emergency.js";
+import { getProfile, isReturningGuest, updateLastRating } from "./profiles.js";
 
 dotenv.config();
 
@@ -63,7 +65,8 @@ async function createMessageWithRetry(params, attempts = 3) {
   }
   throw lastErr;
 }
-const tw   = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+// שליחת הוואטסאפ עוברת דרך שכבת whatsapp/ המבודדת (Part ט') — Twilio
+// כברירת מחדל, Meta Cloud API כשמלון עובר. bot.js לא יודע מי הערוץ.
 const FROM = process.env.TWILIO_WHATSAPP_NUMBER;
 
 // ── הודעות מוכנות למקרי קצה — לעולם לא שקט מוחלט (Bug #2) ──
@@ -121,8 +124,44 @@ export async function wa(to, body, { lang = "he", from } = {}) {
   //    תקוע של טוויליו (לא שגיאה — פשוט לא עונה) היה משאיר את שרשרת
   //    הנעילה של האורח תלויה עד restart. עם timeout הקריאה *נכשלת* מהר,
   //    השרשרת משתחררת, והאורח יכול לכתוב שוב. לא תוקע, לא קורס.
-  await withTimeout(() => tw.messages.create({ from: fromArg, to, body: text }), 15_000, "twilio.send");
+  //
+  // 📏 פיצול הודעה ארוכה: טוויליו דוחה הודעת וואטסאפ מעל ~1600 תווים
+  //    (שגיאה 21617). הודעה ארוכה — תנאי שהייה מלאים, חשבון מפורט, תשובת
+  //    AI ארוכה — הייתה *נכשלת בשקט* והאורח לא היה מקבל כלום. מפצלים על
+  //    גבולות טבעיים, שולחים לפי הסדר. הגנה כללית, לא רק לתנאים.
+  // ערוץ הוואטסאפ של *המלון הזה* (Part ט') — Twilio/Meta לפי הקונפיג שלו.
+  const channel = whatsappFor(currentHotelId());
+  for (const part of splitForWhatsApp(text)) {
+    await withTimeout(() => channel.sendText({ from: fromArg, to, body: part }), 15_000, "wa.send");
+  }
   console.log(`📤 → ${to.slice(-8)}: ${text.slice(0, 60)}…`);
+}
+
+// מפצל טקסט למקטעים ≤ limit על גבולות טבעיים: קודם פסקאות (\n\n), ואז
+// שורות, ורק כמוצא אחרון חיתוך קשיח. שומר את התוכן במלואו ובסדר.
+const WA_LIMIT = 1500; // מרווח בטוח מתחת ל-1600 של טוויליו
+function splitForWhatsApp(text, limit = WA_LIMIT) {
+  if (text.length <= limit) return [text];
+  const parts = [];
+  let buf = "";
+  const flush = () => { if (buf.trim()) parts.push(buf.trim()); buf = ""; };
+  for (const para of text.split("\n\n")) {
+    if (para.length > limit) {
+      flush();
+      let lineBuf = "";
+      for (const line of para.split("\n")) {
+        if (lineBuf && (lineBuf + "\n" + line).length > limit) { parts.push(lineBuf.trim()); lineBuf = line; }
+        else lineBuf = lineBuf ? lineBuf + "\n" + line : line;
+      }
+      if (lineBuf) buf = lineBuf;
+      continue;
+    }
+    if (buf && (buf + "\n\n" + para).length > limit) { flush(); buf = para; }
+    else buf = buf ? buf + "\n\n" + para : para;
+  }
+  flush();
+  // מקרה קצה: מקטע בודד עדיין ארוך מהמגבלה → חיתוך קשיח.
+  return parts.flatMap(p => p.length <= limit ? [p] : (p.match(new RegExp(`[\\s\\S]{1,${limit}}`, "g")) || [p]));
 }
 
 function israelTime() {
@@ -226,6 +265,14 @@ function isCheckoutIntent(text) {
     "אני עוזב", "אני יוצא", "leaving", "checking out", "לצאת", "לעזוב",
     "wanna check out", "like to check out"
   ].some(x => t.includes(x.replace(/[''']/g, "").toLowerCase()));
+}
+
+// האם האורח בוחר לשלם את הפיקדון במזומן בקבלה (Part ד')?
+function isCashIntent(text) {
+  const t = String(text || "").replace(/['''`״׳.!]/g, "").toLowerCase().trim();
+  return ["מזומן", "במזומן", "לשלם במזומן", "אשלם במזומן", "מזומן בקבלה",
+          "cash", "pay cash", "cash please", "in cash", "pay in cash", "pay at reception"]
+    .some(x => t === x || t.includes(x));
 }
 
 // האם ההודעה היא ברכה/פתיחה כללית בלבד (בלי בקשה ממשית)?
@@ -621,12 +668,80 @@ function buildPrompt(session, lang) {
           `Do not confirm the dish without the tag, and do not ask another question instead of sending it.\n`)
     : "";
 
+  // ── סוג המלון (Part א') — משפיע על ניסוח החירום ועל הקונסיירז' ──
+  // מלון בוטיק לא-מאויש: אין צוות ביטחון/רפואי במקום. לכן ה-AI לא יבטיח
+  // "צוות בדרך" בחירום, ובקשות שירות מפנה לפתרון *חיצוני* ולמנהל התורן.
+  const model = hotelModel(currentHotelId());
+  const emergHandlingHe = model.onSiteSecurity
+    ? `*"צוות הביטחון של המלון קיבל התראה ומטפל בכך כעת."* אל תבטיח שאדם מסוים בדרך ואל תנקוב בשם.`
+    : `*"עדכנתי את המנהל התורן של המלון, והגורם המקצועי שיטפל הוא שירותי החירום — יש להתקשר אליהם עכשיו."* ⚠️ זה מלון *ללא צוות ביטחון במקום* — אסור להבטיח שאיש צוות בדרך פיזית אל האורח.`;
+  const emergHandlingEn = model.onSiteSecurity
+    ? `*"The hotel's security team has been alerted and is handling this now."* Do not promise that a specific person is on the way or name anyone.`
+    : `*"I've notified the hotel's duty manager, and the emergency services are the professionals who will help — please call them now."* ⚠️ This hotel has *no on-site security team* — never promise that a staff member is physically on the way.`;
+  // הקשר סוג המלון לקונסיירז' — משובץ בשתי השפות (Part ז').
+  const hotelTypeNoteHe = model.isBoutique
+    ? `\n🏨 *סוג המלון:* מלון בוטיק ללא קבלה מאוישת 24/7 וללא צוות ביטחון/רפואי במקום. ` +
+      `לכן לבקשת עזרה דחופה (רופא, בית מרקחת, שירות תיקון) — כוון לפתרון *חיצוני* (מצא ספק אמיתי דרך הכלי, והצע להזמין), ואפשר לעדכן את המנהל התורן דרך [RECEPTION:...]. אל תפנה ל"צוות במקום" שאינו קיים.\n`
+    : `\n🏨 *סוג המלון:* מלון מלא עם קבלה מאוישת 24/7 וצוות במקום. בקשות אפשר להפנות לצוות המתאים דרך התגים.\n`;
+  const hotelTypeNoteEn = model.isBoutique
+    ? `\n🏨 *Hotel type:* a boutique hotel with no 24/7 staffed reception and no on-site security/medical team. ` +
+      `So for urgent help (a doctor, a pharmacy, a repair) — point the guest to an *external* solution (find a real provider via the tool and offer to arrange it), and you may notify the duty manager via [RECEPTION:...]. Never refer to an "on-site team" that doesn't exist.\n`
+    : `\n🏨 *Hotel type:* a full-service hotel with 24/7 staffed reception and an on-site team. Requests can be routed to the right department via the tags.\n`;
+
+  // ── עזרה בכל נושא, כולל בריאות/דחוף לא-חירום (Part ז') ──
+  const helpAnythingHe =
+    `🆘 *עזרה בכל נושא — כולל בריאות ומצבים דחופים (שאינם חירום):*\n` +
+    `אתה קונסיירז' לכל דבר, לא רק למסעדות. אורח שצריך *בית מרקחת*, *רופא*, *מרפאה*, *רופא שיניים*, ` +
+    `או שירות דחוף (מנעולן, מוסך, חשמלאי, טאקסי דחוף) — זו בקשת קונסיירז' רגילה, וחובה לתת לה מענה מלא:\n` +
+    `- חפש ספק *אמיתי* דרך הכלי search_nearby_places (category=pharmacy / doctor / dentist / hospital…), ומסור *כתובת · שעות היום · טלפון · מרחק*. לבית מרקחת/רופא — אמור אם פתוח *עכשיו* ומתי ייפתח שוב.\n` +
+    `- הצע לסדר מונית לשם או לתאם תור, דרך [CONCIERGE:...], אם האורח רוצה.\n` +
+    `- ⚠️ *הבחנה קריטית:* מצב רפואי *מסכן/דחוף* (פציעה, כאב חמור, קוצר נשימה, אובדן הכרה) הוא *חירום* — ראה סעיף החירום, הנחה מיד ל-101. ספק — התייחס כחירום. בקשה רגילה ("איפה בית מרקחת פתוח?", "צריך רופא שיניים") היא קונסיירז'.\n` +
+    `- לעולם אל תשאיר "אין לי מושג": חפש, ואם באמת אין תוצאה — הוסף [RECEPTION:<מה שצריך>] כדי שאדם יברר ויחזור. אין נושא בלי מענה.\n`;
+  // ── אורח חוזר / VIP (Part י') — זיכרון חוצה-שהיות ──────
+  const profile   = session?.phone ? getProfile(session.phone, currentHotelId()) : null;
+  const returning = !!(profile && profile.stays > 0);
+  const returningHe = returning
+    ? `\n🌟 *אורח חוזר* — זו שהייה מס' ${profile.stays + 1}${profile.vip ? " · VIP" : ""}.` +
+      (profile.preferences ? ` העדפה מביקור קודם: ${profile.preferences}.` : "") +
+      ` קבל אותו בחום כמי שכבר מכירים ("שמחים לארח שוב"), והתחשב בהעדפה אם היא רלוונטית — בעדינות, בלי להתנשא.\n`
+    : "";
+  const returningEn = returning
+    ? `\n🌟 *Returning guest* — this is stay #${profile.stays + 1}${profile.vip ? " · VIP" : ""}.` +
+      (profile.preferences ? ` Preference from a previous stay: ${profile.preferences}.` : "") +
+      ` Welcome them warmly as someone you already know, and honour that preference where relevant — gently, never pushy.\n`
+    : "";
+
+  const helpAnythingEn =
+    `🆘 *Help with anything — including health and urgent (non-emergency) needs:*\n` +
+    `You are a full concierge, not just for restaurants. A guest who needs a *pharmacy*, a *doctor*, a *clinic*, a *dentist*, ` +
+    `or an urgent service (locksmith, garage, electrician, an urgent taxi) — that is a normal concierge request you must fully answer:\n` +
+    `- Find a *real* provider via search_nearby_places (category=pharmacy / doctor / dentist / hospital…), and give the *address · today's hours · phone · distance*. For a pharmacy/doctor, say whether it's open *now* and when it reopens.\n` +
+    `- Offer to arrange a taxi there or book an appointment via [CONCIERGE:...] if the guest wishes.\n` +
+    `- ⚠️ *Critical distinction:* a *dangerous/urgent medical* situation (injury, severe pain, breathing difficulty, loss of consciousness) is an *emergency* — see the emergency section, direct to 101 immediately. If in doubt, treat as emergency. An ordinary request ("where's an open pharmacy?", "I need a dentist") is concierge.\n` +
+    `- Never leave it at "I don't know": search, and if there truly is no result, add [RECEPTION:<what's needed>] so a person follows up. No topic goes unanswered.\n`;
+
+  // ── התאוששות משירות — מיומנות יוקרה (Part י') ──────────
+  const serviceRecoveryHe =
+    `🕊️ *התאוששות משירות (תלונה או אכזבה) — סימן ההיכר של מלון יוקרה:*\n` +
+    `אורח שמתלונן הוא הזדמנות, לא איום. הסדר: (1) *הכרה* כנה והתנצלות קצרה, בלי להתגונן; ` +
+    `(2) *אמפתיה* — שקף שהבנת מה הפריע; (3) *פתרון* מיידי ככל שאפשר, או העברה מהירה לגורם שיפתור ` +
+    `(המחלקה הרלוונטית או [RECEPTION:<התלונה>], ובדירוג/אכזבה משמעותית — עדכן גם את ההנהלה); ` +
+    `(4) *מעקב* — הבטח לחזור, ותחזור. אל תתווכח, אל תאשים את האורח, ואל תבטיח מה שאינך יכול לספק. ` +
+    `אכזבה שטופלה יפה יוצרת אורח נאמן יותר מאורח שלא נתקל בבעיה כלל.\n`;
+  const serviceRecoveryEn =
+    `🕊️ *Service recovery (a complaint or disappointment) — the hallmark of a luxury hotel:*\n` +
+    `A guest who complains is an opportunity, not a threat. The order: (1) genuine *acknowledgement* and a brief apology, without defensiveness; ` +
+    `(2) *empathy* — reflect that you understood what went wrong; (3) *resolution* as immediately as possible, or a fast hand-off to whoever can fix it ` +
+    `(the relevant department or [RECEPTION:<the complaint>], and for a real disappointment notify management too); ` +
+    `(4) *follow-through* — promise to come back, and come back. Don't argue, don't blame the guest, and don't promise what you can't deliver. ` +
+    `A disappointment handled well earns a more loyal guest than one who never hit a problem.\n`;
+
   if (lang === "he") {
     return `אתה הקונסיירז׳ הדיגיטלי של ${cfg.name_he}, מלון יוקרה 5 כוכבים.
 התאריך והשעה עכשיו (שעון המלון): ${nowFull}
 השתמש בזה כדי לדעת איזה יום היום ומה השעה כעת — וכך לומר לאורח אם מקום *פתוח ברגע זה* (לפי openNow והשעות של היום), מתי הוא נסגר היום, ומתי ייפתח שוב.
 ${openOrderNote}
-
+${hotelTypeNoteHe}
 🔴 שפת השיחה: *עברית* — חוק ברזל:
 - כתוב אך ורק בעברית תקינה, חמה ואלגנטית. כל מילה. משפטים קצרים וברורים.
 - גם אם ההודעות הקודמות בשיחה נכתבו באנגלית — מעכשיו הכול בעברית בלבד. אל תערבב שפות.
@@ -692,7 +807,7 @@ ${openOrderNote}
 1. הגב מיד ובקצרה. אל תשאל שאלות מיותרות ואל תנהל סמול-טוק.
 2. מקרה רפואי / פציעה → הנחה את האורח להתקשר *מיד ל-101 (מד"א)*.
    אש / גז → הנחה אותו *מיד ל-102 (כבאות)*, לצאת מהחדר ולהתרחק למקום בטוח.
-3. הבהר לאורח: *"צוות הביטחון של המלון קיבל התראה ומטפל בכך כעת."* אל תבטיח שאדם מסוים בדרך ואל תנקוב בשם.
+3. הבהר לאורח: ${emergHandlingHe}
 4. ⛔ אסור לך בשום אופן לתת הנחיות רפואיות, עזרה ראשונה או טיפול מכל סוג — לרבות אם לזוז או לא לזוז, ללחוץ על פצע, לתת תרופה, להזיז פצוע וכד'. אמור במפורש שאינך מוסמך לתת הנחיות רפואיות, ושיש לפעול אך ורק לפי הנחיות מוקד 101.
 5. הוסף תמיד בסוף תגובתך את התג [EMERGENCY:<סוג + תיאור קצר>] — כדי שצוות הביטחון יקבל התראה דחופה (וואטסאפ + מייל) ויטופל על ידי אדם.
 לעולם אל תסתמך על עצמך בלבד באירוע חירום — חובה להסלים דרך התג [EMERGENCY:...].
@@ -813,6 +928,8 @@ ${openOrderNote}
 - אל תתנצל ואל תסביר לאורח איך המערכת עובדת מבפנים — אמור בביטחון ובחום מה קורה
   עכשיו ומתי יקבל תשובה.
 
+${helpAnythingHe}
+${serviceRecoveryHe}
 🍽️ *הזמנת אוכל לחדר — אתה המלצר, וההזמנה חייבת לצאת מלאה:*
 התפריט המלא של שירות החדרים נמצא בנתונים למטה (▸ שירות חדרים ← התפריט).
 זה מקור האמת היחיד שלך למנות, למחירים ולאפשרויות הבחירה.
@@ -951,7 +1068,7 @@ ${area}
 ${faqs}
 
 פרטי האורח:
-שם: ${nameFor(session, "he") || "—"} | חדר: ${session.roomNumber || "—"} | מצב: ${session.stage || "—"}
+שם: ${nameFor(session, "he") || "—"} | חדר: ${session.roomNumber || "—"} | מצב: ${session.stage || "—"}${returningHe}
 
 🏨 המחלקות של המלון — לכל בקשה יש בית, ואתה תמיד מנתב אותה נכון:
 אתה מרכז הבקשות של המלון. כל בקשה של אורח מנותבת למחלקה הנכונה דרך התג
@@ -1006,7 +1123,7 @@ ${faqs}
 Current date & time (hotel's local clock): ${nowFull}
 Use this to know what day it is and the time right now — so you can tell the guest whether a place is *open at this very moment* (from openNow and today's hours), when it closes today, and when it reopens.
 ${openOrderNote}
-
+${hotelTypeNoteEn}
 🔴 CONVERSATION LANGUAGE: *English* — hard rule:
 - Write in elegant, warm English only. Every word. Short, clear sentences.
 - Even if earlier messages in this conversation were in another language — from now on it is English only. Never mix languages.
@@ -1030,7 +1147,7 @@ If the guest describes an injury, a medical event, fire, a gas smell/leak, or im
 1. Respond immediately and briefly. Do not ask unnecessary questions or make small talk.
 2. Medical / injury → instruct the guest to *call 101 (Magen David Adom) now*.
    Fire / gas → instruct them to *call 102 (Fire & Rescue) now*, leave the room and move to a safe place.
-3. Tell the guest clearly: *"The hotel's security team has been alerted and is handling this now."* Do not promise that a specific person is on the way or name anyone.
+3. Tell the guest clearly: ${emergHandlingEn}
 4. ⛔ You must NEVER give medical, first-aid, or treatment instructions of any kind — including whether to move or stay still, applying pressure to a wound, giving medication, moving an injured person, etc. State explicitly that you are not qualified to give medical guidance, and that they must follow the instructions of the 101 dispatcher only.
 5. Always append the tag [EMERGENCY:<type + short description>] at the end — so security is alerted urgently (WhatsApp + email) and a human handles it.
 Never rely on yourself alone in an emergency — you MUST escalate via the [EMERGENCY:...] tag.
@@ -1168,6 +1285,8 @@ confirmed yet. Therefore, without exception:
 - Don't apologise and don't explain the internals to the guest — say, warmly and with
   confidence, what is happening now and when they'll hear back.
 
+${helpAnythingEn}
+${serviceRecoveryEn}
 🍽️ *Taking a food order — you are the waiter, and the order must go out complete:*
 The full in-room dining menu is in the data below (▸ In-Room Dining → The menu).
 That is your only source of truth for dishes, prices and choices.
@@ -1315,7 +1434,7 @@ FAQ:
 ${faqs}
 
 Guest:
-Name: ${nameFor(session, "en") || "—"} | Room: ${session.roomNumber || "—"}
+Name: ${nameFor(session, "en") || "—"} | Room: ${session.roomNumber || "—"}${returningEn}
 
 🏨 THE HOTEL'S DEPARTMENTS — every request has a home, and you always route it:
 You are the hotel's request hub. Every guest request is routed to the right
@@ -1755,11 +1874,22 @@ function renderTerms(lang) {
   const list = cfg.terms?.[he ? "he" : "en"] || [];
   const vars = {
     "{hotel}":         he ? cfg.name_he : cfg.name,
+    "{checkin_time}":  cfg.checkin_time,
     "{checkout_time}": cfg.checkout_time,
     "{deposit}":       `₪${((cfg.deposit_amount ?? 50000) / 100).toFixed(0)}`,
   };
   const fill = (s) => Object.entries(vars).reduce((acc, [k, v]) => acc.split(k).join(v), String(s ?? ""));
   return list.map((item, i) => `${i + 1}. *${fill(item.title)}*\n${fill(item.body)}`).join("\n\n");
+}
+
+// ── טביעת אצבע של נוסח התנאים (Part ח') ────────────────
+// SHA-256 של הטקסט המדויק שהוצג לאורח (כולל הערכים שהוחלפו). נשמר על
+// ההזמנה ברגע האישור, כך שתמיד אפשר להוכיח *באיזה נוסח מדויק* האורח הסכים
+// — גם אם התנאים בקונפיג ישתנו בעתיד. גיבוי ל-termsVersion (המחרוזת לבדה
+// אינה מוכיחה את התוכן; ה-hash כן).
+function termsContentHash(lang) {
+  try { return createHash("sha256").update(renderTerms(lang), "utf8").digest("hex"); }
+  catch { return null; }
 }
 
 // ── תצוגת פרטי הצ'ק אין הנוספים ───────────────────────
@@ -1907,9 +2037,17 @@ async function promptStage(phone, stage, lang, { prefix = "", brief = false, wit
     }
     // ההודעה כאן מדברת *רק* על הפיקדון. הסטטוס של אימות הזהות מגיע
     // כ-prefix מהקורא — כדי שלא נכריז "אומת" כשהאימות עדיין ידני.
+    // אפשרות מזומן (Part ד') — רק במלון עם קבלה מאוישת שיכולה לגבות מזומן.
+    const cashOption = hotelModel(currentHotelId()).staffed24_7;
+    const cashLineHe = cashOption
+      ? `\n\nמעדיפים לשלם בקבלה? השיבו *מזומן*, ונשלים את הצ'ק אין — הפיקדון ייגבה במזומן בדלפק.`
+      : "";
+    const cashLineEn = cashOption
+      ? `\n\nPrefer to pay at the desk? Reply *cash* and we'll complete your check-in — the deposit is collected in cash at reception.`
+      : "";
     return wa(phone, p + (he
-      ? `שלב אחרון — *פיקדון שהייה*.\n\n${depositExplainer("he")}\n\nלהקפאת הפיקדון, בקישור הזה:\n👉 ${url}`
-      : `One last step — a *security deposit*.\n\n${depositExplainer("en")}\n\nTap the link to place the deposit hold:\n👉 ${url}`), { lang });
+      ? `שלב אחרון — *פיקדון שהייה*.\n\n${depositExplainer("he")}\n\nלהקפאת הפיקדון, בקישור הזה:\n👉 ${url}${cashLineHe}`
+      : `One last step — a *security deposit*.\n\n${depositExplainer("en")}\n\nTap the link to place the deposit hold:\n👉 ${url}${cashLineEn}`), { lang });
   }
 }
 
@@ -1927,10 +2065,16 @@ async function ensureDepositLink(phone, lang) {
       { guestName: s.guestName, guestNameHe: s.guestNameHe, guestNameEn: s.guestNameEn },
       s.pendingReservation || "",
       {
-        // תאריכי השהייה שהאורח מסר, ואיזה נוסח תנאים אישר ומתי —
+        // תאריכי השהייה שהאורח מסר, ורשומת אישור התנאים המלאה (Part ח') —
         // עוברים אל ההזמנה כדי שיישמרו ב-DB וישרדו ריסטארט.
         stay:  s.pendingStay || null,
-        terms: { version: s.termsVersion || null, acceptedAt: s.termsAcceptedAt || null },
+        terms: {
+          version:    s.termsVersion        || null,
+          acceptedAt: s.termsAcceptedAt      || null,
+          text:       s.termsAcceptanceText  || null,
+          lang:       s.termsLang            || null,
+          hash:       s.termsHash            || null,
+        },
         // פרטי הצ'ק אין הנוספים (אורחים / ETA / רכב / בקשות) — אופציונליים.
         details: {
           guests:   s.pendingGuests   ?? null,
@@ -1957,6 +2101,52 @@ async function ensureDepositLink(phone, lang) {
   }
 }
 
+// ── השלמת צ'ק אין בתשלום מזומן (Part ד') ───────────────
+// אורח שבחר לשלם את הפיקדון במזומן בקבלה. ההזמנה הממתינה (שנוצרה בשלב
+// הפיקדון עם הרשאת כרטיס) מומרת ל-cash: ההרשאה מבוטלת וה-check-in מושלם
+// מיד. הקבלה מקבלת התראה לגבות את הפיקדון במזומן ולהכין כרטיס/למסור קוד.
+async function completeCashCheckin(phone, lang) {
+  const s = getSession(phone);
+  let pending = getPendingReservation(phone);
+  if (pending) {
+    await switchDepositToCash(pending.id);
+  } else {
+    // אין הזמנה ממתינה (תקלה קודמת) — יוצרים אחת ישירות כמזומן.
+    const { reservationId } = await startCheckin(
+      phone,
+      { guestName: s.guestName, guestNameHe: s.guestNameHe, guestNameEn: s.guestNameEn },
+      s.pendingReservation || "",
+      {
+        stay:  s.pendingStay || null,
+        terms: {
+          version:    s.termsVersion        || null,
+          acceptedAt: s.termsAcceptedAt      || null,
+          text:       s.termsAcceptanceText  || null,
+          lang:       s.termsLang            || null,
+          hash:       s.termsHash            || null,
+        },
+        details: {
+          guests:   s.pendingGuests   ?? null,
+          eta:      s.pendingEta       ?? null,
+          vehicle:  s.pendingVehicle   ?? null,
+          requests: s.pendingRequests  ?? null,
+        },
+        depositMethod: "cash",
+      },
+    );
+    pending = reservations[reservationId];
+  }
+  if (!pending) {
+    await wa(phone, lang === "he"
+      ? "אני משלים עבורך את הצ'ק אין — מהקבלה יחזרו אליך מיד. לכל שאלה: שלוחה 0."
+      : "I'm finalising your check-in — reception will get back to you shortly. Any questions: Ext. 0.", { lang });
+    return;
+  }
+  // הקצאת חדר — בפרודקשן מגיע מ-PMS; בדמו ברירת מחדל כמו בדף האישור.
+  // completeCheckin מסמן את הסשן checked_in ומאפס את checkinStage.
+  await completeCheckin(pending.id, pending.roomNumber || "304");
+}
+
 // opts.langSwitched — האורח החליף שפה בהודעה הזו.
 async function handleCheckin(phone, text, lang, media = null, opts = {}) {
   const session = getSession(phone);
@@ -1966,12 +2156,18 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
   // ── פתיחת הצ'ק אין ───────────────────────────────────
   if (!stage || stage === "start") {
     patchSession(phone, { checkinStage: "waiting_name", idAttempts: 0 });
+    // אורח חוזר (Part י') — פתיחה חמה יותר, "שמחים לארח שוב".
+    const returning = isReturningGuest(phone);
     await promptStage(phone, "waiting_name", lang, {
       prefix: lang === "he"
         // ניסוח *נטול-מין* (unisex): "שמחים שהגעת" ו"עבורך" נכתבים זהה
         // לזכר ולנקבה — כך הפתיחה נכונה לכל אורח, בלי "ברוך הבא" הזכרי.
-        ? `שמחים שהגעת! 🌟 נשמח להשלים עבורך את הצ׳ק אין הדיגיטלי.`
-        : `Welcome! 🌟 Let's get you checked in.`,
+        ? (returning
+            ? `שמחים לארח אותך שוב! 🌟 נשלים במהירות את הצ׳ק אין הדיגיטלי.`
+            : `שמחים שהגעת! 🌟 נשמח להשלים עבורך את הצ׳ק אין הדיגיטלי.`)
+        : (returning
+            ? `Wonderful to have you back! 🌟 Let's get you checked in quickly.`
+            : `Welcome! 🌟 Let's get you checked in.`),
     });
     return;
   }
@@ -2155,10 +2351,19 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
       return;
     }
 
+    // ── רשומת אישור בת-אכיפה (Part ח') ──────────────────
+    // אישור בוואטסאפ הוא חתימה אלקטרונית פשוטה תקפה (חוק חתימה אלקטרונית
+    // תיקון 3, 2018) + קיבול חוזה. הסיכון אינו התוקף אלא ה*הוכחה*: לכן
+    // שומרים על ההזמנה ראיה מלאה — *מה בדיוק* אושר, *מתי*, *באיזו שפה*,
+    // ו*בְּמָה הנוסח* (hash של הטקסט המדויק שהוצג), יחד עם הנוסח המילולי
+    // שהאורח כתב. כך אפשר לשחזר מאוחר יותר בדיוק את מה שהאורח ראה ואישר.
     patchSession(phone, {
-      checkinStage:    "waiting_payment",
-      termsAcceptedAt: new Date().toISOString(),
-      termsVersion:    hcfg().terms?.version || null,
+      checkinStage:        "waiting_payment",
+      termsAcceptedAt:     new Date().toISOString(),
+      termsVersion:        hcfg().terms?.version || null,
+      termsAcceptanceText: input.slice(0, 200),        // הנוסח המילולי ("אני מאשר")
+      termsLang:           lang,                         // השפה שהוצגה ואושרה
+      termsHash:           termsContentHash(lang),       // טביעת אצבע של הנוסח המדויק
     });
     await promptStage(phone, "waiting_payment", lang, {
       prefix: lang === "he"
@@ -2170,6 +2375,12 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
 
   // ── ממתינים לפיקדון ──────────────────────────────────
   if (stage === "waiting_payment") {
+    // אורח שבחר לשלם במזומן בקבלה (Part ד') — רק במלון עם קבלה מאוישת.
+    // בבוטיק (בלי קבלה) אין למי לשלם מזומן, ולכן ממשיכים עם קישור התשלום.
+    if (isCashIntent(input) && hotelModel(currentHotelId()).staffed24_7) {
+      await completeCashCheckin(phone, lang);
+      return;
+    }
     await promptStage(phone, "waiting_payment", lang);
     return;
   }
@@ -2466,6 +2677,10 @@ async function handleFeedback(phone, text, lang) {
     try { saveFeedback(rid, { rating, text: raw }); }
     catch (e) { console.error("saveFeedback failed:", e?.message || e); }
   }
+  // מעדכן את הדירוג האחרון בפרופיל האורח (Part י') — לזיכרון לביקור הבא.
+  if (rating != null) {
+    try { updateLastRating(phone, rating); } catch (e) { console.error("updateLastRating failed:", e?.message || e); }
+  }
 
   // עדכון ההנהלה/קבלה — כדי שמשוב (ובמיוחד דירוג נמוך) לא ייעלם.
   try {
@@ -2519,9 +2734,17 @@ async function handleEmergency(phone, text, lang, kind) {
     try { return getActiveReservation(phone)?.guestName || null; } catch { return null; }
   })();
 
+  // סוג המלון (Part א'): קובע אם יש צוות ביטחון *במקום* להסלים אליו.
+  // מלון בוטיק לא-מאויש → אין צוות בדרך, מדגישים את שירותי החירום
+  // ומעדכנים מנהל תורן מרחוק. הבטחה שגויה בחירום גרועה משתיקה.
+  const model = hotelModel(currentHotelId());
+
   // 1) האורח מקבל את ההנחיה *מיד* — הדבר הראשון, לפני כל דבר שעלול לזרוק.
   //    אם אין מספר חדר, ההנחיה כוללת גם בקשת מיקום.
-  const guestMsg = emergencyGuestMessage(kind, lang, { locationKnown: !!roomNumber });
+  const guestMsg = emergencyGuestMessage(kind, lang, {
+    locationKnown: !!roomNumber,
+    onSiteTeam:    model.onSiteSecurity,
+  });
   try {
     await wa(phone, guestMsg, { lang });
   } catch (e) {
@@ -2557,7 +2780,11 @@ async function handleEmergency(phone, text, lang, kind) {
           ? `📍 מיקום: חדר ${roomNumber}\n`
           : `📍 *מיקום לא ידוע* — האורח אינו משויך לחדר. התקשרו אליו *עכשיו* למספר שלמעלה; נשלחה אליו בקשה לציין מיקום, וכל תשובה תועבר אליכם.\n`) +
         `📞 האורח קיבל הנחיה להתקשר ${emergencyDial(kind)} (וכל מספרי החירום).\n` +
-        `⏱️ נדרש טיפול אנושי *מיידי* — ביטחון/מנהל תורן.`,
+        // מלון בוטיק לא-מאויש: אין צוות במקום. הנמען (מנהל תורן/בעלים מרחוק)
+        // חייב לדעת שאין מי שיישלח פיזית, ולוודא ששירותי החירום בדרך.
+        (model.onSiteSecurity ? "" :
+          `🏨 *מלון ללא צוות ביטחון במקום* — אין מי שיישלח פיזית אל האורח. ודאו ששירותי החירום (${emergencyDial(kind)}) בדרך, וצרו קשר עם האורח *מיד*.\n`) +
+        `⏱️ נדרש טיפול אנושי *מיידי* — ${model.onSiteSecurity ? "ביטחון/מנהל תורן" : "מנהל תורן מרחוק"}.`,
       priority: "high",
     });
   } catch (e) {

@@ -244,3 +244,14 @@ export function allSessions(hotelId = null) {
   if (hotelId) list = list.filter(s => (s.hotelId || DEFAULT_HOTEL_ID) === hotelId);
   return list.sort((a, b) => new Date(b.lastActiveAt) - new Date(a.lastActiveAt));
 }
+
+// ── מציאת סשן לפי מספר חדר (Part ו') ───────────────────
+// מנהל/קבלה נכנסים לשיחה של חדר מסוים: החדר → הסשן → הטלפון וההיסטוריה.
+// אם אותו חדר אוכלס יותר מפעם אחת (אורח קודם + נוכחי) — מחזירים את הפעיל
+// בפעילות האחרונה. סינון אופציונלי לפי מלון (בידוד מולטי-טננט).
+export function sessionByRoom(room, hotelId = null) {
+  const key = String(room);
+  return Object.values(sessions)
+    .filter(s => String(s.roomNumber) === key && (!hotelId || (s.hotelId || DEFAULT_HOTEL_ID) === hotelId))
+    .sort((a, b) => new Date(b.lastActiveAt) - new Date(a.lastActiveAt))[0] || null;
+}

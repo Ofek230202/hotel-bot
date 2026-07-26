@@ -40,6 +40,32 @@ const DEFAULTS = {
   tagline:       "Where luxury meets hospitality",
   default_lang:  "auto",   // "auto" | "he" | "en"
 
+  // ── Hotel type & operating model (סוג המלון ומודל התפעול) ──
+  // ⚠️ קריטי: המערכת משרתת *שני סוגי מלונות שונים לגמרי*, וההתנהגות
+  //    משתנה לפי הסוג — בלי לשבור אף אחד מהם.
+  //
+  // "full_service" — מלון מלא (קמפינסקי): קבלה מאוישת 24/7, צוות ביטחון/
+  //    מנהל תורן במקום, כרטיסי חדר. צ'ק אין → כרטיס מוכן בקבלה. חירום →
+  //    הסלמה לצוות הביטחון של המלון (אדם במקום).
+  // "boutique"     — מלון בוטיק (כמו LALA): קוד למנעול הדלת במקום כרטיס,
+  //    בלי קבלה 24/7, בלי צוות ביטחון/רפואי במקום. צ'ק אין → קוד דלת נמסר
+  //    לאורח ישירות. חירום → הפניה למד"א/כבאות/משטרה (101/102/100) ולמנהל
+  //    התורן מרחוק — *לא* מבטיחים "צוות במקום בדרך אליכם" כשאין כזה.
+  //
+  // הנגזרות (key_delivery / staffed_24_7 / on_site_security / on_site_medical)
+  // מקבלות ברירת מחדל לפי hotel_type דרך hotelModel(), וניתנות לעקיפה
+  // מפורשת פר-מלון. כך מלון חריג (בוטיק *עם* שומר לילה, למשל) מוגדר בשורה
+  // אחת בלי שינוי קוד.
+  hotel_type: "full_service",   // "full_service" | "boutique"
+  key_delivery:    null,   // null=ברירת מחדל | "reception_card" | "door_code"
+  staffed_24_7:    null,   // null=ברירת מחדל | true | false — קבלה מאוישת מסביב לשעון
+  on_site_security: null,  // null=ברירת מחדל | true | false — צוות ביטחון/מנהל תורן *במקום*
+  on_site_medical:  null,  // null=ברירת מחדל | true | false — צוות רפואי במקום (נדיר)
+  // מספר החירום/מנהל תורן החיצוני שאליו מסלימים במלון לא-מאויש. ברירת מחדל:
+  // מספר הביטחון (security_number). מלון בוטיק ממפה כאן את הטלפון של הבעלים/
+  // המנהל התורן שזמין מרחוק 24/7.
+  duty_manager_number: null,
+
   // ── Internal contacts (WhatsApp numbers) ─────────────
   housekeeping_number: "whatsapp:+9721234567",
   reception_number:    "whatsapp:+9727654321",
@@ -124,6 +150,57 @@ const DEFAULTS = {
   // כדי שהסכום שהאורח מאשר בתנאים יהיה תמיד הסכום שבאמת מוקפא.
   deposit_amount: 50000,
 
+  // ── Payment provider (ספק סליקה — Part ג') ─────────────
+  // 🔌 נקודת חיבור: כל מלון עובד עם חברת סליקה משלו. ברירת המחדל "mock"
+  //    (דמו — "תופס" פיקדון ומאשר, בלי חיוב אמיתי). מלון עם חשבון סוחר
+  //    אמיתי (CardCom / Tranzila / PayPlus…) מגדיר:
+  //       payment_provider:    "cardcom",
+  //       payment_credentials: { terminalNumber, apiName, apiPassword }
+  //    וההחלפה מתבצעת אוטומטית ב-payments/index.js (paymentsFor) — בלי
+  //    שינוי קוד עסקי. ⚠️ ה-credentials הם *סודות*: בפרודקשן מזינים אותם
+  //    ממשתני סביבה או מ-DB מוצפן פר-מלון, *לא* כאן בקוד. השדה כאן מתעד
+  //    את המבנה בלבד. מלון שסימן "cardcom" בלי credentials נופל אוטומטית
+  //    ל-Mock (עם אזהרה) כדי לא לשבור צ'ק אין.
+  payment_provider:    "mock",   // "mock" | "cardcom"
+  payment_credentials: null,     // { terminalNumber, apiName, apiPassword } — מ-env/DB בפרודקשן
+
+  // ── Business & tax — חשבונית מס-קבלה (Part ה') ─────────
+  // ⚠️ נתוני דמו — כל מלון מזין את פרטי העוסק האמיתיים שלו. פרטים אלה
+  //    *חובה חוקית* על חשבונית מס בישראל (תקנות מע"מ / ניהול פנקסים),
+  //    ומודפסים על החשבונית שהאורח מקבל בצ'ק אאוט. ⚠️ לפני הפעלה מול
+  //    אורחים אמיתיים — להחליף בשם העוסק, מספר העוסק/ח.פ. והכתובת האמיתיים.
+  business: {
+    legal_name:    "מלון קמפינסקי בע\"מ",       // שם העוסק/החברה כחוק
+    legal_name_en: "Kempinski Hotel Ltd.",
+    business_id:   "514000000",                  // מספר עוסק מורשה / ח.פ.
+    business_type: "עוסק מורשה",
+    address:       "רחוב הירקון 51, תל אביב-יפו 6343203",
+    address_en:    "51 HaYarkon Street, Tel Aviv-Yafo 6343203, Israel",
+    phone:         "+972-3-000-0000",
+    email:         "billing@kempinski-demo.co.il",
+  },
+  // מע"מ בישראל 2026 = 18%. אין מס עירייה/תיירות בישראל (בניגוד לאירופה).
+  vat_rate: 0.18,
+  // מלונאות לתייר חוץ = 0% מע"מ (בכפוף לדרכון זר + תשלום במט"ח). ברירת
+  // המחדל להזמנה: תושב (18%). דגל isTourist על ההזמנה מפעיל את מסלול ה-0%.
+  tourist_zero_vat: true,
+  invoice_provider: "mock",   // "mock" | ספק ישראלי אמיתי (invoices/index.js)
+
+  // ── WhatsApp channel & PMS (Part ט') ───────────────────
+  // 🔌 ערוץ הוואטסאפ: "twilio" (ברירת מחדל) או "cloud" (Meta WhatsApp
+  //    Business Cloud API). מלון שמחבר מספר משלו דרך Meta מגדיר:
+  //       whatsapp_provider:    "cloud",
+  //       whatsapp_credentials: { phoneNumberId, token, appSecret }
+  //    ההחלפה אוטומטית ב-whatsapp/index.js. בלי credentials — נפילה בטוחה
+  //    ל-Twilio. ⚠️ credentials הם סודות — מ-env/DB מוצפן בפרודקשן.
+  whatsapp_provider:    "twilio",  // "twilio" | "cloud"
+  whatsapp_credentials: null,      // { phoneNumberId, token, appSecret }
+  // 🔌 מערכת ניהול המלון (PMS): "mock" (ברירת מחדל — מאגר ההזמנות המובנה)
+  //    או ספק אמיתי (Opera/OHIP, Mews, Apaleo, Cloudbeds). ההחלפה ב-
+  //    pms/index.js. credentials פר-מלון מ-env/DB.
+  pms_provider:    "mock",         // "mock" | "apaleo" | "mews" | "opera" | ...
+  pms_credentials: null,           // { clientId, clientSecret, propertyId, ... }
+
   // ── ID document policy (מדיניות מסמכי זיהוי) ───────────
   // ⚠️ קריטי לפרטיות. ברירת המחדל היא **verify-then-discard**: הבוט
   //    מאמת את המסמך, מחלץ *רק את השדות הנדרשים*, ומוחק את התמונה מיד.
@@ -160,37 +237,59 @@ const DEFAULTS = {
     //    יחד עם רגע האישור, וזו הראיה היחידה ל*מה* האורח אישר בפועל.
     //    demo-2026-02: תוקן סעיף הפיקדון, שהבטיח "היתרה תשוחרר" גם
     //    כשאין יתרה (חיובים מעל הפיקדון). ראה ההערה בסעיף עצמו.
-    version: "demo-2026-02",
+    // demo-2026-03 (Part ח'): נוסח מורחב ומדויק יותר, מיושר לאיך שמלונות
+    //   אמיתיים בישראל מנסחים "תנאי אירוח", ולדין הרלוונטי — חוק החוזים
+    //   האחידים (בלי תנאי מקפח), חוק הגנת הצרכן (זכות ביטול לא-ניתנת-לוויתור),
+    //   וחוק הגנת הפרטיות (תיקון 13). קנסות = סכום נקוב וסביר (לא פתוח).
+    //   סעיף הפיקדון נותר זהה ל-depositExplainer (checkin.js) — שלושת המקרים.
+    version: "demo-2026-03",
     he: [
       { title: "אחריות לנזקים",
-        body: "האורח אחראי לכל נזק שייגרם לחדר, לתכולתו או לרכוש {hotel} במהלך שהייתו, ויחויב בעלות התיקון או ההחלפה." },
-      { title: "שעת צ'ק אאוט",
-        body: "יש לפנות את החדר עד השעה {checkout_time} ביום העזיבה. צ'ק אאוט מאוחר כפוף לזמינות ועשוי להיות כרוך בתשלום נוסף." },
-      // ⚠️ הנוסח הקודם הבטיח "ינוכו החיובים והיתרה תשוחרר" — כאילו תמיד
-      //    נשארת יתרה. כשהחיובים גבוהים מהפיקדון אין שום יתרה, ולהפך:
-      //    המלון מחייב את ההפרש. תנאי שהייה שסותרים את מה שהמערכת עושה
-      //    בפועל הם הבטחה שגויה לאורח. שלושת המקרים כתובים כאן במפורש,
-      //    בדיוק כמו ב-depositExplainer (checkin.js) — אותו מידע, אותו נוסח.
-      { title: "פיקדון ומדיניות ביטול",
-        body: "פיקדון בסך {deposit} מוקפא בכרטיס האשראי להבטחת השהייה — הקפאה בלבד, לא חיוב. בצ'ק אאוט: אם לא נצברו חיובים — לא יבוצע חיוב, וההקפאה תשוחרר על ידי חברת האשראי תוך 3-5 ימי עסקים. אם נצברו חיובים — הם ינוכו מהפיקדון, ויתרת הפיקדון (אם נותרה) תשוחרר באותו אופן. אם החיובים גבוהים מהפיקדון — הפיקדון ינוכה במלואו, וההפרש יחויב בנפרד מאותו כרטיס אשראי. ביטול עד 24 שעות לפני מועד ההגעה — ללא חיוב." },
+        body: "האורח אחראי לכל נזק שייגרם לחדר, לתכולתו או לרכוש {hotel} במהלך השהייה, ויחויב בעלות התיקון או ההחלפה בפועל." },
+      { title: "שעות כניסה ועזיבה",
+        body: "הכניסה לחדר מהשעה {checkin_time}, והפינוי עד {checkout_time} ביום העזיבה. כניסה מוקדמת או עזיבה מאוחרת כפופות לזמינות ועשויות להיות בתשלום." },
+      { title: "פיקדון",
+        body: "פיקדון בסך {deposit} מובטח לשהייה. בצ'ק אאוט: אם לא נצברו חיובים — לא יבוצע חיוב, וההקפאה (בתשלום בכרטיס) תשוחרר על ידי חברת האשראי תוך 3-5 ימי עסקים. אם נצברו חיובים — הם ינוכו מהפיקדון, ויתרתו (אם נותרה) תשוחרר באותו אופן. אם החיובים גבוהים מהפיקדון — הפיקדון ינוכה במלואו וההפרש יחויב/ייגבה בנפרד." },
+      { title: "ביטול ואי-הגעה",
+        body: "ביטול הזמנה כפוף למדיניות המלון ולזכות הביטול הקבועה בחוק הגנת הצרכן ותקנותיו — לפי המיטיב עם האורח. אי-הגעה (no-show) עשויה לחייב את הפיקדון." },
       { title: "מלון ללא עישון",
         body: "העישון אסור בכל שטחי המלון, לרבות החדרים והמרפסות. הפרה תחויב בדמי ניקוי בסך ₪1,500." },
-      { title: "נכונות הפרטים",
-        body: "האורח מאשר כי הפרטים שמסר — השם המלא, מספר ההזמנה, תאריכי השהייה ומסמך הזיהוי — נכונים ומדויקים." },
+      { title: "תפוסה ואורחים רשומים",
+        body: "בחדר ישהו בלילה אך ורק האורחים הרשומים ובמסגרת התפוסה המרבית של החדר. אירוח מבקרים בשעות היום הוא באחריות האורח הרשום." },
+      { title: "זיהוי ורישום",
+        body: "בעת הצ'ק אין על האורח להציג תעודת זהות או דרכון בתוקף לצורך רישום, בהתאם למדיניות המלון ולדין." },
+      { title: "כללי הבית",
+        body: "יש לשמור על שעות מנוחה ועל כללי הבית. המלון רשאי לסרב שירות או להפסיק שהייה במקרה של הפרה חמורה, התנהגות מסכנת או פעילות בלתי-חוקית." },
+      { title: "אחריות וכספת",
+        body: "מומלץ להפקיד חפצי ערך בכספת החדר/הקבלה. אחריות המלון לרכוש האורח כפופה למגבלות הדין. אין באמור כדי לפטור את המלון מאחריות שאינה ניתנת להתנאה לפי דין." },
+      { title: "פרטיות ומידע",
+        body: "פרטי האורח נאספים ומעובדים על ידי {hotel} לצורך ניהול השהייה ומתן השירות בלבד, ונשמרים בהתאם לחוק הגנת הפרטיות. לאורח זכות עיון ותיקון של המידע ופנייה בכל שאלה למלון." },
+      { title: "נכונות הפרטים ודין חל",
+        body: "האורח מאשר כי הפרטים שמסר נכונים ומדויקים. על תנאים אלה חל הדין הישראלי." },
     ],
     en: [
       { title: "Liability for damages",
-        body: "The guest is responsible for any damage caused to the room, its contents or the property of {hotel} during the stay, and will be charged the cost of repair or replacement." },
-      { title: "Check-out time",
-        body: "The room must be vacated by {checkout_time} on the day of departure. Late check-out is subject to availability and may incur an additional charge." },
-      // ⚠️ See the note on the Hebrew clause above — all three outcomes must
-      //    be stated, including the one where charges exceed the deposit.
-      { title: "Deposit & cancellation policy",
-        body: "A {deposit} deposit is held on your credit card to secure the stay — a hold only, not a charge. At check-out: if no charges were accrued, nothing is charged and the hold is released by your card issuer within 3–5 business days. If charges were accrued, they are deducted from the deposit, and any remaining balance is released the same way. If the charges exceed the deposit, the deposit is deducted in full and the difference is charged separately to the same card. Cancellation up to 24 hours before arrival is free of charge." },
+        body: "The guest is responsible for any damage caused to the room, its contents or the property of {hotel} during the stay, and will be charged the actual cost of repair or replacement." },
+      { title: "Check-in & check-out times",
+        body: "Check-in is from {checkin_time}, and the room must be vacated by {checkout_time} on the day of departure. Early check-in or late check-out are subject to availability and may incur a charge." },
+      { title: "Security deposit",
+        body: "A {deposit} deposit secures the stay. At check-out: if no charges were accrued, nothing is charged and the hold (on card payment) is released by your card issuer within 3–5 business days. If charges were accrued, they are deducted from the deposit and any remaining balance is released the same way. If charges exceed the deposit, the deposit is applied in full and the difference is charged/collected separately." },
+      { title: "Cancellation & no-show",
+        body: "Cancellation is subject to the hotel's policy and to the cancellation right granted by the Consumer Protection Law and its regulations — whichever is more favourable to the guest. A no-show may result in the deposit being charged." },
       { title: "Non-smoking hotel",
         body: "Smoking is prohibited throughout the hotel, including guest rooms and balconies. A cleaning fee of ₪1,500 applies to any breach." },
-      { title: "Accuracy of details",
-        body: "The guest confirms that the details provided — full name, reservation number, stay dates and identity document — are true and accurate." },
+      { title: "Occupancy & registered guests",
+        body: "Only the registered guests may stay overnight, within the room's maximum occupancy. Daytime visitors are the responsibility of the registered guest." },
+      { title: "Identification & registration",
+        body: "At check-in the guest must present a valid ID card or passport for registration, in accordance with hotel policy and applicable law." },
+      { title: "House rules",
+        body: "Please observe quiet hours and the house rules. The hotel may refuse service or end a stay in the event of a serious breach, dangerous behaviour or unlawful activity." },
+      { title: "Liability & safe",
+        body: "Valuables should be kept in the room/reception safe. The hotel's liability for a guest's property is subject to the limits of the law. Nothing herein excludes liability that cannot be contracted out of under law." },
+      { title: "Privacy & data",
+        body: "Guest details are collected and processed by {hotel} solely to manage the stay and provide the service, and are retained in accordance with the Protection of Privacy Law. The guest has the right to access and correct their data and to contact the hotel with any question." },
+      { title: "Accuracy of details & governing law",
+        body: "The guest confirms that the details provided are true and accurate. These terms are governed by Israeli law." },
     ],
   },
 
@@ -940,6 +1039,38 @@ export function configFor(hotelId = HOTEL) {
     configCache.set(hotelId, deepMerge(structuredClone(DEFAULTS), ov));
   }
   return configCache.get(hotelId);
+}
+
+// ════════════════════════════════════════════════════════
+//  מודל התפעול של המלון — סוג המלון (full_service / boutique)
+//  ----------------------------------------------------------
+//  מקור אמת אחד לכל ההבדלים בין מלון מלא למלון בוטיק. כל מקום בקוד
+//  ששואל "כרטיס או קוד דלת?", "יש צוות במקום?" — קורא לכאן, ולכן אין
+//  שום ענף שמנחש. ברירות המחדל נגזרות מ-hotel_type, ועקיפה מפורשת
+//  (key_delivery / staffed_24_7 / on_site_security / on_site_medical)
+//  גוברת עליהן — כך מלון חריג מוגדר בקונפיג בלי נגיעה בקוד.
+// ════════════════════════════════════════════════════════
+export function hotelModel(hotelId = HOTEL) {
+  const cfg      = configFor(hotelId);
+  const boutique = cfg.hotel_type === "boutique";
+  // עקיפה מפורשת (true/false) גוברת; null/undefined → ברירת מחדל לפי הסוג.
+  const pick = (v, def) => (v === true || v === false ? v : def);
+  const onSiteSecurity = pick(cfg.on_site_security, !boutique);
+  return {
+    type:           boutique ? "boutique" : "full_service",
+    isBoutique:     boutique,
+    // איך האורח נכנס לחדר: כרטיס מוכן בקבלה, או קוד למנעול הדלת.
+    keyDelivery:    cfg.key_delivery || (boutique ? "door_code" : "reception_card"),
+    // קבלה מאוישת מסביב לשעון (משפיע על ניסוחים כמו "אפשר לאסוף בכל שעה").
+    staffed24_7:    pick(cfg.staffed_24_7, !boutique),
+    // צוות ביטחון/מנהל תורן *במקום* שאפשר להסלים אליו חירום ולומר "בדרך אליכם".
+    onSiteSecurity,
+    // צוות רפואי במקום (נדיר גם במלון מלא) — כמעט תמיד false.
+    onSiteMedical:  pick(cfg.on_site_medical, false),
+    // לאן מסלימים חירום במלון לא-מאויש: מנהל תורן חיצוני, ואם לא הוגדר —
+    // מספר הביטחון הרגיל (שבבוטיק הוא ממילא הטלפון של הבעלים/המנהל).
+    dutyManagerNumber: cfg.duty_manager_number || cfg.security_number || null,
+  };
 }
 
 // ── תג פנימי → מחלקה — מקור אמת אחד ────────────────────

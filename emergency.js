@@ -169,7 +169,12 @@ export function emergencyKindHe(kind) {
 // locationKnown=false → מוסיפים בקשת מיקום. בלי מספר חדר צוות הביטחון
 // לא יודע לאן לרוץ, וההבטחה "הם בדרך אליכם" הופכת לחסרת משמעות. הבקשה
 // מגיעה *אחרי* מספרי החירום, כדי שלא תעכב את הפעולה החשובה באמת.
-export function emergencyGuestMessage(kind, lang = "he", { locationKnown = true } = {}) {
+// onSiteTeam — האם יש צוות ביטחון/מנהל תורן *במקום* (מלון מלא) או לא
+//   (מלון בוטיק לא-מאויש). זה משנה הבטחה קריטית לאורח: "הצוות בדרך אליכם"
+//   נכון רק כשיש צוות במקום. במלון בלי צוות — אסור להבטיח מישהו בדרך;
+//   מדגישים שהגורם המקצועי הוא שירותי החירום (101/102/100), ומעדכנים
+//   מנהל תורן מרחוק. הבטחה שגויה בחירום גרועה משתיקה.
+export function emergencyGuestMessage(kind, lang = "he", { locationKnown = true, onSiteTeam = true } = {}) {
   const he = lang !== "en";
 
   const askLocationHe = locationKnown ? "" :
@@ -189,6 +194,15 @@ export function emergencyGuestMessage(kind, lang = "he", { locationKnown = true 
     security: `🚓 This is important — call *100 (Police) now*.`,
   }[kind];
 
+  // שורת ההסלמה — נכונה לסוג המלון. מלון מלא: צוות במקום בדרך. בוטיק
+  // לא-מאויש: מנהל תורן מרחוק עודכן, והדגש על שירותי החירום כגורם המטפל.
+  const escalationHe = onSiteTeam
+    ? `הזעקתי *ברגע זה* את צוות הביטחון של המלון, והם בדרך אליכם.`
+    : `עדכנתי *ברגע זה* את המנהל התורן של המלון, שיצור קשר וייתן מענה. הגורם המקצועי שיטפל בכם הוא שירותי החירום — התקשרו אליהם *עכשיו*.`;
+  const escalationEn = onSiteTeam
+    ? `I've alerted the hotel's security team *right now*, and they are on their way to you.`
+    : `I've notified the hotel's duty manager *right now*, who will be in touch. The professionals who will help you are the emergency services — please call them *now*.`;
+
   if (he) {
     return (
       `🚨 *זיהיתי מצב חירום — אני כאן איתכם.*\n\n` +
@@ -197,7 +211,7 @@ export function emergencyGuestMessage(kind, lang = "he", { locationKnown = true 
       `🚑 מד"א — *101* (רפואי / פציעה)\n` +
       `🚒 כבאות — *102* (אש / גז / עשן)\n` +
       `🚓 משטרה — *100*\n\n` +
-      `הזעקתי *ברגע זה* את צוות הביטחון של המלון, והם בדרך אליכם.\n` +
+      `${escalationHe}\n` +
       askLocationHe + `\n` +
       `⚠️ אין לי הסמכה לתת הנחיות רפואיות או עזרה ראשונה — פעלו אך ורק לפי ההנחיות של מוקד החירום.\n` +
       `אני כאן איתכם — עדכנו אותי בכל שינוי.`
@@ -211,7 +225,7 @@ export function emergencyGuestMessage(kind, lang = "he", { locationKnown = true 
     `🚑 Magen David Adom — *101* (medical / injury)\n` +
     `🚒 Fire & Rescue — *102* (fire / gas / smoke)\n` +
     `🚓 Police — *100*\n\n` +
-    `I've alerted the hotel's security team *right now*, and they are on their way to you.\n` +
+    `${escalationEn}\n` +
     askLocationEn + `\n` +
     `⚠️ I'm not qualified to give medical or first-aid instructions — please follow the emergency dispatcher's guidance only.\n` +
     `I'm staying with you here — tell me if anything changes.`
