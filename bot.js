@@ -19,6 +19,7 @@ import { resolveIdPolicy, idCollectionNotice }            from "./idverify/polic
 import { concierge, REQUEST_TYPES }                       from "./concierge/index.js";
 import { places, PLACE_CATEGORIES, placesLive }           from "./places/index.js";
 import { detectEmergency, emergencyGuestMessage, emergencyKindHe, emergencyDial } from "./emergency.js";
+import { getProfile, isReturningGuest, updateLastRating } from "./profiles.js";
 
 dotenv.config();
 
@@ -696,6 +697,20 @@ function buildPrompt(session, lang) {
     `- הצע לסדר מונית לשם או לתאם תור, דרך [CONCIERGE:...], אם האורח רוצה.\n` +
     `- ⚠️ *הבחנה קריטית:* מצב רפואי *מסכן/דחוף* (פציעה, כאב חמור, קוצר נשימה, אובדן הכרה) הוא *חירום* — ראה סעיף החירום, הנחה מיד ל-101. ספק — התייחס כחירום. בקשה רגילה ("איפה בית מרקחת פתוח?", "צריך רופא שיניים") היא קונסיירז'.\n` +
     `- לעולם אל תשאיר "אין לי מושג": חפש, ואם באמת אין תוצאה — הוסף [RECEPTION:<מה שצריך>] כדי שאדם יברר ויחזור. אין נושא בלי מענה.\n`;
+  // ── אורח חוזר / VIP (Part י') — זיכרון חוצה-שהיות ──────
+  const profile   = session?.phone ? getProfile(session.phone, currentHotelId()) : null;
+  const returning = !!(profile && profile.stays > 0);
+  const returningHe = returning
+    ? `\n🌟 *אורח חוזר* — זו שהייה מס' ${profile.stays + 1}${profile.vip ? " · VIP" : ""}.` +
+      (profile.preferences ? ` העדפה מביקור קודם: ${profile.preferences}.` : "") +
+      ` קבל אותו בחום כמי שכבר מכירים ("שמחים לארח שוב"), והתחשב בהעדפה אם היא רלוונטית — בעדינות, בלי להתנשא.\n`
+    : "";
+  const returningEn = returning
+    ? `\n🌟 *Returning guest* — this is stay #${profile.stays + 1}${profile.vip ? " · VIP" : ""}.` +
+      (profile.preferences ? ` Preference from a previous stay: ${profile.preferences}.` : "") +
+      ` Welcome them warmly as someone you already know, and honour that preference where relevant — gently, never pushy.\n`
+    : "";
+
   const helpAnythingEn =
     `🆘 *Help with anything — including health and urgent (non-emergency) needs:*\n` +
     `You are a full concierge, not just for restaurants. A guest who needs a *pharmacy*, a *doctor*, a *clinic*, a *dentist*, ` +
@@ -704,6 +719,22 @@ function buildPrompt(session, lang) {
     `- Offer to arrange a taxi there or book an appointment via [CONCIERGE:...] if the guest wishes.\n` +
     `- ⚠️ *Critical distinction:* a *dangerous/urgent medical* situation (injury, severe pain, breathing difficulty, loss of consciousness) is an *emergency* — see the emergency section, direct to 101 immediately. If in doubt, treat as emergency. An ordinary request ("where's an open pharmacy?", "I need a dentist") is concierge.\n` +
     `- Never leave it at "I don't know": search, and if there truly is no result, add [RECEPTION:<what's needed>] so a person follows up. No topic goes unanswered.\n`;
+
+  // ── התאוששות משירות — מיומנות יוקרה (Part י') ──────────
+  const serviceRecoveryHe =
+    `🕊️ *התאוששות משירות (תלונה או אכזבה) — סימן ההיכר של מלון יוקרה:*\n` +
+    `אורח שמתלונן הוא הזדמנות, לא איום. הסדר: (1) *הכרה* כנה והתנצלות קצרה, בלי להתגונן; ` +
+    `(2) *אמפתיה* — שקף שהבנת מה הפריע; (3) *פתרון* מיידי ככל שאפשר, או העברה מהירה לגורם שיפתור ` +
+    `(המחלקה הרלוונטית או [RECEPTION:<התלונה>], ובדירוג/אכזבה משמעותית — עדכן גם את ההנהלה); ` +
+    `(4) *מעקב* — הבטח לחזור, ותחזור. אל תתווכח, אל תאשים את האורח, ואל תבטיח מה שאינך יכול לספק. ` +
+    `אכזבה שטופלה יפה יוצרת אורח נאמן יותר מאורח שלא נתקל בבעיה כלל.\n`;
+  const serviceRecoveryEn =
+    `🕊️ *Service recovery (a complaint or disappointment) — the hallmark of a luxury hotel:*\n` +
+    `A guest who complains is an opportunity, not a threat. The order: (1) genuine *acknowledgement* and a brief apology, without defensiveness; ` +
+    `(2) *empathy* — reflect that you understood what went wrong; (3) *resolution* as immediately as possible, or a fast hand-off to whoever can fix it ` +
+    `(the relevant department or [RECEPTION:<the complaint>], and for a real disappointment notify management too); ` +
+    `(4) *follow-through* — promise to come back, and come back. Don't argue, don't blame the guest, and don't promise what you can't deliver. ` +
+    `A disappointment handled well earns a more loyal guest than one who never hit a problem.\n`;
 
   if (lang === "he") {
     return `אתה הקונסיירז׳ הדיגיטלי של ${cfg.name_he}, מלון יוקרה 5 כוכבים.
@@ -898,6 +929,7 @@ ${hotelTypeNoteHe}
   עכשיו ומתי יקבל תשובה.
 
 ${helpAnythingHe}
+${serviceRecoveryHe}
 🍽️ *הזמנת אוכל לחדר — אתה המלצר, וההזמנה חייבת לצאת מלאה:*
 התפריט המלא של שירות החדרים נמצא בנתונים למטה (▸ שירות חדרים ← התפריט).
 זה מקור האמת היחיד שלך למנות, למחירים ולאפשרויות הבחירה.
@@ -1036,7 +1068,7 @@ ${area}
 ${faqs}
 
 פרטי האורח:
-שם: ${nameFor(session, "he") || "—"} | חדר: ${session.roomNumber || "—"} | מצב: ${session.stage || "—"}
+שם: ${nameFor(session, "he") || "—"} | חדר: ${session.roomNumber || "—"} | מצב: ${session.stage || "—"}${returningHe}
 
 🏨 המחלקות של המלון — לכל בקשה יש בית, ואתה תמיד מנתב אותה נכון:
 אתה מרכז הבקשות של המלון. כל בקשה של אורח מנותבת למחלקה הנכונה דרך התג
@@ -1254,6 +1286,7 @@ confirmed yet. Therefore, without exception:
   confidence, what is happening now and when they'll hear back.
 
 ${helpAnythingEn}
+${serviceRecoveryEn}
 🍽️ *Taking a food order — you are the waiter, and the order must go out complete:*
 The full in-room dining menu is in the data below (▸ In-Room Dining → The menu).
 That is your only source of truth for dishes, prices and choices.
@@ -1401,7 +1434,7 @@ FAQ:
 ${faqs}
 
 Guest:
-Name: ${nameFor(session, "en") || "—"} | Room: ${session.roomNumber || "—"}
+Name: ${nameFor(session, "en") || "—"} | Room: ${session.roomNumber || "—"}${returningEn}
 
 🏨 THE HOTEL'S DEPARTMENTS — every request has a home, and you always route it:
 You are the hotel's request hub. Every guest request is routed to the right
@@ -2123,12 +2156,18 @@ async function handleCheckin(phone, text, lang, media = null, opts = {}) {
   // ── פתיחת הצ'ק אין ───────────────────────────────────
   if (!stage || stage === "start") {
     patchSession(phone, { checkinStage: "waiting_name", idAttempts: 0 });
+    // אורח חוזר (Part י') — פתיחה חמה יותר, "שמחים לארח שוב".
+    const returning = isReturningGuest(phone);
     await promptStage(phone, "waiting_name", lang, {
       prefix: lang === "he"
         // ניסוח *נטול-מין* (unisex): "שמחים שהגעת" ו"עבורך" נכתבים זהה
         // לזכר ולנקבה — כך הפתיחה נכונה לכל אורח, בלי "ברוך הבא" הזכרי.
-        ? `שמחים שהגעת! 🌟 נשמח להשלים עבורך את הצ׳ק אין הדיגיטלי.`
-        : `Welcome! 🌟 Let's get you checked in.`,
+        ? (returning
+            ? `שמחים לארח אותך שוב! 🌟 נשלים במהירות את הצ׳ק אין הדיגיטלי.`
+            : `שמחים שהגעת! 🌟 נשמח להשלים עבורך את הצ׳ק אין הדיגיטלי.`)
+        : (returning
+            ? `Wonderful to have you back! 🌟 Let's get you checked in quickly.`
+            : `Welcome! 🌟 Let's get you checked in.`),
     });
     return;
   }
@@ -2637,6 +2676,10 @@ async function handleFeedback(phone, text, lang) {
   if (rid) {
     try { saveFeedback(rid, { rating, text: raw }); }
     catch (e) { console.error("saveFeedback failed:", e?.message || e); }
+  }
+  // מעדכן את הדירוג האחרון בפרופיל האורח (Part י') — לזיכרון לביקור הבא.
+  if (rating != null) {
+    try { updateLastRating(phone, rating); } catch (e) { console.error("updateLastRating failed:", e?.message || e); }
   }
 
   // עדכון ההנהלה/קבלה — כדי שמשוב (ובמיוחד דירוג נמוך) לא ייעלם.

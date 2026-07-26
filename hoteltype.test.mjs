@@ -59,7 +59,7 @@ mock.module("./email/index.js", {
   exports: { email: { send: async (m) => { emails.push(m); return { success: true, messageId: "mock" }; } } },
 });
 
-let bot, checkin, config, emergency, pay, cardcom, state, wa, cloud, pmsMod;
+let bot, checkin, config, emergency, pay, cardcom, state, wa, cloud, pmsMod, profiles;
 before(async () => {
   bot       = await import("./bot.js");
   checkin   = await import("./checkin.js");
@@ -71,6 +71,7 @@ before(async () => {
   wa        = await import("./whatsapp/index.js");
   cloud     = await import("./whatsapp/CloudApiProvider.js");
   pmsMod    = await import("./pms/index.js");
+  profiles  = await import("./profiles.js");
 });
 
 let phoneSeq = 0;
@@ -400,6 +401,44 @@ test("Part ט' pms: apaleo בלי credentials נופל ל-Mock", () => {
   config.updateConfig({ pms_provider: "apaleo" });
   pmsMod.clearPmsCache();
   assert.equal(pmsMod.pmsFor("kempinski").isMock, true, "נפילה בטוחה למאגר המובנה");
+});
+
+// ════════════════════════════════════════════════════════
+//  פרופיל אורח חוצה-שהיות (Part י')
+// ════════════════════════════════════════════════════════
+test("Part י': שהייה שנייה מזוהה כאורח חוזר; VIP אחרי 3 שהיות", () => {
+  const phone = freshGuest();
+  assert.equal(profiles.isReturningGuest(phone), false, "פעם ראשונה — לא חוזר");
+  const p1 = profiles.recordStay(phone, { name: "דנה", preferences: "קומה גבוהה, נוף לים" });
+  assert.equal(p1.stays, 1);
+  assert.equal(profiles.isReturningGuest(phone), true, "אחרי שהייה — חוזר");
+  assert.equal(p1.vip, false);
+  profiles.recordStay(phone);
+  const p3 = profiles.recordStay(phone);
+  assert.equal(p3.stays, 3);
+  assert.equal(p3.vip, true, "3 שהיות = VIP");
+  assert.equal(p3.preferences, "קומה גבוהה, נוף לים", "ההעדפה נשמרת בין שהיות");
+});
+
+test("Part י': צ'ק אאוט רושם את השהייה בפרופיל (עם ההעדפה)", async () => {
+  const phone = freshGuest();
+  const { reservationId } = await checkin.startCheckin(phone, NAME, "ABC", { stay: STAY });
+  const res = checkin.reservations[reservationId];
+  res.specialRequests = "מיטה זוגית, קרוב למעלית";
+  await checkin.completeCheckin(reservationId, "512");
+  await checkin.processCheckout(phone, reservationId, "he");
+  const prof = profiles.getProfile(phone);
+  assert.ok(prof, "נוצר פרופיל בצ'ק אאוט");
+  assert.equal(prof.stays, 1);
+  assert.equal(prof.preferences, "מיטה זוגית, קרוב למעלית");
+});
+
+test("Part י': אורח חוזר מקבל פתיחת צ'ק אין חמה ('לארח שוב')", async () => {
+  const phone = freshGuest();
+  profiles.recordStay(phone, { name: "יעל" }); // שהייה קודמת
+  sent.length = 0;
+  await bot.handleIncoming(phone, "צ'ק אין");
+  assert.match(guestMsgs(phone), /לארח אותך שוב/, "פתיחה חמה לאורח חוזר");
 });
 
 // ════════════════════════════════════════════════════════

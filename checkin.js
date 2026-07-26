@@ -6,6 +6,7 @@ import { wa, notifyStaff } from "./bot.js";
 import { logAlert, stats, patchSession, peekSession } from "./state.js";
 import { payments, paymentsFor, PAYMENT_CURRENCY } from "./payments/index.js";
 import { invoicesFor } from "./invoices/index.js";
+import { recordStay } from "./profiles.js";
 import { nameFor } from "./names.js";
 import { configFor, hotelModel } from "./config.js";
 import { db, DEFAULT_HOTEL_ID } from "./db.js";
@@ -881,6 +882,16 @@ export async function processCheckout(phone, reservationId, lang = "he") {
     message: `🧹 חדר ${res.roomNumber} פנוי — ניקיון מלא נדרש`,
     priority: "normal",
   });
+
+  // ── פרופיל אורח חוצה-שהיות (Part י') — זיכרון לביקור הבא ──
+  // מונה שהיות + ההעדפה שהאורח ביקש. בביקור הבא נזהה אותו כאורח חוזר.
+  try {
+    recordStay(res.phone, {
+      hotelId:     res.hotelId,
+      name:        res.guestNameHe || res.guestName,
+      preferences: res.specialRequests || null,
+    });
+  } catch (e) { console.error("recordStay (checkout) failed:", e?.message || e); }
 
   return res;
 }

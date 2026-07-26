@@ -160,6 +160,18 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_id_documents_res
     ON id_documents (hotel_id, reservation_id);
 
+  -- ── פרופיל אורח חוצה-שהיות (Part י') ──────────────────
+  -- זיכרון האורח בין ביקורים: כמה שהיות, העדפות אחרונות (קומה/נוף/מיטה),
+  -- דירוג אחרון, ודגל VIP (אורח חוזר). זה מה שהופך "פקיד" ל"קונסיירז'
+  -- שמכיר אותך". מפתח: מלון + טלפון (בידוד מולטי-טננט).
+  CREATE TABLE IF NOT EXISTS guest_profiles (
+    hotel_id   TEXT NOT NULL,
+    phone      TEXT NOT NULL,
+    data       TEXT NOT NULL,          -- { name, stays, preferences, lastRating, vip, ... }
+    updated_at TEXT,
+    PRIMARY KEY (hotel_id, phone)
+  );
+
   -- ── מונה מספרי חשבונית רץ, פר-מלון (Part ה') ──────────
   -- חשבונית מס בישראל חייבת מספר סידורי *רץ ובלתי-שביר*. שומרים מונה
   -- לכל מלון; nextInvoiceSeq מקדם אותו אטומית (node:sqlite סינכרוני).

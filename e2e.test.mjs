@@ -1145,6 +1145,15 @@ test("Part ז': הקונסיירז' מונחה לעזור בבריאות/דחו�
   assert.match(en, /pharmacy \/ doctor \/ dentist/, "מזכיר רופא/שיניים/בית מרקחת באנגלית");
 });
 
+test("Part י': הקונסיירז' מונחה בהתאוששות משירות (תלונה) + סטנדרט יוקרה", async () => {
+  const he = await askConcierge("החדר שלי מלוכלך ואני מאוד מאוכזב");
+  assert.match(he, /התאוששות משירות/, "יש בלוק התאוששות משירות");
+  assert.match(he, /התנצלות|הכרה/, "הכרה/התנצלות");
+  assert.match(he, /מעקב/, "מעקב אחרי פתרון");
+  const en = await askConcierge("something is wrong");
+  assert.match(en, /Service recovery/i, "בלוק באנגלית");
+});
+
 test("prompt: אותו שם טיפול בשני משכים → שני מחירים נפרדים, בלי בלבול", async () => {
   const sys = await askConcierge("כמה עולה עיסוי שוודי?");
   // 60 ו-90 דקות של אותו טיפול — כל אחד עם המחיר שלו על שורה משלו.
