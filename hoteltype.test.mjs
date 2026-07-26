@@ -59,7 +59,7 @@ mock.module("./email/index.js", {
   exports: { email: { send: async (m) => { emails.push(m); return { success: true, messageId: "mock" }; } } },
 });
 
-let bot, checkin, config, emergency, pay, cardcom;
+let bot, checkin, config, emergency, pay, cardcom, state;
 before(async () => {
   bot       = await import("./bot.js");
   checkin   = await import("./checkin.js");
@@ -67,6 +67,7 @@ before(async () => {
   emergency = await import("./emergency.js");
   pay       = await import("./payments/index.js");
   cardcom   = await import("./payments/CardComProvider.js");
+  state     = await import("./state.js");
 });
 
 let phoneSeq = 0;
@@ -319,6 +320,24 @@ test("צ'ק אאוט עם חיובים: האורח מקבל חשבונית מס-
   assert.match(guest, /חשבונית מס-קבלה/, "נשלח מסמך מס");
   assert.match(guest, /\/invoice\//, "קישור לחשבונית המלאה");
   assert.match(guest, /מע"מ 18%/, "פירוט מע\"מ");
+});
+
+// ════════════════════════════════════════════════════════
+//  מנהל רואה שיחות לפי חדר (Part ו')
+// ════════════════════════════════════════════════════════
+test("Part ו': מציאת שיחה לפי חדר → טלפון האורח נגיש למנהל/קבלה", async () => {
+  const phone = freshGuest();
+  const { reservationId } = await checkin.startCheckin(phone, NAME, "ABC", { stay: STAY });
+  await checkin.completeCheckin(reservationId, "777");
+  const s = state.sessionByRoom("777");
+  assert.ok(s, "נמצא סשן לפי מספר החדר");
+  assert.equal(s.phone, phone, "הטלפון של האורח נגיש (למי לפנות)");
+  assert.equal(s.roomNumber, "777");
+  assert.equal(s.reservationId, reservationId, "מקושר להזמנה");
+});
+
+test("Part ו': חדר לא מאוכלס → null (בלי לזרוק)", () => {
+  assert.equal(state.sessionByRoom("9999"), null);
 });
 
 test("עמוד החשבונית מרנדר את כל שדות החובה", async () => {

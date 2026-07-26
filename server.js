@@ -4,7 +4,8 @@
 import express   from "express";
 import dotenv    from "dotenv";
 import { handleIncoming, wa, notifyStaff } from "./bot.js";
-import { allSessions, sessions, staffAlerts, incidents, stats, deleteSession, clearAllSessions } from "./state.js";
+import { allSessions, sessions, staffAlerts, incidents, stats, deleteSession, clearAllSessions, sessionByRoom, peekSession } from "./state.js";
+import { fromNumberFor } from "./tenant.js";
 import { hotelConfig, updateConfig, resetConfig, checkDepartmentContacts, printRoutingTable, routingTable, DEPARTMENTS } from "./config.js";
 import { reservations, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES, autoChargeOnNoShow, findNoShowReservations } from "./checkin.js";
 import checkinRouter from "./checkin-routes.js";
@@ -95,7 +96,39 @@ app.get("/api/stats", auth, (req, res) => {
   });
 });
 
-app.get("/api/sessions", auth, (req, res) => res.json(allSessions()));
+app.get("/api/sessions", auth, (req, res) => res.json(allSessions(req.query.hotelId || null)));
+
+// ── מנהל/קבלה: כניסה לשיחה של חדר מסוים (Part ו') ──────
+// מנהל המלון נכנס לשיחה עם חדר דרך המספר של המלון: החדר → הטלפון של
+// האורח → היסטוריית השיחה המלאה + המספר של המלון שממנו לענות. הקבלה
+// יודעת בדיוק לאיזה מספר לפנות (guest phone) ומאיזה מספר לשלוח (fromNumber).
+//   GET /api/conversation?room=512[&hotelId=...]   — לפי חדר
+//   GET /api/conversation?phone=+9725...[&hotelId=] — לפי טלפון
+app.get("/api/conversation", auth, (req, res) => {
+  const hotelId = req.query.hotelId || DEFAULT_HOTEL_ID;
+  let s = null;
+  if (req.query.room) {
+    s = sessionByRoom(req.query.room, req.query.hotelId || null);
+  } else if (req.query.phone) {
+    const full = String(req.query.phone).startsWith("whatsapp:") ? req.query.phone : `whatsapp:${req.query.phone}`;
+    s = peekSession(full, hotelId);
+  } else {
+    return res.status(400).json({ error: "room or phone query param required" });
+  }
+  if (!s) return res.status(404).json({ error: "no conversation found for that room/phone" });
+  res.json({
+    hotelId:       s.hotelId,
+    room:          s.roomNumber,
+    guestPhone:    s.phone,                 // המספר לפנות אל האורח
+    hotelNumber:   fromNumberFor(s.hotelId), // המספר של המלון שממנו לענות
+    guestName:     s.guestName,
+    stage:         s.stage,
+    lastActiveAt:  s.lastActiveAt,
+    reservationId: s.reservationId,
+    messageCount:  s.messageCount,
+    history:       s.history || [],         // כל השיחה, לצפייה
+  });
+});
 
 app.post("/api/send", auth, async (req, res) => {
   const { to, message } = req.body;

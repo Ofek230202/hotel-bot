@@ -1134,6 +1134,17 @@ test("prompt: מחיר טיפול צמוד לשם ולמשך שלו — HE + EN"
   assert.match(en, /Signature facial \| Duration: 50 min \| Price: ₪280/);
 });
 
+test("Part ז': הקונסיירז' מונחה לעזור בבריאות/דחוף (רופא, בית מרקחת) + הבחנה מחירום", async () => {
+  const he = await askConcierge("איפה בית מרקחת קרוב?");
+  assert.match(he, /בית מרקחת/, "מודע לבית מרקחת");
+  assert.match(he, /category=pharmacy/, "מכוון להשתמש בקטגוריית הכלי הנכונה");
+  assert.match(he, /חירום/, "מבחין בין דחוף רגיל לחירום רפואי");
+  assert.match(he, /אין נושא בלי מענה/, "עקרון: שום נושא לא נשאר בלי תשובה");
+
+  const en = await askConcierge("I need a dentist");
+  assert.match(en, /pharmacy \/ doctor \/ dentist/, "מזכיר רופא/שיניים/בית מרקחת באנגלית");
+});
+
 test("prompt: אותו שם טיפול בשני משכים → שני מחירים נפרדים, בלי בלבול", async () => {
   const sys = await askConcierge("כמה עולה עיסוי שוודי?");
   // 60 ו-90 דקות של אותו טיפול — כל אחד עם המחיר שלו על שורה משלו.
