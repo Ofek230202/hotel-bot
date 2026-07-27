@@ -403,6 +403,27 @@ test("Part ט' pms: apaleo בלי credentials נופל ל-Mock", () => {
   assert.equal(pmsMod.pmsFor("kempinski").isMock, true, "נפילה בטוחה למאגר המובנה");
 });
 
+test("Part 2: Optima (מוביל השוק בישראל) עם credentials — נבחר, יכולות שמרניות", async () => {
+  const { OptimaPmsProvider } = await import("./pms/OptimaPmsProvider.js");
+  config.updateConfig({
+    pms_provider: "optima",
+    pms_credentials: { endpoint: "https://optima.example/api", apiUser: "u", apiPassword: "p", hotelCode: "H1" },
+  });
+  pmsMod.clearPmsCache();
+  const p = pmsMod.pmsFor("kempinski");
+  assert.ok(p instanceof OptimaPmsProvider, "נבחר Optima");
+  // יכולות: קריאה כן, post folio לא (מדרדר בחן לצוות).
+  assert.equal(p.supports("reservation.read"), true);
+  assert.equal(p.supports("folio.post"), false, "Optima לא מצהירה folio.post כברירת מחדל");
+  await assert.rejects(() => p.getReservation({}), (e) => e.notConnected === true, "scaffold זורק בבירור");
+});
+
+test("Part 2: capability flags — Mock תומך בהכל, אדפטר בסיסי בכלום", async () => {
+  const { PmsProvider } = await import("./pms/PmsProvider.js");
+  assert.equal(new PmsProvider().supports("folio.post"), false, "בסיס בטוח = כלום נתמך");
+  assert.equal(pmsMod.pms.supports("folio.post"), true, "Mock תומך בהכל");
+});
+
 // ════════════════════════════════════════════════════════
 //  פרופיל אורח חוצה-שהיות (Part י')
 // ════════════════════════════════════════════════════════

@@ -12,6 +12,7 @@
 // ════════════════════════════════════════════════════════
 import { MockPmsProvider } from "./MockPmsProvider.js";
 import { ApaleoPmsProvider } from "./ApaleoPmsProvider.js";
+import { OptimaPmsProvider } from "./OptimaPmsProvider.js";
 import { configFor } from "../config.js";
 
 export const pms = new MockPmsProvider(); // ברירת מחדל + תאימות לאחור
@@ -29,18 +30,26 @@ export function pmsFor(hotelId) {
   const key = `${name}:${hotelId || "default"}`;
   if (cache.has(key)) return cache.get(key);
 
+  // בונה ספק, ואם חסרים credentials נופל בבטחה ל-Mock (המאגר המובנה).
+  const build = (Provider, label) => {
+    const p = new Provider(creds);
+    if (!p.isConfigured?.()) {
+      console.warn(`⚠️ מלון "${hotelId}" ביקש PMS ${label} בלי credentials — נופלים ל-Mock (המאגר המובנה).`);
+      return pms;
+    }
+    return p;
+  };
+
   let provider;
   switch (name) {
-    case "apaleo": {
-      const p = new ApaleoPmsProvider(creds);
-      if (!p.isConfigured()) {
-        console.warn(`⚠️ מלון "${hotelId}" ביקש PMS apaleo בלי credentials — נופלים ל-Mock (המאגר המובנה).`);
-        provider = pms;
-      } else provider = p;
-      break;
-    }
-    // case "mews": provider = new MewsPmsProvider(creds); break;
-    // case "opera": provider = new OperaPmsProvider(creds); break;
+    // Optima/Silverbyte — מוביל השוק בישראל (~80–90%). היעד הראשון בישראל.
+    case "optima":
+    case "silverbyte": provider = build(OptimaPmsProvider, "optima"); break;
+    // Apaleo — REST מודרני, ה-scaffold הפתוח לפיתוח מול חשבון dev.
+    case "apaleo":     provider = build(ApaleoPmsProvider, "apaleo"); break;
+    // case "mews":    provider = build(MewsPmsProvider, "mews"); break;
+    // case "opera":   provider = build(OperaOhipProvider, "opera"); break;
+    // case "cloudbeds": provider = build(CloudbedsPmsProvider, "cloudbeds"); break;
     case "mock":
     default:
       provider = pms;

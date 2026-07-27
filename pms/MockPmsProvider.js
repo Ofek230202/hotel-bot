@@ -14,6 +14,12 @@ import { PmsProvider } from "./PmsProvider.js";
 
 export class MockPmsProvider extends PmsProvider {
   isMock = true;
+  // ה-Mock "תומך" בהכל (מחזיר ערכי דמו) — כך זרימת הקוד נבדקת מקצה לקצה.
+  capabilities = new Set([
+    "reservation.read", "reservation.search", "checkin", "checkout", "room.assign",
+    "folio.read", "folio.post", "folio.payment", "housekeeping.read", "housekeeping.write",
+    "profile.read", "profile.write",
+  ]);
 
   // אין רשומה חיצונית — הקורא נשען על המאגר המובנה (checkin.js).
   async getReservation()     { return null; }

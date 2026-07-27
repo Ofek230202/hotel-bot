@@ -21,6 +21,21 @@
 // ════════════════════════════════════════════════════════
 
 export class PmsProvider {
+  // ── יכולות (capability flags) — קריטי לגמישות מול כל PMS ──
+  // 🔴 ממצא מחקר: מערכות PMS שונות תומכות בפעולות שונות. Optima (מוביל
+  //    השוק בישראל, XML) ו-OPERA legacy לרוב *לא* מאפשרות לצד ג' לרשום
+  //    folio; ותיקות עושות רק חיפוש לפי מספר אישור מדויק. לכן כל אדפטר
+  //    מצהיר מה הוא תומך, והקוד העסקי *מדרדר בחן*: אין post folio → החיוב
+  //    מנותב לצוות במקום ליפול. `supports(cap)` הוא נקודת ההחלטה.
+  //
+  //    יכולות אפשריות: "reservation.read" "reservation.search"
+  //    "checkin" "checkout" "room.assign" "folio.read" "folio.post"
+  //    "folio.payment" "housekeeping.read" "housekeeping.write"
+  //    "profile.read" "profile.write" "webhooks".
+  //    ברירת מחדל: כלום נתמך (אדפטר בטוח) — כל אדפטר מרחיב.
+  capabilities = new Set();
+  supports(cap) { return this.capabilities.has(cap); }
+
   // ── הזמנות ────────────────────────────────────────────
   // שליפת הזמנה לפי מספר אישור / טלפון / שם+תאריך. מחזיר Reservation מנורמל.
   async getReservation(_query)      { throw new Error("getReservation not implemented"); }

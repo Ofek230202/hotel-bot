@@ -34,6 +34,12 @@ export class ApaleoPmsProvider extends PmsProvider {
     this.propertyId   = creds.propertyId   || null;
     this.apiBase      = creds.apiBase      || "https://api.apaleo.com";
   }
+  // Apaleo (REST מודרני) תומך בכל הפעולות — כולל post folio ו-webhooks.
+  capabilities = new Set([
+    "reservation.read", "reservation.search", "checkin", "checkout", "room.assign",
+    "folio.read", "folio.post", "folio.payment", "housekeeping.read", "housekeeping.write",
+    "profile.read", "profile.write", "webhooks",
+  ]);
   isConfigured() { return !!(this.clientId && this.clientSecret && this.propertyId); }
 
   // 🔌 GET /booking/v1/reservations?bookingId=... או חיפוש לפי מספר אישור.
