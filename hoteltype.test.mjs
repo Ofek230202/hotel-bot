@@ -441,6 +441,18 @@ test("Part י': אורח חוזר מקבל פתיחת צ'ק אין חמה ('לא
   assert.match(guestMsgs(phone), /לארח אותך שוב/, "פתיחה חמה לאורח חוזר");
 });
 
+test("רגרסיה: 'אני רוצה לעשות צ'ק אאוט' → צ'ק אאוט, לא צ'ק אין", async () => {
+  const phone = freshGuest();
+  const { reservationId } = await checkin.startCheckin(phone, NAME, "ABC", { stay: STAY });
+  await checkin.completeCheckin(reservationId, "512");
+  checkin.addFolioItem(reservationId, "MINIBAR", "מיני בר", 5000);
+  sent.length = 0;
+  await bot.handleIncoming(phone, "אני רוצה לעשות צ'ק אאוט");
+  const guest = guestMsgs(phone);
+  assert.match(guest, /בקשת צ'ק אאוט|סיכום חשבון/, "מופעל צ'ק אאוט");
+  assert.ok(!/שמך המלא/.test(guest), "לא מתחיל צ'ק אין בטעות");
+});
+
 // ════════════════════════════════════════════════════════
 //  אבטחה (Part ב')
 // ════════════════════════════════════════════════════════

@@ -253,7 +253,7 @@ function isCheckinIntent(text) {
     "צק אין", "צכ אין", "תק אין", "צאק אין", "צ אין", "צקאין",
     "check in", "checkin", "check-in", "chek in", "chekin",
     "הגעתי", "אני פה", "רוצה להתחיל", "want to check", "checking in",
-    "לצק אין", "לעשות צק", "wanna check in", "like to check in"
+    "לצק אין", "לעשות צק אין", "wanna check in", "like to check in"
   ].some(x => t.includes(x.replace(/[''']/g, "").toLowerCase()));
 }
 
