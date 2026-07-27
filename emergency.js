@@ -124,6 +124,23 @@ const SECURITY_STRICT = groupStrict(["ירי", "יריה", "יריות"]);
 const SECURITY_SOFT = groupPrefixed([
   "סכנה", "מסוכן", "בסכנה", "איום", "מאיים", "איימו", "אקדח", "משטרה",
   "emergency", "danger", "dangerous", "police", "gun", "weapon", "threatened",
+  // צרחות / קריאות לעזרה מהחדר הסמוך — הביטחון בודק (לא לעמת) (Part 5)
+  "צרחות", "צווחות", "צורח", "צורחת", "צעקות אימה", "מישהו צורח",
+  "screaming", "screams", "cry for help", "cries for help",
+]);
+
+// ── אזעקת טילים → מרחב מוגן (פיקוד העורף) — Part 4 ──────
+// 🔴 קטגוריה נפרדת: אזעקה אינה "פציעה" — התגובה הנכונה היא *מרחב מוגן*,
+//    לא "התקשרו ל-101". מפעילה *תמיד* (זמן-קריטי, 90 שניות ברוב הארץ),
+//    גם בתוך שאלה. מונחית ע"פ הנחיות פיקוד העורף שנבדקו. "אזעקת אש"
+//    מסוננת דרך guard מול מילות אש (detectEmergency).
+const ROCKET = groupPrefixed([
+  // עברית
+  "צבע אדום", "אזעקה", "אזעקות", "טיל", "טילים", "רקטה", "רקטות",
+  "יירוט", "פיקוד העורף", "מרחב מוגן", "מקלט",
+  // English + תעתיק לתייר
+  "missile", "missiles", "rocket attack", "red alert", "air raid",
+  "azaka", "azake", "azaa", "code red",
 ]);
 const SECURITY = groupPrefixed([
   // עברית
@@ -146,6 +163,8 @@ export function detectEmergency(text) {
 
   // דרגה קשה — מפעילה תמיד, גם בתוך שאלה ("Is there a fire?!").
   if (FIRE.test(t))     return { kind: "fire" };
+  // אזעקת טילים — מפעילה תמיד (זמן-קריטי). guard: "אזעקת אש" → אש, לא טיל.
+  if (ROCKET.test(t) && !FIRE_STRICT.test(t) && !/אזעקת\s*אש|fire\s*alarm/i.test(t)) return { kind: "rocket" };
   if (MEDICAL.test(t))  return { kind: "medical" };
   if (SECURITY.test(t)) return { kind: "security" };
 
@@ -160,7 +179,7 @@ export function detectEmergency(text) {
 
 // שם הקטגוריה בעברית — להתראת הצוות.
 export function emergencyKindHe(kind) {
-  return { fire: "אש / גז", medical: "רפואי / פציעה", security: "ביטחון / סכנה" }[kind] || "חירום";
+  return { fire: "אש / גז", medical: "רפואי / פציעה", security: "ביטחון / סכנה", rocket: "אזעקת טילים" }[kind] || "חירום";
 }
 
 // ההנחיה שהאורח מקבל *מיד* — קבועה, ברורה, ובשפת השיחה. שלושה חלקים:
@@ -174,7 +193,52 @@ export function emergencyKindHe(kind) {
 //   נכון רק כשיש צוות במקום. במלון בלי צוות — אסור להבטיח מישהו בדרך;
 //   מדגישים שהגורם המקצועי הוא שירותי החירום (101/102/100), ומעדכנים
 //   מנהל תורן מרחוק. הבטחה שגויה בחירום גרועה משתיקה.
-export function emergencyGuestMessage(kind, lang = "he", { locationKnown = true, onSiteTeam = true } = {}) {
+// ── הנחיית אזעקת טילים — מרחב מוגן (פיקוד העורף) — Part 4 ──
+// 🔴 מצילת חיים. ההנחיה נבנית מהנתונים הרשמיים של פיקוד העורף:
+//   • להיכנס למרחב מוגן ולהישאר 10 דקות.
+//   • היררכיה: ממ"ד → ממ"ק בקומה → מקלט → חדר מדרגות פנימי → חדר פנימי
+//     ללא חלונות, הרחק מזכוכית. לסגור דלת וחלונות.
+//   • בלי מרחב מוגן — לשכב על הרצפה ולכסות את הראש.
+//   • לא להשתמש במעלית.
+// shelterLocation/shelterTime הם *פר-מלון* (config.safety.shelter_*),
+// ובהיעדרם נופלים להיררכיה הגנרית. הרוב בישראל = כ-90 שניות.
+function rocketGuestMessage(lang, { shelterLocation = null, shelterTime = null } = {}) {
+  const he = lang !== "en";
+  if (he) {
+    const where = shelterLocation
+      ? `📍 *המרחב המוגן הקרוב:* ${shelterLocation}`
+      : `📍 *לאן ללכת (לפי הזמין):* ממ"ד בחדר, אם יש → המרחב המוגן/ממ"ק בקומה → מקלט → חדר מדרגות פנימי (הרחק מחלונות) → החדר הפנימי ביותר, הרחק מזכוכית.`;
+    const time = shelterTime || "כ-90 שניות (ברוב הארץ)";
+    return (
+      `🚨 *אזעקה — יש להיכנס עכשיו למרחב מוגן.* אני איתך.\n\n` +
+      `${where}\n` +
+      `⏱️ יש לך *${time}* להגיע. *אל תשתמש במעלית* — במדרגות בלבד.\n\n` +
+      `בפנים: סגור את הדלת ואת החלונות, התרחק מזכוכית.\n` +
+      `אם אין מרחב מוגן בהישג יד — *שכב על הרצפה, פנים למטה, וכסה את הראש בידיים.*\n\n` +
+      `⏳ *להישאר במרחב המוגן 10 דקות* מרגע האזעקה.\n` +
+      `📞 מידע נוסף: פיקוד העורף *104* (או אפליקציית פיקוד העורף).\n` +
+      `אני כאן — עדכן אותי כשאתה בטוח.`
+    );
+  }
+  const where = shelterLocation
+    ? `📍 *Nearest protected space:* ${shelterLocation}`
+    : `📍 *Where to go (best available):* the safe room (Mamad) in your room if there is one → the floor's protected space (Mamak) → the shelter (Miklat) → an interior stairwell away from windows → the most interior room, away from glass.`;
+  const time = shelterTime || "about 90 seconds (most of the country)";
+  return (
+    `🚨 *Rocket siren — go to a protected space NOW.* I'm with you.\n\n` +
+    `${where}\n` +
+    `⏱️ You have *${time}* to get there. *Do NOT use the lift* — take the stairs.\n\n` +
+    `Inside: close the door and windows, stay away from glass.\n` +
+    `If no protected space is reachable in time — *lie down on the ground, face down, and cover your head with your hands.*\n\n` +
+    `⏳ *Stay in the protected space for 10 minutes* from the start of the siren.\n` +
+    `📞 More info: Home Front Command *104* (or the Home Front Command app).\n` +
+    `I'm here — tell me when you're safe.`
+  );
+}
+
+export function emergencyGuestMessage(kind, lang = "he", { locationKnown = true, onSiteTeam = true, shelterLocation = null, shelterTime = null } = {}) {
+  // אזעקת טילים — הנחיית מרחב מוגן ייעודית (לא "התקשרו ל-101").
+  if (kind === "rocket") return rocketGuestMessage(lang, { shelterLocation, shelterTime });
   const he = lang !== "en";
 
   const askLocationHe = locationKnown ? "" :
@@ -234,5 +298,5 @@ export function emergencyGuestMessage(kind, lang = "he", { locationKnown = true,
 
 // מספר החירום המרכזי לפי סוג — לשורת ההתראה לצוות.
 export function emergencyDial(kind) {
-  return { fire: "102 (כבאות)", medical: '101 (מד"א)', security: "100 (משטרה)" }[kind] || "101";
+  return { fire: "102 (כבאות)", medical: '101 (מד"א)', security: "100 (משטרה)", rocket: "104 (פיקוד העורף)" }[kind] || "101";
 }

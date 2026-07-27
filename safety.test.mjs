@@ -124,6 +124,18 @@ test("חירום: כל דיווח אמיתי מזוהה — כולל סיומו�
   }
 });
 
+// ── אזעקת טילים (Part 4) + צרחות (Part 5) ──────────────
+test("Part 4/5: אזעקת טילים=rocket, צרחות=security, guard על 'אזעקת אש'", () => {
+  const rocket = ["יש אזעקה!", "צבע אדום", "נופלים טילים", "rocket attack", "red alert", "azaka", "יש אזעקת טילים"];
+  for (const t of rocket) assert.equal(detectEmergency(t)?.kind, "rocket", `לא זוהתה אזעקה: "${t}"`);
+  // "אזעקת אש" חייבת להיות אש/פינוי, לא מרחב מוגן.
+  assert.equal(detectEmergency("יש אזעקת אש בקומה")?.kind, "fire", "אזעקת אש → אש, לא טיל");
+  // צרחות → ביטחון (לא לעמת, הביטחון בודק).
+  for (const t of ["אני שומע צרחות מהחדר ליד", "מישהו צורח במסדרון", "I hear screaming next door"]) {
+    assert.equal(detectEmergency(t)?.kind, "security", `צרחות לא נותבו לביטחון: "${t}"`);
+  }
+});
+
 test("חירום: שאלה תמימה לעולם לא מפעילה פינוי/הזעקה", () => {
   for (const text of INNOCENT_QUESTIONS) {
     const r = detectEmergency(text);
@@ -205,6 +217,28 @@ test("חירום: חירום שני אחרי בקשת מיקום עדיין מט
   sent.length = 0;
   await bot.handleIncoming(p, "עכשיו יש גם שריפה במסדרון!");
   assert.match(guestMsgs(p).join("\n"), /102/, "החירום השני לא זוהה");
+});
+
+test("Part 4: אזעקה → הנחיית מרחב מוגן (לא '101'), בלי בקשת מיקום, צוות מיודע", async () => {
+  const p = freshGuest();
+  await bot.handleIncoming(p, "יש אזעקה!!");
+  const guest = guestMsgs(p).join("\n");
+  assert.match(guest, /מרחב מוגן/, "לא ניתנה הנחיית מרחב מוגן");
+  assert.match(guest, /10 דקות/, "לא צוין להישאר 10 דקות");
+  assert.match(guest, /מעלית/, "לא הוזהר מפני מעלית");
+  assert.ok(!/איפה אתם נמצאים/.test(guest), "אין לבקש מיקום באזעקה — צריך להיכנס למרחב מוגן");
+  // הצוות מקבל התראה על אזעקה (אינפורמטיבית, לא 'התקשרו אליו עכשיו').
+  assert.match(staffMsgs(p).join("\n"), /אזעקת טילים/, "הצוות לא קיבל התראת אזעקה");
+});
+
+test("Part 4: אזעקה — ההודעה הבאה מטופלת כרגיל (לא נלכדת כ'מיקום')", async () => {
+  const p = freshGuest();
+  await bot.handleIncoming(p, "צבע אדום");
+  sent.length = 0;
+  aiReply = "בשמחה, אני כאן 🌟";
+  await bot.handleIncoming(p, "אני בטוח עכשיו, תודה");
+  // אין הסלמה 'עדכון מיקום' — האזעקה לא סימנה emergencyAwaitLocation.
+  assert.ok(!/עדכון מיקום/.test(staffMsgs(p).join("\n")), "אזעקה לא אמורה ללכוד את ההודעה הבאה כמיקום");
 });
 
 // ════════════════════════════════════════════════════════

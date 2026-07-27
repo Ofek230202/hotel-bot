@@ -2898,12 +2898,18 @@ async function handleEmergency(phone, text, lang, kind) {
   // מלון בוטיק לא-מאויש → אין צוות בדרך, מדגישים את שירותי החירום
   // ומעדכנים מנהל תורן מרחוק. הבטחה שגויה בחירום גרועה משתיקה.
   const model = hotelModel(currentHotelId());
+  const isRocket = kind === "rocket";
+  // מרחב מוגן — פר-מלון (config.safety), עם נסיגה גנרית בהנחיית פיקוד העורף.
+  const safety = hcfg().safety?.[lang === "he" ? "he" : "en"] || hcfg().safety?.en || {};
 
   // 1) האורח מקבל את ההנחיה *מיד* — הדבר הראשון, לפני כל דבר שעלול לזרוק.
-  //    אם אין מספר חדר, ההנחיה כוללת גם בקשת מיקום.
+  //    אזעקה: הנחיית מרחב מוגן (לא לבקש מיקום — כל שנייה קריטית).
+  //    שאר: אם אין חדר, ההנחיה כוללת בקשת מיקום.
   const guestMsg = emergencyGuestMessage(kind, lang, {
-    locationKnown: !!roomNumber,
-    onSiteTeam:    model.onSiteSecurity,
+    locationKnown:   isRocket ? true : !!roomNumber,
+    onSiteTeam:      model.onSiteSecurity,
+    shelterLocation: safety.shelter_location || null,
+    shelterTime:     safety.shelter_time || null,
   });
   try {
     await wa(phone, guestMsg, { lang });
@@ -2926,14 +2932,16 @@ async function handleEmergency(phone, text, lang, kind) {
   }
 
   // 3) הסלמה מובטחת לצוות הביטחון (אדם) — בעדיפות גבוהה, בעברית.
+  //    אזעקה = אירוע כלל-מלוני: ההתראה אינפורמטיבית ("אורח הופנה למרחב
+  //    מוגן"), בלי "התקשרו אליו עכשיו" (הצוות עצמו במרחב מוגן).
   try {
-    await notifyStaff({
-      phone,
-      dept:       "security",
-      roomNumber,
-      guestName,
-      message:
-        `🚨 *חירום — ${emergencyKindHe(kind)}*\n` +
+    const staffMsg = isRocket
+      ? `🚨 *אזעקת טילים — אורח בשיחה*\n` +
+        `האורח דיווח/שאל: "${raw.slice(0, 300)}"\n` +
+        (roomNumber ? `📍 חדר ${roomNumber}\n` : `📍 מיקום לא ידוע\n`) +
+        `הופנה למרחב מוגן (${safety.shelter_location || "לפי הנחיות פיקוד העורף"}) ל-10 דקות.\n` +
+        `ודאו שנהלי החירום של המלון מופעלים.`
+      : `🚨 *חירום — ${emergencyKindHe(kind)}*\n` +
         `האורח דיווח: "${raw.slice(0, 400)}"\n` +
         `🗣️ שפת האורח: ${lang === "en" ? "אנגלית" : "עברית"}\n` +
         (roomNumber
@@ -2944,9 +2952,8 @@ async function handleEmergency(phone, text, lang, kind) {
         // חייב לדעת שאין מי שיישלח פיזית, ולוודא ששירותי החירום בדרך.
         (model.onSiteSecurity ? "" :
           `🏨 *מלון ללא צוות ביטחון במקום* — אין מי שיישלח פיזית אל האורח. ודאו ששירותי החירום (${emergencyDial(kind)}) בדרך, וצרו קשר עם האורח *מיד*.\n`) +
-        `⏱️ נדרש טיפול אנושי *מיידי* — ${model.onSiteSecurity ? "ביטחון/מנהל תורן" : "מנהל תורן מרחוק"}.`,
-      priority: "high",
-    });
+        `⏱️ נדרש טיפול אנושי *מיידי* — ${model.onSiteSecurity ? "ביטחון/מנהל תורן" : "מנהל תורן מרחוק"}.`;
+    await notifyStaff({ phone, dept: "security", roomNumber, guestName, message: staffMsg, priority: "high" });
   } catch (e) {
     console.error("🚨 כשל בהסלמת החירום לצוות:", e?.message || e);
   }
@@ -2971,8 +2978,9 @@ async function handleEmergency(phone, text, lang, kind) {
 
   // 3ג) אם אין מיקום — ההודעה הבאה של האורח היא תשובת המיקום, והיא
   //     מועברת לביטחון מיד (הטיפול ב-processIncoming), ולא ל-AI.
+  //     אזעקה: *לא* מבקשים מיקום — האורח חייב להיכנס למרחב מוגן, לא לצ'וטט.
   try {
-    patchSession(phone, { emergencyAwaitLocation: roomNumber ? null : kind });
+    patchSession(phone, { emergencyAwaitLocation: (isRocket || roomNumber) ? null : kind });
   } catch (e) {
     console.error("🚨 כשל בסימון המתנה למיקום:", e?.message || e);
   }
