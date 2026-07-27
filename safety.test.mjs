@@ -12,10 +12,10 @@
 // ════════════════════════════════════════════════════════
 import { test, mock, before, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import os from "node:os";
-import path from "node:path";
+import { freshTestDbPath } from "./test-dbpath.mjs";
 
-process.env.DB_PATH                = path.join(os.tmpdir(), `hotel-safety-${process.pid}.db`);
+// נתיב DB ייחודי ומתנקה — מונע טעינת מצב מהרצה קודמת (pid ממוחזר).
+process.env.DB_PATH                = freshTestDbPath("safety");
 process.env.TWILIO_ACCOUNT_SID     = "ACtest";
 process.env.TWILIO_AUTH_TOKEN      = "test";
 process.env.TWILIO_WHATSAPP_NUMBER = "whatsapp:+10000000000";
@@ -184,6 +184,10 @@ test("חירום בלי חדר: האורח מתבקש לציין מיקום, ו�
 test("חירום: תשובת המיקום של האורח מגיעה לביטחון מיד — לא ל-AI", async () => {
   const p = freshGuest();
   await bot.handleIncoming(p, "אשתי נפלה ולא מגיבה");
+  // הגנה: הסשן חייב להיות טרי — חירום בלי חדר מבקש מיקום. אם מצב ישן
+  // דלף (חדר מהרצה קודמת), הבקשה לא הייתה נשלחת. תופס רגרסיית בידוד-DB.
+  assert.match(guestMsgs(p).join("\n"), /איפה אתם נמצאים/,
+    "הסשן לא היה טרי — לא נשאלה שאלת מיקום (בדוק בידוד DB בין הרצות)");
   sent.length = 0;
 
   aiReply = "לא אמור להיקרא";

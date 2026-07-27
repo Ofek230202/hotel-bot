@@ -12,11 +12,10 @@
 // ════════════════════════════════════════════════════════
 import { test, mock, before, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import os from "node:os";
-import path from "node:path";
+import { freshTestDbPath } from "./test-dbpath.mjs";
 
-// DB זמני — לא נוגעים ב-hotel.db האמיתי.
-process.env.DB_PATH                = path.join(os.tmpdir(), `hotel-scale-${process.pid}.db`);
+// DB זמני, ייחודי ומתנקה — מונע טעינת מצב מהרצה קודמת (pid ממוחזר).
+process.env.DB_PATH                = freshTestDbPath("scale");
 process.env.TWILIO_ACCOUNT_SID     = "ACtest";
 process.env.TWILIO_AUTH_TOKEN      = "test";
 process.env.TWILIO_WHATSAPP_NUMBER = "whatsapp:+10000000000";

@@ -12,9 +12,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { freshTestDbPath } from "./test-dbpath.mjs";
 
-// DB זמני — הבדיקות לא נוגעות ב-hotel.db האמיתי.
-process.env.DB_PATH              = path.join(os.tmpdir(), `hotel-test-${process.pid}.db`);
+// DB זמני, ייחודי ומתנקה — מונע טעינת מצב מהרצה קודמת (pid ממוחזר).
+process.env.DB_PATH              = freshTestDbPath("test");
 process.env.TWILIO_ACCOUNT_SID   = "ACtest";
 process.env.TWILIO_AUTH_TOKEN    = "test";
 process.env.TWILIO_WHATSAPP_NUMBER = "whatsapp:+10000000000";

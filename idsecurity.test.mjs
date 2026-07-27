@@ -15,8 +15,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { freshTestDbPath } from "./test-dbpath.mjs";
 
-process.env.DB_PATH           = path.join(os.tmpdir(), `hotel-idsec-${process.pid}.db`);
+// נתיב DB ייחודי ומתנקה — מונע טעינת מצב מהרצה קודמת (pid ממוחזר).
+process.env.DB_PATH           = freshTestDbPath("idsec");
 process.env.ID_ENCRYPTION_KEY = "0".repeat(64);
 
 let reg, crypto, tmpDir;
