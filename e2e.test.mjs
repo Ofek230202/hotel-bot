@@ -1146,6 +1146,40 @@ test("Part ז': הקונסיירז' מונחה לעזור בבריאות/דחו�
   assert.match(en, /pharmacy \/ doctor \/ dentist/, "מזכיר רופא/שיניים/בית מרקחת באנגלית");
 });
 
+test("Part 7: המסעדות (שם+מטבח) ב-prompt, והתפריט המלא רק דרך הכלי", async () => {
+  const sys = await askConcierge("איזה מסעדות יש במלון?");
+  // שם ומטבח מופיעים ב-prompt (קצר) — אבל לא התפריט המלא (חוסך טוקנים).
+  assert.match(sys, /מסעדת הגן/, "מסעדה חלבית ב-prompt");
+  assert.match(sys, /גריל הסקיי/, "מסעדה בשרית ב-prompt");
+  assert.match(sys, /get_restaurant_menu/, "הנחיה להשתמש בכלי התפריט");
+  // התפריט המלא (מנה ספציפית) לא נמצא ב-prompt — הוא נשלף רק דרך הכלי.
+  assert.ok(!/אנטריקוט 300 גרם/.test(sys), "התפריט המלא לא אמור להיות ב-prompt (חוסך טוקנים)");
+});
+
+test("Part 7: כלי התפריט מחזיר תפריט מלא של המסעדה שהתבקשה + מגיע לאורח", async () => {
+  aiScript = (params, idx) => {
+    if (idx === 0) return {
+      stop_reason: "tool_use",
+      content: [{ type: "tool_use", id: "m1", name: "get_restaurant_menu", input: { restaurant: "בשרי" } }],
+    };
+    return { content: [{ type: "text", text: "בתפריט הגריל הבשרי: *אנטריקוט 300 גרם* — ₪218 🥩" }] };
+  };
+  const p = freshGuest();
+  await bot.handleIncoming(p, "אפשר את התפריט של המסעדה הבשרית?");
+  // הכלי החזיר את המנה הבשרית ל-AI (tool_result), והתשובה הגיעה לאורח.
+  const msgsJson = JSON.stringify(aiParams.messages);
+  assert.match(msgsJson, /tool_result/, "לא הוחזר tool_result");
+  assert.match(msgsJson, /אנטריקוט 300 גרם/, "התפריט הבשרי לא הוחזר ל-AI מהכלי");
+  assert.match(lastBody(), /אנטריקוט/, "המנה לא הגיעה לאורח");
+});
+
+test("Part 8: הוראות הגעה/חניה ואורח עתידי — ב-prompt, עם 'מצפים לראותך'", async () => {
+  const sys = await askConcierge("איך מגיעים למלון ואיפה מחנים?");
+  assert.match(sys, /מכביש החוף|נתב"ג/, "הוראות הגעה ב-prompt");
+  assert.match(sys, /ואלה|חניון/, "הוראות חניה ב-prompt");
+  assert.match(sys, /מצפים לראותך/, "הנחיה לברך אורח עתידי");
+});
+
 test("Part י': הקונסיירז' מונחה בהתאוששות משירות (תלונה) + סטנדרט יוקרה", async () => {
   const he = await askConcierge("החדר שלי מלוכלך ואני מאוד מאוכזב");
   assert.match(he, /התאוששות משירות/, "יש בלוק התאוששות משירות");

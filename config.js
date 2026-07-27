@@ -624,6 +624,178 @@ const DEFAULTS = {
     },
   },
 
+  // ── Restaurants & their full menus (Part 7) ───────────
+  // ⚠️⚠️ תפריטים לדוגמה — כל מלון מחליף בתפריטים האמיתיים שלו ⚠️⚠️
+  //
+  // 🔴 למה זה *לא* בתוך services: תפריט מסעדה מלא הוא ארוך. אם נטמיע אותו
+  //    ב-system prompt של *כל* הודעה — ננפח את העלות (קריטי לסקייל של
+  //    מיליוני הודעות). לכן המסעדות והתפריטים יושבים כאן, וה-AI שולף אותם
+  //    *לפי דרישה* דרך הכלי get_restaurant_menu (bot.js) — בדיוק כמו
+  //    חיפוש המקומות. ה-prompt הבסיסי מכיל רק *שם + מטבח* של כל מסעדה.
+  //
+  //    מלון כמו קמפינסקי מפעיל כמה מסעדות (חלבית, בשרית/גריל). כל אחת
+  //    היא מפתח כאן, עם name/cuisine/kosher/hours/location + menu מקוטלג.
+  //    מפתח המסעדה (garden/grill) הוא מזהה יציב שהכלי מקבל.
+  restaurants: {
+    garden: {
+      he: {
+        name: "מסעדת הגן", cuisine: "ים תיכונית, חלבית", kosher: "כשר חלבי (בהשגחה)",
+        hours: "בוקר 07:00–11:00 | צהריים 12:00–16:00 | ערב 18:00–23:00", location: "קומה 1, עם נוף לגן",
+        menu: {
+          starters: [
+            { name: "בורקס גבינות", description: "בצק עלים, גבינת פטה ותרד, סלט עגבניות", price: "₪52" },
+            { name: "קרפצ'יו סלק", description: "עם גבינת עזים, אגוזי מלך ורוקט", price: "₪58" },
+            { name: "שקשוקה ירוקה", description: "ביצים, תרד, גבינת פטה ולחם כפרי", price: "₪56" },
+          ],
+          salads: [
+            { name: "סלט יווני", description: "מלפפון, עגבנייה, פטה, זיתי קלמטה, אורגנו", price: "₪62" },
+            { name: "סלט קפרזה", description: "מוצרלה טרייה, עגבניות, בזיליקום, שמן זית", price: "₪66" },
+          ],
+          pasta: [
+            { name: "פטוצ'יני אלפרדו", description: "שמנת, פרמזן, פטריות", price: "₪78", options: "אפשר עם פסטה ללא גלוטן (₪12)" },
+            { name: "רביולי גבינות", description: "רוטב עגבניות ובזיליקום", price: "₪82" },
+          ],
+          mains: [
+            { name: "פילה סלמון", description: "אפוי בתנור, ירקות שורש ורוטב חמאת לימון", price: "₪128" },
+            { name: "פילה דניס", description: "בגריל, שמן זית, לימון וירק העונה", price: "₪138" },
+            { name: "פיצה מרגריטה", description: "רוטב עגבניות, מוצרלה, בזיליקום", price: "₪72", options: "תוספות: פטריות · זיתים · חצילים ₪10 כל אחת" },
+          ],
+          desserts: [
+            { name: "עוגת גבינה אפויה", description: "על בסיס פירורים, קולי פירות יער", price: "₪48" },
+            { name: "קרם ברולה וניל", price: "₪46" },
+          ],
+          drinks: [
+            { name: "יין לבן/רוזה בכוס", price: "₪42–₪58" },
+            { name: "מיצים סחוטים / קפה / תה", price: "₪18–₪32" },
+          ],
+        },
+      },
+      en: {
+        name: "The Garden Restaurant", cuisine: "Mediterranean, dairy", kosher: "Kosher dairy (certified)",
+        hours: "Breakfast 07:00–11:00 | Lunch 12:00–16:00 | Dinner 18:00–23:00", location: "Level 1, overlooking the garden",
+        menu: {
+          starters: [
+            { name: "Cheese bourekas", description: "Puff pastry, feta and spinach, tomato salad", price: "₪52" },
+            { name: "Beetroot carpaccio", description: "Goat cheese, walnuts, rocket", price: "₪58" },
+            { name: "Green shakshuka", description: "Eggs, spinach, feta, country bread", price: "₪56" },
+          ],
+          salads: [
+            { name: "Greek salad", description: "Cucumber, tomato, feta, Kalamata olives, oregano", price: "₪62" },
+            { name: "Caprese salad", description: "Fresh mozzarella, tomatoes, basil, olive oil", price: "₪66" },
+          ],
+          pasta: [
+            { name: "Fettuccine Alfredo", description: "Cream, parmesan, mushrooms", price: "₪78", options: "Gluten-free pasta available (₪12)" },
+            { name: "Cheese ravioli", description: "Tomato-basil sauce", price: "₪82" },
+          ],
+          mains: [
+            { name: "Salmon fillet", description: "Oven-baked, root vegetables, lemon-butter sauce", price: "₪128" },
+            { name: "Sea bream fillet", description: "Grilled, olive oil, lemon, seasonal greens", price: "₪138" },
+            { name: "Margherita pizza", description: "Tomato sauce, mozzarella, basil", price: "₪72", options: "Toppings: mushrooms · olives · aubergine ₪10 each" },
+          ],
+          desserts: [
+            { name: "Baked cheesecake", description: "Crumb base, berry coulis", price: "₪48" },
+            { name: "Vanilla crème brûlée", price: "₪46" },
+          ],
+          drinks: [
+            { name: "White/rosé wine by the glass", price: "₪42–₪58" },
+            { name: "Fresh juices / coffee / tea", price: "₪18–₪32" },
+          ],
+        },
+      },
+    },
+    grill: {
+      he: {
+        name: "גריל הסקיי (בשרי)", cuisine: "בשרים ודגים על האש, סטייקהאוס", kosher: "כשר בשרי (בהשגחה)",
+        hours: "ערב בלבד 18:00–23:30 (המטבח נסגר 23:00)", location: "קומה 12, על הגג",
+        menu: {
+          starters: [
+            { name: "קבב טלה", description: "על פיתה דרוזית, טחינה ועמבה", price: "₪68" },
+            { name: "כבד עוף על האש", description: "בצל מקורמל ורוטב יין", price: "₪64" },
+            { name: "חומוס בשר", description: "חומוס, בשר טלה, צנוברים, פיתה חמה", price: "₪72" },
+          ],
+          salads: [
+            { name: "סלט טורקי", description: "עגבנייה, מלפפון, בצל, פטרוזיליה, סומק", price: "₪52" },
+          ],
+          mains: [
+            { name: "אנטריקוט 300 גרם", description: "מיושן, עם צ'ימיצ'ורי ותפוחי אדמה צלויים", price: "₪218", options: "מידת עשייה: נא · מדיום רייר · מדיום · עשוי היטב" },
+            { name: "פילה בקר 250 גרם", description: "הנתח הרך ביותר, רוטב פלפלת", price: "₪242" },
+            { name: "צלעות טלה", description: "על האש, עם שורשים צלויים", price: "₪196" },
+            { name: "פרגית בגריל", description: "במרינדת עשבים, עם אורז ושקדים", price: "₪124" },
+            { name: "דג לוקוס שלם", description: "על האש, לימון ושמן זית", price: "₪168" },
+          ],
+          sides: [
+            { name: "תוספות", description: "צ'יפס בטטה · אורז לבנוני · ירקות על האש · פירה", price: "₪28 כל אחת" },
+          ],
+          desserts: [
+            { name: "מלבי", description: "מי ורדים, סירופ ופיסטוק", price: "₪42" },
+            { name: "קנאפה", description: "מוגש חם", price: "₪48" },
+          ],
+          drinks: [
+            { name: "יין אדום בכוס", price: "₪48–₪72" },
+            { name: "בירה מהחבית / שתייה קלה", price: "₪28–₪38" },
+          ],
+        },
+      },
+      en: {
+        name: "The Sky Grill (meat)", cuisine: "Grilled meats & fish, steakhouse", kosher: "Kosher meat (certified)",
+        hours: "Dinner only 18:00–23:30 (kitchen closes 23:00)", location: "Level 12, rooftop",
+        menu: {
+          starters: [
+            { name: "Lamb kebab", description: "On Druze pita, tahini and amba", price: "₪68" },
+            { name: "Grilled chicken liver", description: "Caramelised onion, wine sauce", price: "₪64" },
+            { name: "Meat hummus", description: "Hummus, lamb, pine nuts, warm pita", price: "₪72" },
+          ],
+          salads: [
+            { name: "Turkish salad", description: "Tomato, cucumber, onion, parsley, sumac", price: "₪52" },
+          ],
+          mains: [
+            { name: "Entrecôte 300g", description: "Aged, with chimichurri and roast potatoes", price: "₪218", options: "Cooked: rare · medium rare · medium · well done" },
+            { name: "Beef fillet 250g", description: "The tenderest cut, peppercorn sauce", price: "₪242" },
+            { name: "Lamb chops", description: "Grilled, with roasted roots", price: "₪196" },
+            { name: "Grilled poussin", description: "Herb marinade, rice and almonds", price: "₪124" },
+            { name: "Whole grouper", description: "Grilled, lemon and olive oil", price: "₪168" },
+          ],
+          sides: [
+            { name: "Sides", description: "Sweet-potato fries · Lebanese rice · grilled vegetables · mash", price: "₪28 each" },
+          ],
+          desserts: [
+            { name: "Malabi", description: "Rose water, syrup and pistachio", price: "₪42" },
+            { name: "Knafeh", description: "Served warm", price: "₪48" },
+          ],
+          drinks: [
+            { name: "Red wine by the glass", price: "₪48–₪72" },
+            { name: "Draught beer / soft drinks", price: "₪28–₪38" },
+          ],
+        },
+      },
+    },
+  },
+
+  // ── Arrival & directions (Part 8 — pre-arrival guests) ──
+  // ⚠️ נתוני דוגמה — כל מלון מזין הוראות הגעה/חניה אמיתיות בהטמעה.
+  // מחלקת ההזמנות מוסרת את מספר הבוט לאורחים *עתידיים*. אורח כזה שואל
+  // "איך מגיעים?", "איפה מחנים?", "כמה עולה חניה?" — הבוט עונה מכאן.
+  arrival: {
+    he: {
+      by_car:        "מכביש החוף (2), יציאה למרינה, פונים לרחוב הירקון. המלון מצד ימין, כניסה ראשית עם ואלה.",
+      from_airport:  "מנתב\"ג — 20–30 דקות ברכב (25–40 בשעות עומס). מונית ₪180–₪250, או הסעה פרטית שאפשר להזמין דרכי.",
+      parking:       "חניון תת-קרקעי במלון, שירות ואלה 24/7 בכניסה. ₪65 ללילה לאורחי המלון (₪90 למבקרים).",
+      parking_note:  "עם ההגעה מוסרים את הרכב לוואלה בכניסה ומציינים בקבלה — החיוב מתווסף לחשבון החדר. שומרים את כרטיס הוואלה.",
+      ev_charging:   "6 עמדות טעינה לרכב חשמלי בחניון, ₪0.60 לקוט\"ש.",
+      public:        "תחנת אוטובוס 3 דקות מהמלון; תחנת רכבת 10 דקות במונית.",
+      check_in_time: "הכניסה לחדרים מהשעה 15:00. הגעתם מוקדם? אפשר להשאיר מזוודות בקבלה וליהנות מהמלון.",
+    },
+    en: {
+      by_car:        "From the coastal road (Route 2), exit at the marina and turn onto HaYarkon Street. The hotel is on your right, main entrance with valet.",
+      from_airport:  "From Ben Gurion Airport — 20–30 min by car (25–40 in traffic). Taxi ₪180–₪250, or a private transfer I can arrange for you.",
+      parking:       "Underground car park at the hotel, 24/7 valet service at the entrance. ₪65 per night for hotel guests (₪90 for visitors).",
+      parking_note:  "On arrival, hand your car to the valet at the entrance and mention it at reception — the charge is added to your room bill. Keep your valet ticket.",
+      ev_charging:   "6 EV charging bays in the car park, ₪0.60 per kWh.",
+      public:        "Bus stop 3 minutes from the hotel; train station 10 minutes by taxi.",
+      check_in_time: "Rooms are ready from 15:00. Arriving early? You're welcome to leave your luggage at reception and enjoy the hotel.",
+    },
+  },
+
   // ── Parking ───────────────────────────────────────────
   // ⚠️ נתוני דוגמה — להחלפה בנתוני החניון האמיתיים.
   parking: {

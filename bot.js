@@ -327,8 +327,11 @@ const FIELD_LABELS = {
     safety: "בטיחות", lifeguard: "מציל", depth: "עומק", kosher: "כשרות",
     // ── תפריט שירות החדרים (config.services.room_service.menu) ──
     menu: "התפריט", starters: "מנות פתיחה", salads: "סלטים", pasta: "פסטות",
-    mains: "מנות עיקריות", desserts: "קינוחים", drinks: "משקאות",
+    mains: "מנות עיקריות", desserts: "קינוחים", drinks: "משקאות", sides: "תוספות",
     description: "תיאור", options: "אפשרויות בחירה ותוספות",
+    // ── הוראות הגעה/חניה (config.arrival — Part 8) ──
+    by_car: "בהגעה ברכב", from_airport: "משדה התעופה", parking_note: "חניה בהגעה",
+    check_in_time: "שעת כניסה", public: "תחבורה ציבורית",
     // ── מבנה המלון (config.building) ──
     floors: "קומות", lobby: "לובי", reception: "קבלה", elevators: "מעליות",
     accessibility: "נגישות", key_areas: "מה נמצא בכל קומה",
@@ -357,8 +360,11 @@ const FIELD_LABELS = {
     safety: "Safety", lifeguard: "Lifeguard", depth: "Depth", kosher: "Kosher",
     // ── In-room dining menu (config.services.room_service.menu) ──
     menu: "The menu", starters: "Starters", salads: "Salads", pasta: "Pasta",
-    mains: "Main courses", desserts: "Desserts", drinks: "Drinks",
+    mains: "Main courses", desserts: "Desserts", drinks: "Drinks", sides: "Sides",
     description: "Description", options: "Choices & additions",
+    // ── Arrival & directions (config.arrival — Part 8) ──
+    by_car: "By car", from_airport: "From the airport", parking_note: "Parking on arrival",
+    check_in_time: "Check-in time", public: "Public transport",
     // ── Building / layout (config.building) ──
     floors: "Floors", lobby: "Lobby", reception: "Reception", elevators: "Lifts",
     accessibility: "Accessibility", key_areas: "What's on each floor",
@@ -462,6 +468,28 @@ const PLACES_TOOL = {
   },
 };
 
+// ── כלי תפריט מסעדות המלון (Part 7) ────────────────────
+const RESTAURANT_MENU_TOOL = {
+  name: "get_restaurant_menu",
+  description:
+    "Get the FULL menu of one of THIS HOTEL's own restaurants (dishes, prices, choices). " +
+    "Call this whenever a guest asks to see a restaurant's menu, what dishes/prices a hotel " +
+    "restaurant has, or what the meat/dairy restaurant serves. Pass the restaurant key or a word " +
+    "describing it (e.g. 'grill', 'meat', 'dairy', the restaurant's name) in `restaurant`. If it's " +
+    "ambiguous the tool returns the list of restaurants so you can ask which one. This is for the " +
+    "hotel's OWN restaurants — for outside places use search_nearby_places instead.",
+  input_schema: {
+    type: "object",
+    properties: {
+      restaurant: {
+        type: "string",
+        description: "Which hotel restaurant — its key (e.g. 'garden', 'grill') or a describing word ('meat', 'dairy', 'steakhouse', the name).",
+      },
+    },
+    required: ["restaurant"],
+  },
+};
+
 // מריץ את הכלי: מוציא את מיקום המלון מה-config, קורא לשכבת places/,
 // ומחזיר ל-AI מחרוזת JSON קומפקטית. לעולם לא זורק — כישלון/היעדר
 // תוצאות מוחזרים כ-status שה-AI יודע לתרגם ל"אבדוק ואחזור" + [RECEPTION].
@@ -562,6 +590,53 @@ async function runPlacesTool(input = {}, lang = "he") {
   });
 }
 
+// ════════════════════════════════════════════════════════
+//  כלי תפריט מסעדות המלון (Part 7) — נשלף לפי דרישה
+//  ----------------------------------------------------------
+//  התפריטים המלאים יושבים ב-config.restaurants ולא ב-system prompt (כדי
+//  לא לנפח כל הודעה — קריטי לסקייל). ה-AI מקבל רק *שמות + מטבח* של
+//  המסעדות ב-prompt, וקורא לכלי הזה כשאורח מבקש לראות תפריט של מסעדה.
+//  מחזיר את התפריט המקוטלג של אותה מסעדה, בשפת השיחה. לא זורק לעולם.
+// ════════════════════════════════════════════════════════
+function runRestaurantMenuTool(input = {}, lang = "he") {
+  const L    = lang === "he" ? "he" : "en";
+  const rests = hcfg().restaurants || {};
+  const keys  = Object.keys(rests);
+  if (!keys.length) {
+    return JSON.stringify({ status: "no_restaurants",
+      message: "This hotel has no in-house restaurant menus configured. Tell the guest and escalate with [RECEPTION] if needed." });
+  }
+
+  // מזהים איזו מסעדה התבקשה: לפי המפתח, או לפי שם/מטבח (בשרי/חלבי/גריל).
+  const want = String(input.restaurant || input.query || "").toLowerCase().trim();
+  const match = keys.find(k => {
+    const r = rests[k]?.[L] || rests[k]?.en || {};
+    const hay = `${k} ${r.name || ""} ${r.cuisine || ""} ${r.kosher || ""}`.toLowerCase();
+    return want && (k.toLowerCase() === want || hay.includes(want) || want.includes(k.toLowerCase()));
+  });
+
+  // בלי זיהוי ודאי — מחזירים את *רשימת* המסעדות כדי שה-AI ישאל שאלה אחת.
+  if (!match) {
+    return JSON.stringify({
+      status: "list",
+      restaurants: keys.map(k => {
+        const r = rests[k]?.[L] || rests[k]?.en || {};
+        return { key: k, name: r.name, cuisine: r.cuisine, kosher: r.kosher, hours: r.hours, location: r.location };
+      }),
+      message: "More than one restaurant, or none matched exactly. Offer these and ask which one, then call again with its key.",
+    });
+  }
+
+  const r = rests[match]?.[L] || rests[match]?.en || {};
+  return JSON.stringify({
+    status: "ok",
+    key: match,
+    name: r.name, cuisine: r.cuisine, kosher: r.kosher, hours: r.hours, location: r.location,
+    menu: r.menu || {},
+    note: "Present the full menu clearly per WhatsApp formatting rules (one dish per line: name — price, a short description if useful). Group by course. Quote prices exactly; never invent a dish or price.",
+  });
+}
+
 // ── תור שיחה אחד מול ה-AI, כולל לולאת שימוש-בכלי ──────────
 // כל עוד ה-AI מבקש לחפש מקומות (search_nearby_places) — מריצים את הכלי,
 // מחזירים לו את התוצאה וממשיכים, עד שהוא מנסח טקסט סופי לאורח. ההיסטוריה
@@ -582,7 +657,7 @@ async function runConciergeTurn(session, lang, phone) {
       max_tokens: 1000,
       system,
       messages: msgs,
-      tools: [PLACES_TOOL],
+      tools: [PLACES_TOOL, RESTAURANT_MENU_TOOL],
     });
 
     const content  = r.content || [];
@@ -597,7 +672,9 @@ async function runConciergeTurn(session, lang, phone) {
         console.log(`🗺️ [places] ${tail8} → ${JSON.stringify(tu.input || {}).slice(0, 120)}`);
         const out = tu.name === "search_nearby_places"
           ? await runPlacesTool(tu.input || {}, lang)
-          : JSON.stringify({ status: "unknown_tool" });
+          : tu.name === "get_restaurant_menu"
+            ? runRestaurantMenuTool(tu.input || {}, lang)
+            : JSON.stringify({ status: "unknown_tool" });
         results.push({ type: "tool_result", tool_use_id: tu.id, content: out });
       }
       msgs.push({ role: "user", content: results });
@@ -654,6 +731,26 @@ function buildPrompt(session, lang) {
   // מבנה המלון — ידע בסיסי שהבוט חייב להכיר (איפה הלובי, הקבלה, המעליות),
   // כדי שלא ישאל את האורח שאלות מגוחכות על מבנה המלון שהוא עצמו עובד בו.
   const building = renderFields(cfg.building?.[L] || cfg.building?.en || {}, L);
+
+  // ── מסעדות המלון (Part 7) — רק שם+מטבח ב-prompt; התפריט המלא בכלי ──
+  // רשימה קצרה בלבד: שם, מטבח, כשרות, שעות, מיקום. התפריט המלא נשלף
+  // דרך get_restaurant_menu כדי לא לנפח כל הודעה (חשוב לסקייל).
+  const rests = cfg.restaurants || {};
+  const restBrief = Object.keys(rests).map((k) => {
+    const r = rests[k]?.[L] || rests[k]?.en || {};
+    if (!r.name) return "";
+    const bits = [r.cuisine, r.kosher, r.hours, r.location].filter(Boolean).join(" · ");
+    return `▸ ${r.name}${bits ? ` — ${bits}` : ""}`;
+  }).filter(Boolean).join("\n");
+
+  // ── הוראות הגעה/חניה (Part 8) — לאורח עתידי ─────────────
+  // עקביות: מלון בלי חניה (parking.available===false) לא יציג פרטי חניה
+  // גם בבלוק ההגעה — אחרת אורח יקבל מחיר חניה למלון שאין בו חניה.
+  const arrivalSrc = { ...(cfg.arrival?.[L] || cfg.arrival?.en || {}) };
+  if (cfg.parking?.available === false) {
+    delete arrivalSrc.parking; delete arrivalSrc.parking_note; delete arrivalSrc.ev_charging;
+  }
+  const arrival = renderFields(arrivalSrc, L);
 
   // ── שורת מצב: הזמנת אוכל פתוחה ─────────────────────────
   // כלל כללי באמצע ההוראות נבלע; משפט שמתאר את המצב *ברגע זה* לא.
@@ -1054,6 +1151,21 @@ ${svcs}
 ▸ חניה
 ${park}
 
+🍽️ מסעדות המלון (יש לך את התפריט המלא דרך כלי):
+אלה המסעדות של המלון עצמו. יש לך רק שם ומטבח כאן — את *התפריט המלא* (מנות,
+מחירים, פרטים) אתה שולף דרך הכלי get_restaurant_menu. אורח שמבקש "תפריט של
+המסעדה הבשרית", "מה יש בגריל?", "תפריט חלבי" — קרא לכלי עם שם/סוג המסעדה,
+וקבל את התפריט. אל תמציא מנות או מחירים — הם באים *רק* מהכלי. אם יש כמה
+מסעדות והבקשה לא ברורה — הכלי יחזיר את הרשימה, ואתה תשאל איזו מהן.
+${restBrief || "  (לא הוגדרו מסעדות פנימיות למלון זה)"}
+
+🚗 הגעה, חניה ואורח עתידי (Part 8):
+מחלקת ההזמנות מוסרת את מספרי לאורחים *עתידיים*. אורח כזה שואל "איך מגיעים?",
+"איפה מחנים?", "כמה עולה חניה?", "יש טעינה לחשמלי?" — ענה מהמידע כאן, בחום,
+וסיים ב*"מצפים לראותך"* / איחול הגעה נעימה. אם עדיין לא עשה צ'ק אין — אל
+תתחיל צ'ק אין; רק ענה על מה ששאל והזמן אותו לפנות אלי שוב עם ההגעה.
+${arrival || "  (לא הוגדרו הוראות הגעה למלון זה)"}
+
 🗺️ הסביבה — הידע שלך על מחוץ למלון (זה מה שהופך אותך לקונסיירז'):
 יש לך *שני מקורות אמת* להמלצות, ורק שניים: (1) הרשימה האצורה למטה, ו-(2)
 הכלי search_nearby_places (Google) שמחזיר מקומות אמיתיים סביב המלון. להמלצה
@@ -1419,6 +1531,21 @@ ${svcs}
 
 ▸ Parking
 ${park}
+
+🍽️ THE HOTEL'S OWN RESTAURANTS (you have the full menu via a tool):
+These are the hotel's own restaurants. You only have the name and cuisine here — the *full menu*
+(dishes, prices, details) you fetch via the get_restaurant_menu tool. A guest asking "the meat
+restaurant's menu", "what's on the grill?", "the dairy menu" — call the tool with the restaurant
+name/type and present the menu. Never invent a dish or price — they come *only* from the tool. If
+there are several and it's unclear, the tool returns the list and you ask which one.
+${restBrief || "  (no in-house restaurants configured for this hotel)"}
+
+🚗 ARRIVAL, PARKING & FUTURE GUESTS (Part 8):
+The reservations desk gives my number to *future* guests. Such a guest asks "how do I get there?",
+"where do I park?", "how much is parking?", "is there EV charging?" — answer from the info here,
+warmly, and close with *"we look forward to welcoming you"*. If they haven't checked in yet, do
+NOT start check-in; just answer and invite them to message me again when they arrive.
+${arrival || "  (no arrival directions configured for this hotel)"}
 
 🗺️ THE AREA — your knowledge beyond the hotel (this is what makes you a concierge):
 You have *two sources of truth* for recommendations, and only two: (1) the curated list
