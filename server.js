@@ -16,6 +16,11 @@ import { verifyMetaChallenge } from "./whatsapp/index.js";
 import { pmsHealth } from "./pms/index.js";
 import { timingSafeEqual } from "node:crypto";
 import twilio from "twilio";
+import { db } from "./db.js";
+
+// בדיקת DB זולה ל-/ready — משפט מוכן מראש (לא בונים אותו בכל בקשה).
+const dbCheck = db.prepare("SELECT 1");
+let shuttingDown = false;
 
 dotenv.config();
 
@@ -60,6 +65,27 @@ function redactConfig(cfg) {
   return clone;
 }
 
+// ── מניעת עיבוד כפול של הודעה נכנסת (idempotency) — Part 16/17 ──
+// 🔴 קריטי ל-zero-downtime ולעומס: טוויליו/Meta *שולחים שוב* webhook אם לא
+//    קיבלו 200 מהר (retry). בלי הגנה, אותה הודעה תעובד פעמיים → תשובה כפולה,
+//    הזמנה כפולה, אולי חיוב כפול. כל הודעה נושאת מזהה ייחודי (MessageSid
+//    בטוויליו / id ב-Meta). מסמנים אותו כ"נראה" ומדלגים על כפילות.
+//    ⚠️ בזיכרון = תהליך בודד. לריבוי תהליכים המפתח עובר ל-Redis SET NX
+//    (ראה SCALING.md) — נקודת ההחלפה מרוכזת כאן.
+const _seenMessages = new Map(); // sid → timestamp
+const SEEN_TTL_MS = 10 * 60_000; // 10 דקות מספיקות לחלון ה-retry של טוויליו
+function alreadyProcessed(sid) {
+  if (!sid) return false;                 // בלי מזהה — לא חוסמים (עדיף לעבד)
+  const now = Date.now();
+  if (_seenMessages.has(sid)) return true;
+  _seenMessages.set(sid, now);
+  // ניקוי עצל של מזהים ישנים — מונע גדילת זיכרון על uptime ארוך.
+  if (_seenMessages.size > 5000) {
+    for (const [k, t] of _seenMessages) if (now - t > SEEN_TTL_MS) _seenMessages.delete(k);
+  }
+  return false;
+}
+
 // ── WhatsApp Webhook ──────────────────────────────────
 app.post("/webhook", async (req, res) => {
   // ── אימות חתימת Twilio (Part ב') — opt-in דרך env ──────
@@ -90,6 +116,13 @@ app.post("/webhook", async (req, res) => {
 
   // הודעה ריקה לגמרי (בלי טקסט ובלי מדיה) — מתעלמים.
   if (!from || (!body && !media)) return res.sendStatus(200);
+
+  // ── דדופ: retry של אותה הודעה לא יעובד פעמיים (Part 16/17) ──
+  // מאשרים 200 מיד גם לכפילות, כדי שטוויליו יפסיק לנסות שוב.
+  if (alreadyProcessed(req.body.MessageSid || req.body.SmsMessageSid)) {
+    console.log(`↩️ הודעה כפולה (retry) — דילוג: ${String(req.body.MessageSid || "").slice(-10)}`);
+    return res.type("text/xml").send("<Response></Response>");
+  }
   console.log(`📩 [${from.slice(-8)} → ${String(to || "").slice(-8)}] ${body || `<media:${media?.contentType || "?"}>`}`);
   // meta.to מזהה את המלון. handleIncoming עוטף הכול ב-runInTenant + נעילה
   // per-guest, כך שהודעות מקבילות של מלונות/אורחים שונים לא מתערבבות.
@@ -414,10 +447,22 @@ app.get("/api/terms-acceptance/:rid", auth, (req, res) => {
   });
 });
 
+// ── Health & readiness (Part 15/17 — zero-downtime deploys) ──
+// ה-load balancer מפנה תעבורה רק לתהליך שעונה 200 כאן. liveness = "חי";
+// readiness = "מוכן לקבל תעבורה" (DB נגיש). כך אפשר להחליף עותקים אחד-אחד
+// בלי downtime: העותק החדש מקבל תעבורה רק כשהוא באמת מוכן.
 app.get("/health", (req, res) => res.json({ status: "ok", uptime: process.uptime() }));
+app.get("/ready", (req, res) => {
+  try {
+    dbCheck.get(); // בדיקת DB זולה — אם ה-DB לא נגיש, לא מוכנים לתעבורה.
+    res.json({ status: "ready", draining: shuttingDown });
+  } catch (e) {
+    res.status(503).json({ status: "not_ready", error: e?.message });
+  }
+});
 app.use(express.static("dashboard/public"));
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`\n🏨  Hotel Concierge Bot v4 — :${PORT}`);
   console.log(`📊  Dashboard → http://localhost:${PORT}`);
   console.log(`🔄  Reset session: /reset/+972XXXXXXXXX?token=${PASS}`);
@@ -463,3 +508,30 @@ app.listen(PORT, () => {
     );
   }
 });
+
+// ── כיבוי חינני (graceful shutdown) — Part 15/17 ───────
+// 🔴 zero-downtime: ה-orchestrator שולח SIGTERM לפני שהוא מכבה עותק. אנחנו
+//    (1) מסמנים draining כדי ש-/ready יחזיר "מתרוקן" וה-LB יפסיק לשלוח
+//    תעבורה חדשה; (2) מפסיקים לקבל חיבורים חדשים; (3) נותנים לבקשות/קריאות
+//    AI שכבר רצות לסיים; (4) סוגרים את ה-DB. עותק חדש כבר מקבל את התעבורה,
+//    כך שאף אורח לא מרגיש. חלון חסד ארוך מהקריאה האיטית ביותר ל-Claude.
+let shutdownStarted = false;
+function gracefulShutdown(signal) {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  shuttingDown = true; // /ready מדווח draining → ה-LB מסיט תעבורה מהעותק הזה
+  console.log(`\n🛑 ${signal} — כיבוי חינני: מפסיקים לקבל חדשים, מסיימים מה שרץ…`);
+  const force = setTimeout(() => {
+    console.error("⏱️ חלון החסד הסתיים — יציאה כפויה.");
+    process.exit(0);
+  }, Number(process.env.SHUTDOWN_GRACE_MS) || 25_000);
+  force.unref();
+  server.close(() => {
+    try { db.close(); } catch { /* כבר סגור */ }
+    console.log("✅ כל הבקשות הסתיימו וה-DB נסגר — יציאה נקייה.");
+    clearTimeout(force);
+    process.exit(0);
+  });
+}
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT",  () => gracefulShutdown("SIGINT"));
