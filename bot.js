@@ -2209,6 +2209,9 @@ async function ensureDepositLink(phone, lang) {
           vehicle:  s.pendingVehicle   ?? null,
           requests: s.pendingRequests  ?? null,
         },
+        // תייר חוץ (Part 3) — מפעיל מע"מ 0% בחשבונית, נזכר עד הצ'ק אאוט.
+        isTourist:   s.pendingIsTourist || false,
+        nationality: s.pendingNationality || null,
       }
     );
     return paymentUrl;
@@ -2573,6 +2576,26 @@ function docTypeHe(type) {
     || type || "—";
 }
 
+// ── זיהוי תייר חוץ לפטור מע"מ (Part 3) ─────────────────
+// מלונאות לתייר חוץ = מע"מ 0% (חוק מע"מ), לעומת 18% לתושב. במלון אמיתי
+// *הקבלה* קובעת את הזכאות בצ'ק אין מהדרכון + אשרת הכניסה, וזה נזכר עד
+// הצ'ק אאוט. כאן: מחלצים אזרחות מהמסמך שכבר אומת, וקובעים "כנראה תייר"
+// כשהמסמך דרכון *לא-ישראלי*. תעודת זהות ישראלית / אזרחות ישראלית = תושב.
+//
+// ⚠️ הזכאות המשפטית הסופית דורשת גם *תשלום במט"ח* — ולכן זה מסומן לקבלה
+//    כ"לאישור", לא כוודאות. הדגל isTourist מפעיל את מסלול ה-0% בחשבונית,
+//    והקבלה מאשרת מול אמצעי התשלום (ראה VAT_TOURIST.md).
+const ISRAELI_MARKERS = /ישראל|israel|israeli|\bIL\b|\bISR\b/i;
+export function assessTourist({ fields, documentType } = {}) {
+  const nat = String(fields?.nationality || "").trim();
+  const isPassport = documentType === "passport";
+  const israeli = ISRAELI_MARKERS.test(nat);
+  // תייר: דרכון + אזרחות שאינה ישראלית (ואם אין אזרחות אך המסמך דרכון —
+  // עדיין "לבדיקה", אבל לא מפעילים 0% אוטומטית בלי סימן חיובי לחו"ל).
+  const isTourist = isPassport && !!nat && !israeli;
+  return { isTourist, nationality: nat || null, isPassport, israeli };
+}
+
 // שדות מינימליים שחולצו מהמסמך (verify-then-discard) — להצגה לצוות במקום
 // התמונה. תוויות עבריות; מציג רק את מה שבאמת חולץ.
 const ID_FIELD_LABELS_HE = {
@@ -2677,7 +2700,13 @@ async function handleIdStage(phone, media, lang) {
   }
 
   // 4. אומת (או ממתין לבדיקה אנושית) — מתקדמים לאישור התנאים.
-  patchSession(phone, { checkinStage: "waiting_terms", guestName, guestNameHe, guestNameEn, idAttempts: 0 });
+  // זיהוי תייר חוץ לפטור מע"מ (Part 3) — נזכר על הסשן ויעבור להזמנה.
+  const tourist = assessTourist({ fields: result.fields, documentType: result.documentType });
+  patchSession(phone, {
+    checkinStage: "waiting_terms", guestName, guestNameHe, guestNameEn, idAttempts: 0,
+    pendingIsTourist:   tourist.isTourist,
+    pendingNationality: tourist.nationality,
+  });
 
   const verified = result.status === "verified";
 
@@ -2700,6 +2729,10 @@ async function handleIdStage(phone, media, lang) {
         ? `📸 המסמך נשמר מוצפן (בסיס חוקי): ${result.storedPath}\n   ⚠️ אחסון דמו מקומי — בפרודקשן: אחסון מאובטח ומוצפן\n`
         : `📸 התמונה נמחקה מיד לאחר האימות (verify-then-discard) — לא נשמרה תמונה.\n`) +
       formatExtractedFields(result.fields) +
+      // תייר חוץ → סימון לקבלה לפטור מע"מ 0% (לאישור מול תשלום במט"ח).
+      (tourist.isTourist
+        ? `🌍 *תייר חוץ (${tourist.nationality}) — זכאי אפשרי למע"מ 0%.* לאשר מול אמצעי התשלום (מט"ח) בצ'ק אאוט.\n`
+        : "") +
       (verified ? `ניתן להמשיך בהקצאת חדר/כרטיס.` : `נא לאמת את זהות האורח בקבלה.`),
     priority: verified ? "normal" : "high",
   });

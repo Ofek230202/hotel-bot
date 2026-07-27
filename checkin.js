@@ -230,6 +230,9 @@ export async function startCheckin(phone, nameInput, reservationId, opts = {}) {
     eta:             details.eta       || null,  // שעת הגעה משוערת
     vehiclePlate:    details.vehicle   || null,  // מספר רכב (לחניה)
     specialRequests: details.requests  || null,  // בקשות מיוחדות
+    // ── תייר חוץ לפטור מע"מ (Part 3) — נקבע בצ'ק אין מהמסמך, נזכר עד הצ'ק אאוט ──
+    isTourist:       opts.isTourist    || false, // מפעיל מע"מ 0% בחשבונית
+    nationality:     opts.nationality  || null,  // אזרחות שחולצה מהמסמך
     feedback:        null,                        // משוב האורח (נאסף בצ'ק אאוט)
     // ── אמצעי תשלום הפיקדון (Part ד') ──────────────────
     // "card" — הרשאה/חיוב דרך ספק הסליקה (ברירת המחדל).

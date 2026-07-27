@@ -454,6 +454,42 @@ test("רגרסיה: 'אני רוצה לעשות צ'ק אאוט' → צ'ק אאו
 });
 
 // ════════════════════════════════════════════════════════
+//  פטור מע"מ לתיירים (Part 3)
+// ════════════════════════════════════════════════════════
+test("Part 3: דרכון זר → תייר → חשבונית מע\"מ 0%; ת\"ז ישראלית → 18%", async () => {
+  // תייר: דרכון + אזרחות זרה → isTourist מופעל בהזמנה → חשבונית 0%.
+  const t = freshGuest();
+  const rt = await checkin.startCheckin(t, NAME, "ABC", { stay: STAY, isTourist: true, nationality: "USA" });
+  const rtRes = checkin.reservations[rt.reservationId];
+  assert.equal(rtRes.isTourist, true);
+  await checkin.completeCheckin(rt.reservationId, "700");
+  checkin.addFolioItem(rt.reservationId, "RESTAURANT", "Dinner", 11800);
+  const invT = await checkin.issueFolioInvoice(rtRes, "en");
+  assert.equal(invT.zeroRated, true, "תייר → מע\"מ 0%");
+  assert.equal(invT.vat, 0);
+
+  // תושב: בלי דגל תייר → מע"מ 18%.
+  const r = freshGuest();
+  const rr = await checkin.startCheckin(r, NAME, "ABC", { stay: STAY });
+  const rrRes = checkin.reservations[rr.reservationId];
+  assert.equal(rrRes.isTourist, false);
+  await checkin.completeCheckin(rr.reservationId, "701");
+  checkin.addFolioItem(rr.reservationId, "RESTAURANT", "ארוחה", 11800);
+  const invR = await checkin.issueFolioInvoice(rrRes, "he");
+  assert.equal(invR.zeroRated, false, "תושב → מע\"מ 18%");
+  assert.equal(invR.vat, 1800);
+});
+
+test("Part 3: assessTourist — דרכון זר=תייר, דרכון/ת\"ז ישראלי=תושב", async () => {
+  const { assessTourist } = bot;
+  assert.equal(assessTourist({ fields: { nationality: "USA" }, documentType: "passport" }).isTourist, true);
+  assert.equal(assessTourist({ fields: { nationality: "French" }, documentType: "passport" }).isTourist, true);
+  assert.equal(assessTourist({ fields: { nationality: "Israeli" }, documentType: "passport" }).isTourist, false, "אזרח ישראלי בדרכון = תושב");
+  assert.equal(assessTourist({ fields: { nationality: "ישראל" }, documentType: "id_card" }).isTourist, false);
+  assert.equal(assessTourist({ fields: {}, documentType: "id_card" }).isTourist, false, "בלי אזרחות = לא מפעילים 0% אוטומטית");
+});
+
+// ════════════════════════════════════════════════════════
 //  אבטחה (Part ב')
 // ════════════════════════════════════════════════════════
 test("Part ב': שם אורח זדוני עובר escape בעמוד האישור (הגנת XSS)", async () => {
