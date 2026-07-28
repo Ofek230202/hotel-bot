@@ -115,9 +115,11 @@ export const SAMPLE_HOTELS = [
       hotel_type: "boutique",             // ← קוד לדלת + בלי צוות במקום
       duty_manager_number: "whatsapp:+9725559990000", // מנהל תורן מרחוק 24/7
       location: {
-        address:    "Herbert Samuel Promenade, Tel Aviv-Yafo, Israel",
-        address_he: "טיילת הרברט סמואל, תל אביב-יפו",
-        lat: 32.0723, lng: 34.7640, timezone: "Asia/Jerusalem", country: "IL", search_radius_m: 2500,
+        address:    "78 Ben Zvi Road, Tel Aviv-Yafo, Israel",
+        address_he: "דרך בן צבי 78, תל אביב-יפו",
+        // ⚠️ קואורדינטות משוערות לבן צבי 78 (דרום ת"א). כשמחברים מלון
+        //    אמיתי מזינים את המדויקות (Google Maps → קליק ימני על הסיכה).
+        lat: 32.0548, lng: 34.7745, timezone: "Asia/Jerusalem", country: "IL", search_radius_m: 2500,
       },
       // בוטיק קטן — מבנה פשוט (בלי לובי מאויש, בלי מעליות אורחים ייעודיות).
       building: {

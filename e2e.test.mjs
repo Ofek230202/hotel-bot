@@ -1757,6 +1757,26 @@ test("places: בקשת המלצה מפעילה חיפוש חי סביב מיקו
   assert.match(msgsJson, /Real Grill/, "תוצאות החיפוש לא הוחזרו ל-AI");
 });
 
+// בידוד מיקום פר-מלון: קונסיירז' של מלון ב' מחפש במיקום של מלון ב', לא של
+// ברירת המחדל. זה מה שמוודא שאורח ב-LALA (בן צבי) לא מקבל מקומות סביב קמפינסקי.
+test("places: כל מלון מחפש במיקום שלו — בידוד מולטי-טננט", async () => {
+  const { updateConfigFor } = await import("./config.js");
+  const { registerHotelNumber } = await import("./tenant.js");
+  // מלון שני עם מיקום מובחן (בן צבי, דרום ת"א) ומספר משלו.
+  updateConfigFor("lala2", { name: "LALA2", location: { lat: 32.0548, lng: 34.7745, timezone: "Asia/Jerusalem", address_he: "בן צבי" } });
+  registerHotelNumber("whatsapp:+972500002222", "lala2");
+  placesResult = { ok: true, provider: "mock", results: [] };
+  aiScript = (params, idx) => idx === 0
+    ? { stop_reason: "tool_use", content: [{ type: "tool_use", id: "x", name: "search_nearby_places", input: { query: "מסעדה", category: "restaurant" } }] }
+    : { content: [{ type: "text", text: "אשמח לבדוק ולחזור 🙏 [RECEPTION:מסעדה]" }] };
+  const p = freshGuest();
+  await bot.handleIncoming(p, "מסעדה קרובה?", null, { to: "whatsapp:+972500002222" });
+  // החיפוש חייב לצאת עם המיקום של lala2 (בן צבי), לא של קמפינסקי (הירקון).
+  assert.equal(placesCalls.length, 1, "החיפוש לא הופעל");
+  assert.equal(placesCalls[0].location.lat, 32.0548, "החיפוש לא השתמש במיקום של המלון הנכון");
+  assert.equal(placesCalls[0].location.lng, 34.7745);
+});
+
 test("places: חיפוש שנכשל (unavailable) → status עובר ל-AI, אין קריסה", async () => {
   placesResult = { ok: false, provider: "mock", reason: "unavailable", results: [] };
   aiScript = (params, idx) => {
