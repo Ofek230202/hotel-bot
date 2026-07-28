@@ -156,6 +156,24 @@ test("צ'ק אין מלון בוטיק: האורח מקבל קוד דלת, הק�
   assert.match(staff, /צ'ק אין עצמאי הושלם|אין צורך בהכנת כרטיס/, "הקבלה מקבלת רישום, לא הוראת כרטיס");
 });
 
+test("איכות פלט: מלון בלי בריכה — אישור הצ'ק אין לא מציג 'undefined'", async () => {
+  // מלון בוטיק בלי בריכה/רום-סרוויס: השורות לא אמורות להופיע (ולא כ-undefined).
+  config.updateConfig({
+    hotel_type: "boutique",
+    services: { pool: null, room_service: null },
+    wifi: { name: "Boutique_Guest", password: "x" },
+  });
+  const phone = freshGuest();
+  const { reservationId } = await checkin.startCheckin(phone, NAME, "ABC", { stay: STAY });
+  sent.length = 0;
+  await checkin.completeCheckin(reservationId, "9");
+  const guest = guestMsgs(phone);
+  assert.ok(!/undefined/.test(guest), `יש undefined באישור: ${guest}`);
+  assert.ok(!/🏊 בריכה/.test(guest), "מלון בלי בריכה לא אמור להציג שורת בריכה");
+  assert.match(guest, /Boutique_Guest/, "WiFi של המלון כן מופיע");
+  assert.match(guest, /קוד הכניסה לחדר/, "קוד דלת (בוטיק)");
+});
+
 test("קוד הדלת יציב — completeCheckin חוזר לא משנה אותו (idempotency)", async () => {
   const { res } = await completeStay("boutique");
   const first = res.doorCode;

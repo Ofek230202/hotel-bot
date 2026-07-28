@@ -126,6 +126,42 @@ export const SAMPLE_HOTELS = [
         en: { floors: "4 floors, just 12 rooms", lobby: "Self-entry with a code on the main door",
               reception: "No 24/7 staffed reception — digital check-in with a door code" },
       },
+      // 🔴 פרטים משלו לבוטיק — אחרת יורש את ברירות המחדל של קמפינסקי
+      //    (בריכה בקומה 12, "מסעדת הגן") שאינן מתאימות למלון בוטיק קטן.
+      wifi: { name: "LALA_Guest", password: "Shoreline2026" },
+      // מחליף את השירותים בסט מתאים לבוטיק. null מסיר שירות שירש מברירת
+      // המחדל של קמפינסקי (בריכה/ספא/חדר כושר/מסעדה/בר/כביסה) — בוטיק
+      // קטן על הטיילת אין לו את אלה, ואסור שהם יופיעו לאורח.
+      services: {
+        pool: null, spa: null, gym: null, restaurant: null, bar: null, laundry: null,
+        breakfast: {
+          he: { name: "ארוחת בוקר", hours: "08:00–10:30", location: "בבית הקפה שבקומת הכניסה",
+                style: "קונטיננטלית — מאפים טריים, גבינות, פירות וקפה", price: "כלולה בלינה" },
+          en: { name: "Breakfast", hours: "08:00–10:30", location: "at the café on the entrance floor",
+                style: "Continental — fresh pastries, cheeses, fruit and coffee", price: "Included in the stay" },
+        },
+        room_service: {
+          he: { name: "שירות לחדר", dial: null, hours: "אין שירות לחדר במלון — אשמח להמליץ ולהזמין משלוח מבחוץ",
+                how_to_order: "פשוט לבקש ממני ואארגן משלוח ממסעדה באזור" },
+          en: { name: "In-room dining", dial: null, hours: "No in-house room service — I'm happy to recommend and order a delivery from nearby",
+                how_to_order: "Just ask me and I'll arrange a delivery from a local restaurant" },
+        },
+      },
+      // ללא מסעדות פנימיות, ללא חניון גדול (בוטיק על הטיילת).
+      restaurants: {},
+      parking: {
+        available: false,
+        he: { note: "אין חניון במלון. חניה כחול-לבן ברחוב, וחניון ציבורי בתשלום במרחק 3 דקות הליכה." },
+        en: { note: "No hotel car park. Metered street parking, and a paid public car park a 3-minute walk away." },
+      },
+      arrival: {
+        he: { by_car: "מכביש החוף, יציאה לטיילת הרברט סמואל. אין חניון במלון — חניה ברחוב או בחניון ציבורי סמוך.",
+              from_airport: "מנתב\"ג — כ-20 דקות ברכב. מונית ₪150–₪220.",
+              check_in_time: "הכניסה מהשעה 15:00 עם קוד לדלת שיישלח אליך. הגעתם מוקדם? כתבו לי ואסדר." },
+        en: { by_car: "From the coastal road, exit to the Herbert Samuel promenade. No hotel car park — street or a nearby public car park.",
+              from_airport: "From Ben Gurion — about 20 min by car. Taxi ₪150–₪220.",
+              check_in_time: "Check-in from 15:00 with a door code sent to you. Arriving early? Message me and I'll help." },
+      },
       local_area: emptyLocalArea(),
     },
   },

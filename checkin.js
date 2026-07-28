@@ -402,6 +402,26 @@ export async function completeCheckin(reservationId, roomNumber) {
       `At check-out, any charges are deducted from it and the balance returned in cash.`
     : depositExplainer("en");
 
+  // ── בלוק שירותים — רק מה שקיים באמת (Part א'/13) ──────
+  // מלון בוטיק אולי בלי בריכה/רום-סרוויס. שורה מוצגת *רק* אם לשירות יש
+  // נתונים — אחרת "🏊 בריכה: undefined" לאורח. מסתגל לכל מלון.
+  const amenity = (icon, labelHe, labelEn, val, right) => {
+    if (!val) return "";
+    const tail = right ? ` | ${right}` : "";
+    return `${icon} ${he ? labelHe : labelEn}: ${val}${tail}\n`;
+  };
+  const wifiLine = cfg.wifi?.name ? `📶 WiFi: ${cfg.wifi.name}${cfg.wifi.password ? ` | ${cfg.wifi.password}` : ""}\n` : "";
+  const amenitiesHe =
+    wifiLine +
+    amenity("🍳", "ארוחת בוקר", "Breakfast", bf.hours, bf.location) +
+    amenity("🏊", "בריכה", "Pool", pool.hours, pool.location) +
+    amenity("🛎️", "שירות לחדר", "Room service", rs.hours, rs.dial);
+  const amenitiesEn =
+    wifiLine +
+    amenity("🍳", "ארוחת בוקר", "Breakfast", bf.hours, bf.location) +
+    amenity("🏊", "בריכה", "Pool", pool.hours, pool.location) +
+    amenity("🛎️", "שירות לחדר", "Room service", rs.hours, rs.dial);
+
   await wa(res.phone, he
     ? `✅ *צ'ק אין אושר!*\n\n` +
       `ברוכים הבאים, *${name}*! 🌟\n\n` +
@@ -410,10 +430,7 @@ export async function completeCheckin(reservationId, roomNumber) {
       (extras ? `${extras}\n` : "") +
       `${keyLineHe}\n\n` +
       `${depositBlockHe}\n\n` +
-      `📶 WiFi: ${cfg.wifi.name} | ${cfg.wifi.password}\n` +
-      `🍳 ארוחת בוקר: ${bf.hours} | ${bf.location}\n` +
-      `🏊 בריכה: ${pool.hours} | ${pool.location}\n` +
-      `🛎️ שירות לחדר: ${rs.hours} | ${rs.dial}\n\n` +
+      (amenitiesHe ? `${amenitiesHe}\n` : "") +
       `לכל בקשה — אני כאן! 😊`
     : `✅ *Check-in confirmed!*\n\n` +
       `Welcome, *${name}*! 🌟\n\n` +
@@ -422,10 +439,7 @@ export async function completeCheckin(reservationId, roomNumber) {
       (extras ? `${extras}\n` : "") +
       `${keyLineEn}\n\n` +
       `${depositBlockEn}\n\n` +
-      `📶 WiFi: ${cfg.wifi.name} | ${cfg.wifi.password}\n` +
-      `🍳 Breakfast: ${bf.hours} | ${bf.location}\n` +
-      `🏊 Pool: ${pool.hours} | ${pool.location}\n` +
-      `🛎️ Room service: ${rs.hours} | ${rs.dial}\n\n` +
+      (amenitiesEn ? `${amenitiesEn}\n` : "") +
       `I'm here for anything you need! 😊`,
     { lang }
   );
