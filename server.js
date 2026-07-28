@@ -14,6 +14,9 @@ import { listIdDocuments, retrieveIdDocument, accessLogFor, purgeExpiredIdDocume
 import { DEFAULT_HOTEL_ID } from "./tenant.js";
 import { verifyMetaChallenge } from "./whatsapp/index.js";
 import { pmsHealth } from "./pms/index.js";
+import { emailIsLive } from "./email/index.js";
+import { updateConfigFor, configFor } from "./config.js";
+import { registerHotelNumber } from "./tenant.js";
 import { timingSafeEqual } from "node:crypto";
 import twilio from "twilio";
 import { db } from "./db.js";
@@ -368,6 +371,36 @@ app.post("/api/config", auth, (req, res) => {
   }
 });
 
+// ── חיבור מלון חדש בקריאה אחת (onboarding) — מוכנות לפרודקשן ──
+// כל מה שצריך כדי לחבר מלון אמיתי: hotelId, מספר ה-WhatsApp שלו (To של
+// Twilio → hotelId), וקונפיג (שם, מחלקות, שירותים…). עושה גם registerHotelNumber
+// וגם updateConfigFor, ומחזיר בדיקת שלמות אנשי קשר. מלון חדש = קריאה אחת,
+// בלי שינוי קוד. body: { hotelId, number, fromNumber?, config }
+app.post("/api/hotels", auth, (req, res) => {
+  const { hotelId, number, fromNumber, config } = req.body || {};
+  if (!hotelId) return res.status(400).json({ ok: false, error: "hotelId required" });
+  try {
+    // 1. מיפוי המספר הנכנס למלון (אם ניתן) — כך הודעות מהמספר הזה מנותבות אליו.
+    let mapped = null;
+    if (number) mapped = registerHotelNumber(number, hotelId, fromNumber || null);
+    // 2. קונפיג המלון (שם, מחלקות, שירותים, סוג מלון, ספקים…).
+    if (config && typeof config === "object") updateConfigFor(hotelId, config);
+    // 3. בדיקת שלמות: אילו אנשי קשר של מחלקות עדיין חסרים (התראות שיֵעלמו).
+    const contacts = checkDepartmentContacts(hotelId);
+    res.json({
+      ok: true,
+      hotelId,
+      number: mapped?.number || null,
+      contactsComplete: contacts.ok,
+      missingContacts: contacts.missing,
+      config: redactConfig(configFor(hotelId)),
+    });
+  } catch (e) {
+    console.error("Hotel onboarding failed:", e?.message || e);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
 // איפוס הקונפיג לברירות המחדל שבקוד (מוחק את כל ה-overrides).
 app.post("/api/config/reset", auth, (req, res) => {
   try {
@@ -484,6 +517,12 @@ const server = app.listen(PORT, () => {
   }
   if (process.env.VALIDATE_TWILIO !== "true") {
     console.warn(`⚠️  אבטחה: אימות חתימת Twilio כבוי — בפרודקשן הגדירו VALIDATE_TWILIO=true (עם BASE_URL ציבורי) כדי לחסום webhooks מזויפים.`);
+  }
+  // מוכנות מייל: מלון אמיתי חייב מיילים אמיתיים למחלקות (חצי מהניתוב).
+  if (emailIsLive) {
+    console.log(`✅  מייל: ספק אמיתי פעיל (${process.env.EMAIL_PROVIDER || "resend"}) — התראות מחלקה יישלחו במייל.`);
+  } else {
+    console.warn(`⚠️  מייל: MOCK בלבד (לא נשלח מייל אמיתי). למלון אמיתי הגדירו EMAIL_API_KEY + EMAIL_PROVIDER + EMAIL_FROM. (וואטסאפ עדיין נשלח.)`);
   }
 
   // ── מדיניות שמירה (retention) של מסמכי זיהוי ──────────

@@ -425,6 +425,41 @@ test("Part 2: capability flags — Mock תומך בהכל, אדפטר בסיסי
 });
 
 // ════════════════════════════════════════════════════════
+//  מוכנות לפרודקשן — מייל אמיתי + onboarding
+// ════════════════════════════════════════════════════════
+test("מוכנות: HttpEmailProvider — מוגדר עם מפתח, בטוח בלי נמען/בלי מפתח", async () => {
+  const { HttpEmailProvider } = await import("./email/HttpEmailProvider.js");
+  assert.equal(new HttpEmailProvider({}).isConfigured(), false, "בלי מפתח = לא מוגדר");
+  assert.equal(new HttpEmailProvider({ apiKey: "re_x" }).isConfigured(), true);
+  // בלי מפתח — לא זורק, מחזיר success:false (לא מפיל ניתוב מחלקה).
+  const noKey = await new HttpEmailProvider({}).send({ to: "hk@hotel.com", subject: "x", body: "y" });
+  assert.equal(noKey.success, false);
+  assert.equal(noKey.status, "not_configured");
+  // בלי נמען — לא זורק.
+  const noTo = await new HttpEmailProvider({ apiKey: "re_x" }).send({ subject: "x", body: "y" });
+  assert.equal(noTo.success, false);
+  assert.equal(noTo.status, "no_recipient");
+});
+
+test("מוכנות: onboarding מלון חדש בקריאה אחת — מספר + קונפיג + בדיקת אנשי קשר", async () => {
+  const { registerHotelNumber } = await import("./tenant.js");
+  const { checkDepartmentContacts, configFor } = await import("./config.js");
+  const hid = "readytest";
+  // מדמה את מה ש-POST /api/hotels עושה: רישום מספר + קונפיג מלון.
+  const mapped = registerHotelNumber("+15550009999", hid, null);
+  assert.equal(mapped.hotelId, hid);
+  config.updateConfigFor(hid, {
+    name: "Ready Hotel", name_he: "מלון רדי",
+    reception_number: "whatsapp:+972111", reception_email: "r@ready.com",
+    housekeeping_number: "whatsapp:+972222", housekeeping_email: "h@ready.com",
+  });
+  assert.equal(configFor(hid).name, "Ready Hotel", "הקונפיג נשמר למלון החדש");
+  // בדיקת שלמות — אילו מחלקות חסרות אנשי קשר (כדי שלא ייעלמו התראות).
+  const contacts = checkDepartmentContacts(hid);
+  assert.ok(Array.isArray(contacts.missing), "מוחזרת רשימת חוסרים לבדיקה");
+});
+
+// ════════════════════════════════════════════════════════
 //  פרופיל אורח חוצה-שהיות (Part י')
 // ════════════════════════════════════════════════════════
 test("Part י': שהייה שנייה מזוהה כאורח חוזר; VIP אחרי 3 שהיות", () => {
