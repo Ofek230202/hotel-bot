@@ -102,9 +102,31 @@ console.log(`     כתובת       : ${d.address}`);
 console.log(`     כניסה לחדר  : ${d.keyDelivery === "door_code" ? "קוד לדלת" : "כרטיס בקבלה"}`);
 console.log(`     עוסק        : ${d.businessId}`);
 console.log(`     עונה מהמספר : ${d.replyFrom}`);
+if (d.demoHotel !== undefined) {
+  console.log(`     DEMO_HOTEL  : ${d.demoHotel || `${C.ye}לא מוגדר${C.r}`}`);
+}
+if (d.baseUrl !== undefined) console.log(`     BASE_URL    : ${d.baseUrl || "לא מוגדר"}`);
 
 const expect = (flags.expect || "").toLowerCase();
 let bad = false;
+
+// BASE_URL שאינו הכתובת הזו = קישורי הפיקדון והחשבונית יובילו למקום אחר.
+// זו תקלה שנראית "רק בשלב האחרון" של ההדגמה, ולכן שווה לתפוס אותה מראש.
+if (d.baseUrl !== undefined) {
+  if (!d.baseUrl) {
+    console.log(`\n${C.ye}   ⚠️ אין BASE_URL בענן — קישורי הפיקדון והחשבונית עלולים להיות שבורים.${C.r}`);
+  } else {
+    const host = (u) => { try { return new URL(u).host; } catch { return String(u); } };
+    if (host(d.baseUrl) !== host(base)) {
+      console.log(
+        `\n${C.re}   ❌ BASE_URL בענן הוא ${d.baseUrl} — ולא ${base}.${C.r}\n` +
+        `      ${C.dim}קישור הפיקדון והחשבונית שהאורח יקבל יצביע לשם, וייכשל אם זו מנהרה כבויה.${C.r}\n` +
+        `      ${C.dim}לתקן: Railway → Variables → BASE_URL = ${base}${C.r}`
+      );
+      bad = true;
+    }
+  }
+}
 
 if (expect) {
   const ok = d.hotelId === expect;

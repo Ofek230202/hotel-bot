@@ -395,6 +395,11 @@ app.get("/api/tenant/resolve", auth, (req, res) => {
     keyDelivery: model.keyDelivery,
     businessId:  cfg.business?.business_id,
     replyFrom:   fromNumberFor(hotelId),
+    // ה-BASE_URL שהשרת הזה מכיר. חשוב לבדיקה לפני הדגמה: קישורי הפיקדון
+    // והחשבונית נבנים ממנו, ולכן BASE_URL שמצביע על מנהרה כבויה (או על
+    // סביבה אחרת) שובר את שלב הפיקדון גם כשכל השאר תקין.
+    baseUrl:     process.env.BASE_URL || null,
+    demoHotel:   process.env.DEMO_HOTEL || null,
   });
 });
 
