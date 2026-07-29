@@ -5,7 +5,7 @@ import express   from "express";
 import dotenv    from "dotenv";
 import { handleIncoming, wa, notifyStaff } from "./bot.js";
 import { allSessions, sessions, staffAlerts, incidents, stats, deleteSession, clearAllSessions, sessionByRoom, peekSession } from "./state.js";
-import { fromNumberFor } from "./tenant.js";
+import { fromNumberFor, resolveHotelId, normalizeNumber } from "./tenant.js";
 import { hotelConfig, updateConfig, resetConfig, checkDepartmentContacts, checkTenantIsolation, reportTenantIsolation, clearConfigCache, printRoutingTable, routingTable, DEPARTMENTS } from "./config.js";
 import { reservations, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES, autoChargeOnNoShow, findNoShowReservations } from "./checkin.js";
 import checkinRouter from "./checkin-routes.js";
@@ -15,7 +15,7 @@ import { DEFAULT_HOTEL_ID } from "./tenant.js";
 import { verifyMetaChallenge } from "./whatsapp/index.js";
 import { pmsHealth } from "./pms/index.js";
 import { emailIsLive } from "./email/index.js";
-import { updateConfigFor, configFor } from "./config.js";
+import { updateConfigFor, configFor, hotelModel } from "./config.js";
 import { registerHotelNumber, reloadHotelNumbers } from "./tenant.js";
 import { timingSafeEqual } from "node:crypto";
 import twilio from "twilio";
@@ -369,6 +369,32 @@ app.post("/api/config", auth, (req, res) => {
     console.error("Config update failed:", e?.message || e);
     res.status(400).json({ ok: false, error: e.message });
   }
+});
+
+// ── מי עונה למספר הזה? (קריאה בלבד) ────────────────────
+// בדיקה של שנייה לפני הדגמה: מחזירה למי *השרת הרץ* מנתב את המספר
+// **מהזיכרון שלו** — לא מה שכתוב ב-DB. זו ההבחנה שחשובה: אחרי החלפת
+// מלון, ה-DB מתעדכן מיד אך התהליך הרץ מחזיק cache. הנקודה הזו מוכיחה
+// שהריענון באמת נקלט, בלי לשלוח שום הודעה לאורח.
+// שימוש: GET /api/tenant/resolve?to=whatsapp:+1415...&token=...
+app.get("/api/tenant/resolve", auth, (req, res) => {
+  const to = req.query.to || process.env.TWILIO_WHATSAPP_NUMBER || "";
+  const hotelId = resolveHotelId(to);
+  const cfg = configFor(hotelId);
+  const model = hotelModel(hotelId);
+  res.json({
+    ok: true,
+    asked: to,
+    normalized: normalizeNumber(to),
+    hotelId,
+    hotelName:   cfg.name_he || cfg.name,
+    hotelNameEn: cfg.name,
+    address:     cfg.location?.address_he,
+    coords:      { lat: cfg.location?.lat, lng: cfg.location?.lng },
+    keyDelivery: model.keyDelivery,
+    businessId:  cfg.business?.business_id,
+    replyFrom:   fromNumberFor(hotelId),
+  });
 });
 
 // ── ריענון מיפוי המלונות והקונפיג בלי restart ──────────

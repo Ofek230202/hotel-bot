@@ -12,7 +12,8 @@
     "preflight": "node --experimental-test-module-mocks preflight.mjs 20",
     "demo:lala": "node demo-switch.mjs lala",
     "demo:kempinski": "node demo-switch.mjs kempinski",
-    "demo:status": "node demo-switch.mjs status"
+    "demo:status": "node demo-switch.mjs status",
+    "demo:verify": "node --experimental-test-module-mocks verify-number.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",
