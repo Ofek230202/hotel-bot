@@ -582,20 +582,60 @@ const server = app.listen(PORT, () => {
   purgeExpiredIdDocuments().catch(() => {});
   setInterval(() => purgeExpiredIdDocuments().catch(() => {}), 6 * 3600_000).unref();
 
+  // ── מי עונה לכל מספר — הדבר הראשון שרוצים לראות בעלייה ──
+  // 🔴 קודם הודפסה כאן טבלת הניתוב של *מלון ברירת המחדל* בלבד. כשהמספר
+  //    היחיד מופנה למלון אחר (הדגמת LALA), הלוג הכריז בגדול "מלון kempinski"
+  //    בזמן שהבוט עונה בפועל כ-LALA — בדיוק ההפך ממה שהלוג אמור לעשות רגע
+  //    לפני הדגמה. לכן מדפיסים תחילה את המיפוי בפועל, ואז את טבלת הניתוב
+  //    של כל מלון שיש לו מספר — כלומר של המלונות שבאמת מקבלים הודעות.
+  let mappedHotels = [];
+  try {
+    const rows = db.prepare(`SELECT number, hotel_id FROM hotel_numbers ORDER BY number`).all();
+    if (rows.length) {
+      console.log(`\n📞 מספרים פעילים — מי עונה למי:`);
+      for (const r of rows) {
+        const cfg = configFor(r.hotel_id);
+        const model = hotelModel(r.hotel_id);
+        console.log(
+          `   ${r.number}  →  ${cfg.name_he || cfg.name} (${r.hotel_id})` +
+          `  ·  ${model.isBoutique ? "בוטיק" : "מלון מלא"}` +
+          `  ·  ${model.keyDelivery === "door_code" ? "קוד לדלת" : "כרטיס בקבלה"}`
+        );
+      }
+      mappedHotels = [...new Set(rows.map(r => r.hotel_id))];
+    } else {
+      console.warn(
+        `\n⚠️  אין מיפוי מספרים ב-hotel_numbers — כל הודעה תנותב למלון ברירת המחדל ("${DEFAULT_HOTEL_ID}").`
+      );
+    }
+  } catch (e) {
+    console.warn("⚠️ קריאת מיפוי המספרים נכשלה:", e?.message || e);
+  }
+
   // מחלקה בלי מספר/מייל = בקשות אורחים שנעלמות בשקט. מדווחים בעלייה.
   // טבלת הניתוב המלאה — כדי שלפני הדגמה רואים בעין אחת לאן כל בקשה הולכת,
   // ובאיזה ערוץ. מודפסת תמיד, גם (ובמיוחד) כשחסר איש קשר.
-  printRoutingTable();
-
-  const contacts = checkDepartmentContacts();
-  if (contacts.ok) {
-    console.log(`✅  אנשי קשר של כל ${DEPARTMENTS.length} המחלקות מוגדרים (וואטסאפ + מייל)`);
+  if (mappedHotels.length) {
+    for (const hid of mappedHotels) printRoutingTable(hid);
   } else {
-    console.error(
-      `\n🚨 חסרים אנשי קשר של מחלקות במלון "${contacts.hotelId}":\n` +
-      contacts.missing.map(k => `   • ${k}`).join("\n") +
-      `\n   בקשה שתנותב למחלקה כזו לא תגיע לאיש. יש להשלים ב-config.js.\n`
-    );
+    printRoutingTable();
+  }
+
+  // בודקים את המלונות ש*באמת* מקבלים הודעות (לפי המיפוי), ולא רק את
+  // ברירת המחדל — אחרת "כל אנשי הקשר מוגדרים" מתייחס למלון שאף אחד לא
+  // כותב אליו, בזמן שלמלון הפעיל חסר איש קשר.
+  for (const hid of (mappedHotels.length ? mappedHotels : [DEFAULT_HOTEL_ID])) {
+    const contacts = checkDepartmentContacts(hid);
+    const label = configFor(hid).name_he || hid;
+    if (contacts.ok) {
+      console.log(`✅  ${label}: אנשי קשר של כל ${DEPARTMENTS.length} המחלקות מוגדרים (וואטסאפ + מייל)`);
+    } else {
+      console.error(
+        `\n🚨 חסרים אנשי קשר של מחלקות במלון "${contacts.hotelId}":\n` +
+        contacts.missing.map(k => `   • ${k}`).join("\n") +
+        `\n   בקשה שתנותב למחלקה כזו לא תגיע לאיש. יש להשלים בקונפיג של המלון.\n`
+      );
+    }
   }
 
   // ── בידוד בין מלונות — כל מלון רשום, לא רק ברירת המחדל ──
