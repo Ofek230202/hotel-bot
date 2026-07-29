@@ -1171,6 +1171,17 @@ export function configOverrides() {
   return structuredClone(overrides);
 }
 
+// ── ריענון קונפיג מה-DB בתהליך שכבר רץ ──────────────────
+// הקונפיג נשמר ב-cache בזיכרון התהליך. כשתהליך *אחר* משנה את ה-DB
+// (למשל כלי החלפת המלון להדגמה), השרת הרץ עדיין מחזיק את הישן. זו
+// נקודת הריענון: מנקה את ה-cache וטוען מחדש את מלון ברירת המחדל.
+export function clearConfigCache(hotelId = null) {
+  if (hotelId) { configCache.delete(hotelId); return; }
+  configCache.clear();
+  overrides   = loadOverrides();
+  hotelConfig = deepMerge(structuredClone(DEFAULTS), overrides);
+}
+
 // ════════════════════════════════════════════════════════
 //  מחלקות ואנשי קשר — **נקודת ההפרדה בין מלונות**
 //  ----------------------------------------------------------

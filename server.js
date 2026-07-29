@@ -6,7 +6,7 @@ import dotenv    from "dotenv";
 import { handleIncoming, wa, notifyStaff } from "./bot.js";
 import { allSessions, sessions, staffAlerts, incidents, stats, deleteSession, clearAllSessions, sessionByRoom, peekSession } from "./state.js";
 import { fromNumberFor } from "./tenant.js";
-import { hotelConfig, updateConfig, resetConfig, checkDepartmentContacts, checkTenantIsolation, reportTenantIsolation, printRoutingTable, routingTable, DEPARTMENTS } from "./config.js";
+import { hotelConfig, updateConfig, resetConfig, checkDepartmentContacts, checkTenantIsolation, reportTenantIsolation, clearConfigCache, printRoutingTable, routingTable, DEPARTMENTS } from "./config.js";
 import { reservations, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES, autoChargeOnNoShow, findNoShowReservations } from "./checkin.js";
 import checkinRouter from "./checkin-routes.js";
 import { smokePlaces } from "./places/index.js";
@@ -16,7 +16,7 @@ import { verifyMetaChallenge } from "./whatsapp/index.js";
 import { pmsHealth } from "./pms/index.js";
 import { emailIsLive } from "./email/index.js";
 import { updateConfigFor, configFor } from "./config.js";
-import { registerHotelNumber } from "./tenant.js";
+import { registerHotelNumber, reloadHotelNumbers } from "./tenant.js";
 import { timingSafeEqual } from "node:crypto";
 import twilio from "twilio";
 import { db } from "./db.js";
@@ -368,6 +368,24 @@ app.post("/api/config", auth, (req, res) => {
   } catch (e) {
     console.error("Config update failed:", e?.message || e);
     res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+// ── ריענון מיפוי המלונות והקונפיג בלי restart ──────────
+// כלי החלפת המלון להדגמה (demo-switch.mjs) רץ בתהליך *נפרד* ומשנה את
+// ה-DB. השרת הרץ מחזיק את המיפוי ואת הקונפיג ב-cache בזיכרון, ולכן לא
+// היה רואה את השינוי עד restart — מלכודת קלאסית של "החלפתי ולא קרה כלום".
+// הקריאה הזו מרעננת את שניהם מיידית.
+app.post("/api/tenant/reload", auth, (req, res) => {
+  try {
+    const map = reloadHotelNumbers();
+    clearConfigCache();
+    const rows = [...map.entries()].map(([number, v]) => ({ number, hotelId: v.hotelId, fromNumber: v.fromNumber }));
+    console.log(`🔄 מיפוי המלונות רוענן: ${rows.map(r => `${r.number}→${r.hotelId}`).join(", ") || "(ריק)"}`);
+    res.json({ ok: true, numbers: rows });
+  } catch (e) {
+    console.error("Tenant reload failed:", e?.message || e);
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
