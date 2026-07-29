@@ -7,13 +7,14 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --experimental-test-module-mocks --test e2e.test.mjs places.test.mjs safety.test.mjs scale.test.mjs idsecurity.test.mjs hoteltype.test.mjs tenant-isolation.test.mjs demo-switch.test.mjs",
+    "test": "node --experimental-test-module-mocks --test e2e.test.mjs places.test.mjs safety.test.mjs scale.test.mjs idsecurity.test.mjs hoteltype.test.mjs tenant-isolation.test.mjs demo-switch.test.mjs demo-bootstrap.test.mjs",
     "demo": "node --experimental-test-module-mocks simulate-demo.mjs",
     "preflight": "node --experimental-test-module-mocks preflight.mjs 20",
     "demo:lala": "node demo-switch.mjs lala",
     "demo:kempinski": "node demo-switch.mjs kempinski",
     "demo:status": "node demo-switch.mjs status",
-    "demo:verify": "node --experimental-test-module-mocks verify-number.mjs"
+    "demo:verify": "node --experimental-test-module-mocks verify-number.mjs",
+    "cloud:check": "node cloud-check.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",

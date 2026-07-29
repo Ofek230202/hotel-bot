@@ -17,6 +17,7 @@ import { pmsHealth } from "./pms/index.js";
 import { emailIsLive } from "./email/index.js";
 import { updateConfigFor, configFor, hotelModel } from "./config.js";
 import { registerHotelNumber, reloadHotelNumbers } from "./tenant.js";
+import { bootstrapDemoHotel } from "./demo-bootstrap.js";
 import { timingSafeEqual } from "node:crypto";
 import twilio from "twilio";
 import { db } from "./db.js";
@@ -545,6 +546,13 @@ app.get("/ready", (req, res) => {
   }
 });
 app.use(express.static("dashboard/public"));
+
+// ── מלון ההדגמה מ-DEMO_HOTEL (קריטי לפריסה בענן) ────────
+// חייב לרוץ **לפני** ה-listen: כך המיפוי קיים עוד לפני שההודעה הראשונה
+// מגיעה, וגם הלוג שמודפס בעלייה משקף את המצב הנכון.
+// בענן זו הדרך היחידה שמחזיקה — מערכת הקבצים שם בת-חלוף, ולכן ההגדרה
+// נגזרת ממשתנה סביבה ולא מבסיס הנתונים. ראה demo-bootstrap.js.
+await bootstrapDemoHotel().catch(e => console.error("⚠️ bootstrapDemoHotel נכשל:", e?.message || e));
 
 const server = app.listen(PORT, () => {
   console.log(`\n🏨  Hotel Concierge Bot v4 — :${PORT}`);

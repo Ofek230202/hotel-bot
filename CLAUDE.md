@@ -163,7 +163,7 @@ Node/Express app, **מולטי-טננט**. שני מלונות מוגדרים ו
   saved on the reservation, escalated to management (low ratings → high priority). Still lacks:
   formal invoice/receipt PDF, minibar check, luggage storage, late-checkout offer.
 - No logging/monitoring, no rate-limiting, no Twilio request validation (security).
-- ~~No tests~~ **PARTIAL** — `e2e` + `places` + `safety` + `scale` + `idsecurity` + `hoteltype` + `tenant-isolation` + `demo-switch` (**316 tests**, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
+- ~~No tests~~ **PARTIAL** — `e2e` + `places` + `safety` + `scale` + `idsecurity` + `hoteltype` + `tenant-isolation` + `demo-switch` + `demo-bootstrap` (**323 tests**, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
   תגים, זהות, **מדיניות סוגי מסמכים, תאריכי שהייה, אישור תנאים, עקביות שפה מקצה לקצה**
   (כולל רינדור עמוד האישור), **המידע המובנה שמגיע ל-AI (system prompt), ומיזוג/שמירת הקונפיג**
   (כולל ריסטארט אמיתי בתהליך נפרד), **וזרימת הצ'ק אאוט המלאה** (הצגת חשבון → אישור → שלושת
@@ -321,7 +321,7 @@ Priority order (to be decided together):
       **stay-date parsing (every HE/EN phrasing + the ambiguous cases) + date confirmation +
       truncated-tag leak + deposit wording** / **check-out state machine (bill preview →
       confirm → all three deposit outcomes + cancel + HE/EN consistency)**
-      (316 tests, `npm test`). Still missing: deeper coverage of the isolated payment provider layer
+      (323 tests, `npm test`). Still missing: deeper coverage of the isolated payment provider layer
       itself.
 
 ### שפה — עקביות מקצה לקצה (ממומש)
@@ -370,7 +370,7 @@ Priority order (to be decided together):
 
 | פקודה | מה היא עושה |
 |---|---|
-| `npm test` | **316 בדיקות** — `e2e` · `places` · `safety` · `scale` · `idsecurity` · `hoteltype` · `tenant-isolation` · `demo-switch` |
+| `npm test` | **323 בדיקות** — `e2e` · `places` · `safety` · `scale` · `idsecurity` · `hoteltype` · `tenant-isolation` · `demo-switch` · `demo-bootstrap` |
 | `npm run preflight` | בדיקת ענק לפני הדגמה (§9.5) — 78 בדיקות עם Claude ו-Google אמיתיים |
 | `npm run demo` | סימולציית שני המלונות מקצה לקצה |
 | `npm run demo:lala` / `demo:kempinski` | **מפנה את מספר ה-Twilio למלון** (§9.4) |
@@ -562,7 +562,7 @@ Priority order (to be decided together):
 
 ## 8. ארכיטקטורת עומס, מולטי-טננט מלא ואבטחת מסמכי זיהוי (23.07.2026)
 
-סבב "לבנות נכון ל-100 מלונות × 1000 אורחים". **כל 316 הבדיקות עוברות.**
+סבב "לבנות נכון ל-100 מלונות × 1000 אורחים". **כל 323 הבדיקות עוברות.**
 מסמכי עומק: **`SCALING.md`** (יכולת נוכחית, מה נדרש לסקייל, עלויות) ו-**`SECURITY.md`**
 (מסמכי זיהוי — GDPR + דין ישראלי).
 
@@ -700,6 +700,30 @@ npm run demo:status      # מי פעיל עכשיו
 מכוסה ב-`demo-switch.test.mjs` (6 בדיקות): מעבר לשני הכיוונים דרך נתיב ה-webhook
 האמיתי, אפס פרטים של המלון הקודם, איפוס סשן, מיפוי יחיד, וחשבונית שנושאת את
 העוסק של המלון הפעיל.
+
+#### ⚠️ פריסה בענן (Railway) — `demo-switch` **אינו** משנה את הענן
+זו התקלה השקטה הכי מסוכנת בכל הסבב הזה. `demo-switch.mjs` כותב לבסיס הנתונים
+של **המחשב שמריץ אותו**. שרת בענן הוא מכונה אחרת עם DB אחר, ולכן:
+
+- בענן אין שורה ב-`hotel_numbers` → `resolveHotelId` נופל ל-`DEFAULT_HOTEL_ID`
+  (`kempinski`), **וגם** אין שורת קונפיג ל-LALA — כך שאפילו מיפוי ידני לא היה
+  מספיק, כי `configFor("lala")` היה מחזיר את `DEFAULTS` (התוכן של קמפינסקי).
+- ועוד: על Railway מערכת הקבצים **בת-חלוף** (אין volume כברירת מחדל), ולכן כל
+  הזרקה דרך ה-API נמחקת ב-redeploy הבא.
+
+**הפתרון: `demo-bootstrap.js` + משתנה סביבה `DEMO_HOTEL`.** בכל עליית שרת, אם
+`DEMO_HOTEL` מוגדר, נכתב הקונפיג המלא של אותו מלון (מ-`sample-hotels.mjs`)
+ומספר `TWILIO_WHATSAPP_NUMBER` ממופה אליו — ורק אליו. אידמפוטנטי, ולכן שורד
+כל redeploy. החלפת מלון בענן = שינוי משתנה סביבה אחד + redeploy.
+
+⚠️ רץ **רק** כש-`DEMO_HOTEL` מוגדר במפורש, כדי שפריסה אמיתית (מלון לקוח
+שהוגדר דרך `POST /api/hotels`) לא תידרס בכל restart.
+
+**`cloud-check.mjs`** (`npm run cloud:check -- <url> --expect=lala`) שואל את
+**הענן** מרחוק למי הוא מנתב את המספר, ומזהה במפורש 401 (טוקן שונה) ו-404
+(הענן מריץ קוד ישן). אומת חי בשני הכיוונים על DB ריק לגמרי — בלי `DEMO_HOTEL`
+העלייה מסתיימת ב-`kempinski`, ועם `DEMO_HOTEL=lala` ב-`lala`.
+מכוסה ב-`demo-bootstrap.test.mjs` (7 בדיקות).
 
 **אימות מול המספר האמיתי** (`npm run demo:verify [lala|kempinski]`) —
 `verify-number.mjs` רץ מול **hotel.db האמיתי** ומול `TWILIO_WHATSAPP_NUMBER`
