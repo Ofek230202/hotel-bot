@@ -333,6 +333,33 @@ test("חשבונית: תייר חוץ → 0% מע\"מ (מלונאות לתייר
   assert.equal(inv.net, 11800, "אין הפרדת מע\"מ בזירו-רייטד");
 });
 
+// ניסוח הסיכום שהאורח מקבל בוואטסאפ. בחשבונית באפס מע"מ אין מה להפריד:
+// "סכום לפני מע"מ" היה מכפיל את אותו מספר, ו"סה"כ *כולל מע"מ*" הוא ניסוח
+// מטעה על מסמך שלא נגבה בו מע"מ כלל. עמוד ה-HTML כבר נהג נכון — כאן
+// מיישרים אליו גם את הסיכום בצ'אט.
+test("חשבונית: ניסוח הסיכום לתייר (0%) לא מדבר על 'כולל מע\"מ'", async () => {
+  const { res } = await stayWithCharge(11800, { tourist: true, lang: "en" });
+  const inv = await checkin.issueFolioInvoice(res, "en");
+  const en  = checkin.formatInvoiceSummary(inv, "en");
+  assert.ok(!/incl\. VAT/i.test(en), `"incl. VAT" על חשבונית 0%:\n${en}`);
+  assert.ok(!/Amount before VAT/i.test(en), `שורת נטו מיותרת על חשבונית 0%:\n${en}`);
+  assert.match(en, /VAT: 0%/, "כן נאמר במפורש שהמע\"מ 0%");
+  assert.match(en, /\*Total: ₪118\.00\*/, "סיכום פשוט וברור");
+
+  const he = checkin.formatInvoiceSummary({ ...inv, type: "חשבונית מס-קבלה" }, "he");
+  assert.ok(!/כולל מע"מ/.test(he), `"כולל מע\"מ" על חשבונית 0%:\n${he}`);
+  assert.match(he, /סה"כ לתשלום/);
+});
+
+test("חשבונית: ניסוח הסיכום לתושב כן מפרט מע\"מ 18%", async () => {
+  const { res } = await stayWithCharge(11800);
+  const inv = await checkin.issueFolioInvoice(res, "he");
+  const he  = checkin.formatInvoiceSummary(inv, "he");
+  assert.match(he, /סכום לפני מע"מ: ₪100\.00/);
+  assert.match(he, /מזה מע"מ 18%: ₪18\.00/);
+  assert.match(he, /סה"כ כולל מע"מ: ₪118\.00/);
+});
+
 test("חשבונית: מספרים סידוריים רצים ועולים ב-1", async () => {
   const a = (await checkin.issueFolioInvoice((await stayWithCharge(5000)).res, "he")).number;
   const b = (await checkin.issueFolioInvoice((await stayWithCharge(5000)).res, "he")).number;

@@ -653,6 +653,17 @@ export function formatInvoiceSummary(inv, lang = "he") {
     : (he ? `מזה מע"מ ${vatPct}%: ${money(inv.vat)}` : `incl. VAT ${vatPct}%: ${money(inv.vat)}`);
   const itemLines = inv.lines.map(l => `• ${l.description} — ${money(l.amountInclVat)}`).join("\n");
 
+  // בחשבונית באפס מע"מ (תייר חוץ) אין מה "להפריד": הנטו *הוא* הסכום.
+  // שורת "סכום לפני מע"מ" רק מכפילה את אותו מספר, ו"סה"כ כולל מע"מ" הוא
+  // ניסוח מטעה כשלא נגבה מע"מ כלל. לכן במסלול הזה: שורת נטו יורדת,
+  // והסיכום נאמר פשוט — "סה"כ לתשלום".
+  const netLine = inv.zeroRated
+    ? ""
+    : (he ? `סכום לפני מע"מ: ${money(inv.net)}` : `Amount before VAT: ${money(inv.net)}`);
+  const totalLine = inv.zeroRated
+    ? (he ? `*סה"כ לתשלום: ${money(inv.totalInclVat)}*` : `*Total: ${money(inv.totalInclVat)}*`)
+    : (he ? `*סה"כ כולל מע"מ: ${money(inv.totalInclVat)}*` : `*Total incl. VAT: ${money(inv.totalInclVat)}*`);
+
   return [
     he ? `🧾 *${inv.type}* — מס' ${inv.number}` : `🧾 *${inv.type}* — No. ${inv.number}`,
     inv.seller.businessId
@@ -661,9 +672,9 @@ export function formatInvoiceSummary(inv, lang = "he") {
     RULE,
     itemLines,
     RULE,
-    he ? `סכום לפני מע"מ: ${money(inv.net)}` : `Amount before VAT: ${money(inv.net)}`,
+    netLine,
     vatLine,
-    he ? `*סה"כ כולל מע"מ: ${money(inv.totalInclVat)}*` : `*Total incl. VAT: ${money(inv.totalInclVat)}*`,
+    totalLine,
     inv.url ? (he ? `📄 החשבונית המלאה: ${inv.url}` : `📄 Full invoice: ${inv.url}`) : "",
   ].filter(Boolean).join("\n");
 }
