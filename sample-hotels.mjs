@@ -114,6 +114,50 @@ export const SAMPLE_HOTELS = [
       tagline: "A boutique hideaway on the Tel Aviv shoreline",
       hotel_type: "boutique",             // ← קוד לדלת + בלי צוות במקום
       duty_manager_number: "whatsapp:+9725559990000", // מנהל תורן מרחוק 24/7
+
+      // 🔴 אנשי הקשר של המחלקות — *חובה* פר-מלון.
+      //    בלי הסעיף הזה LALA יורשת את המספרים והמיילים של קמפינסקי
+      //    מ-DEFAULTS, ואז בקשת מגבות של אורח ב-LALA מגיעה למשק הבית של
+      //    קמפינסקי. זו בדיוק דליפת המלונות שאסור שתקרה — ולכן כל מלון
+      //    חדש חייב להגדיר את שש המחלקות (ראה checkDepartmentContacts).
+      //    בבוטיק קטן כמה "מחלקות" הן אותו אדם — וזה בסדר: מה שחשוב הוא
+      //    שהיעד יהיה *של המלון הזה*.
+      housekeeping_number: "whatsapp:+9725551110001",
+      reception_number:    "whatsapp:+9725551110002",
+      maintenance_number:  "whatsapp:+9725551110003",
+      concierge_number:    "whatsapp:+9725551110004",
+      security_number:     "whatsapp:+9725559990000", // = המנהל התורן מרחוק
+      room_service_number: "whatsapp:+9725551110004", // אין מטבח — לקונסיירז'
+      housekeeping_email:  "housekeeping@lala-demo.co.il",
+      reception_email:     "reception@lala-demo.co.il",
+      maintenance_email:   "maintenance@lala-demo.co.il",
+      concierge_email:     "concierge@lala-demo.co.il",
+      security_email:      "manager@lala-demo.co.il",
+      room_service_email:  "concierge@lala-demo.co.il",
+
+      // 🔴 פרטי העוסק לחשבונית המס — *חובה* פר-מלון.
+      //    בלי זה החשבונית של אורח LALA נושאת את שם העוסק, מספר הח.פ.
+      //    והכתובת של קמפינסקי. זו לא "אי-דיוק בתצוגה" אלא מסמך מס שגוי.
+      business: {
+        legal_name:    "לאלה בוטיק בע\"מ",
+        legal_name_en: "LALA Boutique Ltd.",
+        business_id:   "515111222",
+        business_type: "עוסק מורשה",
+        address:       "דרך בן צבי 78, תל אביב-יפו",
+        address_en:    "78 Ben Zvi Road, Tel Aviv-Yafo, Israel",
+        phone:         "+972-3-111-2222",
+        email:         "billing@lala-demo.co.il",
+      },
+
+      // 🔴 מרחב מוגן — ברירת המחדל מדברת על מקלט בחניון קומה ‎-1 ועל
+      //    ממ"ק בכל קומת אירוח. ל-LALA אין חניון ויש 4 קומות בלבד;
+      //    הנחיה שגויה באזעקה היא סיכון חיים, לא אי-דיוק.
+      safety: {
+        he: { shelter_location: "הממ\"ד בקומת הכניסה, מאחורי דלפק הקפה (מסומן בשילוט)",
+              shelter_time:     "כ-90 שניות" },
+        en: { shelter_location: "the reinforced room (Mamad) on the entrance floor, behind the coffee counter (signposted)",
+              shelter_time:     "about 90 seconds" },
+      },
       location: {
         address:    "78 Ben Zvi Road, Tel Aviv-Yafo, Israel",
         address_he: "דרך בן צבי 78, תל אביב-יפו",
@@ -122,12 +166,43 @@ export const SAMPLE_HOTELS = [
         lat: 32.0548, lng: 34.7745, timezone: "Asia/Jerusalem", country: "IL", search_radius_m: 2500,
       },
       // בוטיק קטן — מבנה פשוט (בלי לובי מאויש, בלי מעליות אורחים ייעודיות).
+      // ⚠️ חובה למלא כאן את *כל* השדות שקיימים ב-DEFAULTS. מיזוג עמוק שומר
+      //    כל שדה שלא נדרס: בגרסה קודמת LALA ירשה את key_areas של קמפינסקי
+      //    ("בריכה וסקיי בר בגג קומה 12 · ספא קומה 3") — במלון בן 4 קומות
+      //    בלי בריכה. ה-AI מקבל את זה כעובדה ומוסר אותה לאורח בביטחון.
       building: {
         he: { floors: "4 קומות, 12 חדרים בלבד", lobby: "כניסה עצמאית עם קוד לדלת הראשית",
-              reception: "אין קבלה מאוישת 24/7 — צ'ק אין דיגיטלי וקוד לדלת" },
+              reception: "אין קבלה מאוישת 24/7 — צ'ק אין דיגיטלי וקוד לדלת",
+              elevators: "מעלית אחת קטנה בכניסה, משרתת את כל 4 הקומות",
+              accessibility: "הכניסה בגישה נטולת מדרגות; חדר אחד נגיש בקומת הכניסה",
+              key_areas: "בית קפה וארוחת בוקר בקומת הכניסה · גג עם מרפסת ישיבה" },
         en: { floors: "4 floors, just 12 rooms", lobby: "Self-entry with a code on the main door",
-              reception: "No 24/7 staffed reception — digital check-in with a door code" },
+              reception: "No 24/7 staffed reception — digital check-in with a door code",
+              elevators: "One small lift at the entrance, serving all 4 floors",
+              accessibility: "Step-free entrance; one accessible room on the entrance floor",
+              key_areas: "Café & breakfast on the entrance floor · roof terrace seating" },
       },
+
+      // 🔴 מסעדות פנימיות — null מנקה. `{}` *אינו* מנקה: מיזוג עמוק של
+      //    אובייקט ריק משאיר את מסעדות ברירת המחדל, ואז הקונסיירז' של
+      //    LALA היה מפנה אורחים ל"מסעדת הגן, קומה 1" של קמפינסקי.
+      restaurants: null,
+
+      // 🔴 שאלות נפוצות — מערך נדרס במלואו. בלי זה LALA יורשת את ה-FAQ של
+      //    קמפינסקי (מרכז עסקים 24/7, ואלט, אחסון מזוודות בקבלה) — שירותים
+      //    שאין לה, ושהבוט היה מוסר עליהם תשובה מלאה ובטוחה.
+      faq: [
+        { he: { q: "מה שעות הכניסה והעזיבה?", a: "הכניסה מהשעה 15:00 עם קוד לדלת שנשלח אליכם, והעזיבה עד 12:00. אפשר לבקש ממני גמישות ואבדוק." },
+          en: { q: "Check-in / check-out times?", a: "Check-in from 15:00 with a door code sent to you, check-out by 12:00. Ask me and I'll try to arrange flexibility." } },
+        { he: { q: "איך נכנסים בלי קבלה?", a: "הצ'ק אין הוא דיגיטלי, כאן בוואטסאפ. בסיומו נשלח אליכם קוד לדלת הראשית ולחדר — אין צורך באיסוף מפתח." },
+          en: { q: "How do I get in with no reception?", a: "Check-in is digital, right here on WhatsApp. When it's done you'll get a code for the main door and your room — no key to collect." } },
+        { he: { q: "יש חניה?", a: "אין חניון במלון. יש חניה כחול-לבן ברחוב, וחניון ציבורי בתשלום במרחק 3 דקות הליכה." },
+          en: { q: "Is there parking?", a: "No hotel car park. There's metered street parking, and a paid public car park a 3-minute walk away." } },
+        { he: { q: "יש שירות לחדר?", a: "אין מטבח במלון, אבל אשמח להמליץ על מסעדה באזור ולהזמין עבורכם משלוח לחדר." },
+          en: { q: "Is there room service?", a: "There's no kitchen on site, but I'm happy to recommend a local restaurant and order a delivery to your room." } },
+        { he: { q: "מה כוללת ארוחת הבוקר?", a: "ארוחת בוקר קונטיננטלית — מאפים טריים, גבינות, פירות וקפה — בבית הקפה שבקומת הכניסה, בין 08:00 ל-10:30. כלולה בלינה." },
+          en: { q: "What's included in breakfast?", a: "A continental breakfast — fresh pastries, cheeses, fruit and coffee — at the café on the entrance floor, 08:00–10:30. Included in your stay." } },
+      ],
       // 🔴 פרטים משלו לבוטיק — אחרת יורש את ברירות המחדל של קמפינסקי
       //    (בריכה בקומה 12, "מסעדת הגן") שאינן מתאימות למלון בוטיק קטן.
       wifi: { name: "LALA_Guest", password: "Shoreline2026" },
@@ -149,8 +224,7 @@ export const SAMPLE_HOTELS = [
                 how_to_order: "Just ask me and I'll arrange a delivery from a local restaurant" },
         },
       },
-      // ללא מסעדות פנימיות, ללא חניון גדול (בוטיק על הטיילת).
-      restaurants: {},
+      // ללא חניון (בוטיק על הטיילת).
       parking: {
         available: false,
         he: { note: "אין חניון במלון. חניה כחול-לבן ברחוב, וחניון ציבורי בתשלום במרחק 3 דקות הליכה." },

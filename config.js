@@ -1056,38 +1056,16 @@ const DEFAULTS = {
     },
   ],
 
-  // ── Welcome messages ──────────────────────────────────
-  welcome: {
-    en: `Welcome to *Kempinski Hotel* ✨
-
-I'm your personal concierge, here around the clock.
-
-I'm happy to help with:
-🏨 Check-in & check-out
-🍳 Dining, and a table booked for you anywhere
-🗺️ Recommendations — restaurants, attractions, tours, nightlife, shopping
-🚕 A taxi, a transfer, a spa treatment, a special request
-🏊 Pool, spa & gym
-🛎️ Housekeeping & maintenance
-💡 Anything at all about your stay
-
-How may I assist you today?`,
-
-    he: `ברוכים הבאים ל*מלון קמפינסקי* ✨
-
-אני הקונסיירז' האישי שלכם, כאן מסביב לשעון.
-
-אשמח לעזור ב:
-🏨 צ'ק אין וצ'ק אאוט
-🍳 מסעדה, והזמנת שולחן עבורכם בכל מקום
-🗺️ המלצות — מסעדות, אטרקציות, טיולים, חיי לילה, קניות
-🚕 מונית, הסעה, טיפול בספא, בקשה מיוחדת
-🏊 בריכה, ספא וחדר כושר
-🛎️ ניקיון ואחזקה
-💡 כל שאלה על השהייה שלכם
-
-במה אוכל לעזור?`,
-  },
+  // ── Welcome message (הודעת הפתיחה) ────────────────────
+  // 🔴 היה כאן טקסט קבוע שבתוכו "מלון קמפינסקי" ו"בריכה, ספא וחדר כושר".
+  //    מלון שלא דרס אותו קיבל *את שם המלון האחר* בהודעה הראשונה לאורח,
+  //    ורשימת שירותים שאין לו. זו ההודעה הראשונה שאורח רואה — הכי גלויה
+  //    שיש. לכן ברירת המחדל היא null, וההודעה **נבנית מהקונפיג של המלון**
+  //    (`welcomeFor`): שמו שלו, והשירותים שבאמת קיימים אצלו.
+  //
+  //    מלון שרוצה נוסח שיווקי משלו עדיין יכול לשים כאן {he,en} — ואז הוא
+  //    גובר. גם שם נתמך ה-placeholder {hotel}.
+  welcome: null,
 };
 
 // ── מיזוג עמוק ─────────────────────────────────────────
@@ -1332,4 +1310,144 @@ export function checkDepartmentContacts(hotelId = HOTEL) {
     if (!email)    missing.push(`${dept}_email`);
   }
   return { ok: missing.length === 0, missing, hotelId };
+}
+
+// ════════════════════════════════════════════════════════
+//  הודעת הפתיחה — נבנית מהמלון עצמו
+//  ----------------------------------------------------------
+//  ההודעה הראשונה שאורח רואה. חייבת לשאת את שם *המלון שלו* ולמנות רק
+//  שירותים שבאמת קיימים בו: אורח בבוטיק בן 12 חדרים שמקבל "🏊 בריכה,
+//  ספא וחדר כושר" מבין שהבוט לא מכיר את המלון — וזה בדיוק הרושם ההפוך
+//  ממה שההודעה הזו אמורה ליצור.
+// ════════════════════════════════════════════════════════
+
+// שורת השירותים הפנימיים — רק מה שהמלון באמת מציע.
+function amenityLine(cfg, he) {
+  const s = cfg.services || {};
+  const has = (k) => !!s[k];
+  const parts = [];
+  if (has("pool"))       parts.push(he ? "בריכה"     : "pool");
+  if (has("spa"))        parts.push(he ? "ספא"       : "spa");
+  if (has("gym"))        parts.push(he ? "חדר כושר"  : "gym");
+  if (has("restaurant")) parts.push(he ? "מסעדה"     : "restaurant");
+  if (has("bar"))        parts.push(he ? "בר"        : "bar");
+  if (!parts.length) return null;
+  // חיבור טבעי: "א, ב ו-ג" / "a, b & c"
+  const last = parts.pop();
+  const list = parts.length ? `${parts.join(", ")}${he ? " ו" : " & "}${last}` : last;
+  return he ? `🏊 ${list}` : `🏊 ${list.charAt(0).toUpperCase()}${list.slice(1)}`;
+}
+
+export function welcomeFor(hotelId = HOTEL, lang = "he") {
+  const cfg = configFor(hotelId);
+  const he  = lang === "he";
+  const name = he ? (cfg.name_he || cfg.name) : (cfg.name || cfg.name_he);
+
+  // נוסח מותאם של המלון גובר — עם תמיכה ב-{hotel}.
+  const custom = cfg.welcome && (cfg.welcome[lang] || cfg.welcome[he ? "he" : "en"]);
+  if (typeof custom === "string" && custom.trim()) {
+    return custom.replace(/\{hotel\}/g, name);
+  }
+
+  const amenities = amenityLine(cfg, he);
+  // שורת ה"אארגן עבורכם" לא מציעה טיפול ספא במלון בלי ספא — האורח מבין
+  // מזה שיש ספא בבית, וזו הבטחה שאי אפשר לקיים.
+  const hasSpa = !!cfg.services?.spa;
+  const arrange = he
+    ? (hasSpa ? "🚕 מונית, הסעה, טיפול בספא, בקשה מיוחדת" : "🚕 מונית, הסעה, בקשה מיוחדת")
+    : (hasSpa ? "🚕 A taxi, a transfer, a spa treatment, a special request" : "🚕 A taxi, a transfer, a special request");
+
+  const lines = he
+    ? [
+        `ברוכים הבאים ל*${name}* ✨`, "",
+        "אני הקונסיירז' האישי שלכם, כאן מסביב לשעון.", "",
+        "אשמח לעזור ב:",
+        "🏨 צ'ק אין וצ'ק אאוט",
+        "🍳 מסעדה, והזמנת שולחן עבורכם בכל מקום",
+        "🗺️ המלצות — מסעדות, אטרקציות, טיולים, חיי לילה, קניות",
+        arrange,
+        amenities,
+        "🛎️ ניקיון ואחזקה",
+        "💡 כל שאלה על השהייה שלכם", "",
+        "במה אוכל לעזור?",
+      ]
+    : [
+        `Welcome to *${name}* ✨`, "",
+        "I'm your personal concierge, here around the clock.", "",
+        "I'm happy to help with:",
+        "🏨 Check-in & check-out",
+        "🍳 Dining, and a table booked for you anywhere",
+        "🗺️ Recommendations — restaurants, attractions, tours, nightlife, shopping",
+        arrange,
+        amenities,
+        "🛎️ Housekeeping & maintenance",
+        "💡 Anything at all about your stay", "",
+        "How may I assist you today?",
+      ];
+  return lines.filter(l => l !== null).join("\n");
+}
+
+// ── בדיקת בידוד בין מלונות (onboarding) ─────────────────
+// 🔴 הכשל שזה תופס, והוא *שקט לחלוטין*: מלון חדש נטען כ-overrides מעל
+//    DEFAULTS, ולכן כל שדה שהמלון לא הגדיר **נשאר של מלון ברירת המחדל**.
+//    checkDepartmentContacts לא תופס את זה — הערכים אינם חסרים, הם פשוט
+//    שייכים למלון אחר. התוצאה בשטח: בקשת מגבות של אורח ב-LALA מגיעה
+//    למשק הבית של קמפינסקי, וחשבונית המס של LALA נושאת את מספר העוסק
+//    של קמפינסקי. שני אלה נראים תקינים לגמרי בלוג.
+//
+// לכן: כל מלון *שאינו* ברירת המחדל נבדק מול DEFAULTS, ומדווח על כל שדה
+// זהה. הבדיקה משמשת גם ב-onboarding וגם בעליית השרת.
+const ISOLATION_FIELDS = [
+  ...DEPARTMENTS.flatMap(d => [`${d}_number`, `${d}_email`]),
+  "business.legal_name", "business.business_id", "business.address",
+  "location.lat", "location.lng", "location.address",
+];
+
+// 🔴 המחצית השנייה של אותה מלכודת, ומסוכנת לא פחות: **מקטע שלם** שהמלון
+//    לא דרס. מיזוג עמוק שומר כל שדה שלא נדרס במפורש, ו-`{}` אינו מנקה
+//    (רק `null` מנקה) — ולכן מלון בוטיק ש"איפס" מסעדות עם `restaurants:{}`
+//    המשיך לשאת את מסעדות מלון ברירת המחדל. המקטעים האלה נכנסים ישירות
+//    ל-prompt של ה-AI, ולכן הבוט מוסר אותם לאורח כעובדה על *המלון הזה*:
+//    "מסעדת הגן, קומה 1", "בריכה בגג קומה 12". אורח בבוטיק בן 4 קומות
+//    מקבל מידע של מלון אחר, בביטחון מלא.
+const ISOLATION_SECTIONS = [
+  "restaurants", "faq", "building", "services", "local_area",
+  "wifi", "arrival", "parking", "safety",
+];
+
+function atPath(obj, path) {
+  return path.split(".").reduce((o, k) => (o == null ? o : o[k]), obj);
+}
+
+export function checkTenantIsolation(hotelId) {
+  // מלון ברירת המחדל *הוא* DEFAULTS — אין מה לבדוק מולו.
+  if (!hotelId || hotelId === HOTEL) return { ok: true, hotelId, shared: [], skipped: true };
+  const cfg = configFor(hotelId);
+
+  const shared = ISOLATION_FIELDS.filter((p) => {
+    const mine = atPath(cfg, p), def = atPath(DEFAULTS, p);
+    return mine != null && def != null && mine === def;
+  });
+
+  // השוואת תוכן (לא זהות הפניה) — הקונפיג של כל מלון הוא clone נפרד.
+  for (const s of ISOLATION_SECTIONS) {
+    const mine = cfg[s], def = DEFAULTS[s];
+    if (mine == null || def == null) continue;
+    if (JSON.stringify(mine) === JSON.stringify(def)) shared.push(`${s} (מקטע שלם)`);
+  }
+
+  return { ok: shared.length === 0, hotelId, shared };
+}
+
+// דיווח בקול בעלייה/ב-onboarding. מחזיר true אם המלון מבודד.
+export function reportTenantIsolation(hotelId) {
+  const r = checkTenantIsolation(hotelId);
+  if (r.skipped || r.ok) return true;
+  console.error(
+    `\n🔴 מלון "${hotelId}" חולק ${r.shared.length} שדות עם מלון ברירת המחדל ("${HOTEL}"):\n` +
+    r.shared.map(f => `   • ${f}`).join("\n") +
+    `\n   המשמעות: התראות/חשבוניות של "${hotelId}" עלולות להגיע ליעדים של "${HOTEL}".\n` +
+    `   נדרש להגדיר את השדות האלה למלון הזה (updateConfigFor).\n`
+  );
+  return false;
 }

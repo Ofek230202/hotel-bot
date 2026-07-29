@@ -6,7 +6,7 @@ import dotenv    from "dotenv";
 import { handleIncoming, wa, notifyStaff } from "./bot.js";
 import { allSessions, sessions, staffAlerts, incidents, stats, deleteSession, clearAllSessions, sessionByRoom, peekSession } from "./state.js";
 import { fromNumberFor } from "./tenant.js";
-import { hotelConfig, updateConfig, resetConfig, checkDepartmentContacts, printRoutingTable, routingTable, DEPARTMENTS } from "./config.js";
+import { hotelConfig, updateConfig, resetConfig, checkDepartmentContacts, checkTenantIsolation, reportTenantIsolation, printRoutingTable, routingTable, DEPARTMENTS } from "./config.js";
 import { reservations, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES, autoChargeOnNoShow, findNoShowReservations } from "./checkin.js";
 import checkinRouter from "./checkin-routes.js";
 import { smokePlaces } from "./places/index.js";
@@ -387,12 +387,19 @@ app.post("/api/hotels", auth, (req, res) => {
     if (config && typeof config === "object") updateConfigFor(hotelId, config);
     // 3. בדיקת שלמות: אילו אנשי קשר של מחלקות עדיין חסרים (התראות שיֵעלמו).
     const contacts = checkDepartmentContacts(hotelId);
+    // 4. בדיקת בידוד: אילו שדות המלון החדש עדיין *יורש* ממלון ברירת המחדל.
+    //    שדה כזה אינו חסר ולכן אינו נתפס למעלה — אבל הוא שולח את ההתראות
+    //    ואת חשבונית המס של המלון החדש ליעדים של מלון אחר.
+    const isolation = checkTenantIsolation(hotelId);
+    if (!isolation.ok) reportTenantIsolation(hotelId);
     res.json({
       ok: true,
       hotelId,
       number: mapped?.number || null,
       contactsComplete: contacts.ok,
       missingContacts: contacts.missing,
+      isolated: isolation.ok,
+      sharedWithDefault: isolation.shared,
       config: redactConfig(configFor(hotelId)),
     });
   } catch (e) {
@@ -545,6 +552,23 @@ const server = app.listen(PORT, () => {
       contacts.missing.map(k => `   • ${k}`).join("\n") +
       `\n   בקשה שתנותב למחלקה כזו לא תגיע לאיש. יש להשלים ב-config.js.\n`
     );
+  }
+
+  // ── בידוד בין מלונות — כל מלון רשום, לא רק ברירת המחדל ──
+  // מלון שיורש שדות מ-DEFAULTS נראה תקין לגמרי (שום דבר לא "חסר"), אבל
+  // ההתראות והחשבוניות שלו מגיעות ליעדים של מלון ברירת המחדל. בודקים
+  // בעלייה כדי שזה יתגלה לפני הדגמה, לא אחריה.
+  try {
+    const hotelIds = [...new Set(
+      db.prepare(`SELECT DISTINCT hotel_id FROM hotel_numbers`).all().map(r => r.hotel_id)
+    )].filter(h => h && h !== DEFAULT_HOTEL_ID);
+    let allIsolated = true;
+    for (const hid of hotelIds) if (!reportTenantIsolation(hid)) allIsolated = false;
+    if (hotelIds.length && allIsolated) {
+      console.log(`✅  בידוד בין מלונות תקין (${hotelIds.length} מלונות נוספים — אין שדות משותפים עם "${DEFAULT_HOTEL_ID}")`);
+    }
+  } catch (e) {
+    console.warn("⚠️ בדיקת בידוד המלונות נכשלה:", e?.message || e);
   }
 });
 

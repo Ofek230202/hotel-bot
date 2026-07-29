@@ -1080,10 +1080,23 @@ export function saveFeedback(reservationId, { rating = null, text = null } = {})
 // ── Demo helper — adds sample charges for presentation ─
 // bilingual: תיאורי הפריטים בשפת האורח, כדי שאורח אנגלי לא יראה עברית
 // בחשבון. שפה נגזרת מההזמנה (res.lang) ואפשר לדרוס דרך הפרמטר.
+// ⚠️ חיובי הדגמה — נגזרים מהשירותים שלמלון *באמת* יש. חיוב קבוע גרם
+//    לחשבון של מלון בוטיק בלי ספא ובלי מסעדה להציג "עיסוי שוודי" ו"ארוחת
+//    בוקר במסעדה", וזה נראה בהדגמה כמו חשבון של מלון אחר. מלון בלי אף
+//    שירות מחויב עדיין על המיני בר, כדי שתמיד יהיה חשבון להדגים עליו.
 export function addDemoCharges(reservationId, lang) {
   const res = reservations[reservationId];
   const he  = (lang || res?.lang || "he") === "he";
-  addFolioItem(reservationId, "RESTAURANT", he ? "ארוחת בוקר × 2"    : "Breakfast × 2",        18000);
-  addFolioItem(reservationId, "MINIBAR",    he ? "מיני בר"           : "Mini bar",              9500);
-  addFolioItem(reservationId, "SPA",        he ? "עיסוי שוודי 60 דק" : "Swedish massage 60 min", 35000);
+  const services = cfgOf(res)?.services || {};
+
+  addFolioItem(reservationId, "MINIBAR", he ? "מיני בר" : "Mini bar", 9500);
+  if (services.restaurant) {
+    addFolioItem(reservationId, "RESTAURANT", he ? "ארוחת ערב במסעדה" : "Dinner at the restaurant", 18000);
+  } else if (services.room_service) {
+    // בוטיק בלי מסעדה: מה שהאורח באמת צורך הוא משלוח שהקונסיירז' הזמין.
+    addFolioItem(reservationId, "RESTAURANT", he ? "משלוח ארוחת ערב (דרך הקונסיירז')" : "Dinner delivery (arranged by concierge)", 14500);
+  }
+  if (services.spa) {
+    addFolioItem(reservationId, "SPA", he ? "עיסוי שוודי 60 דק" : "Swedish massage 60 min", 35000);
+  }
 }

@@ -5,7 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import dotenv    from "dotenv";
 import { createHash } from "node:crypto";
 import { whatsappFor } from "./whatsapp/index.js";
-import { departmentContacts, TAG_DEPARTMENTS, configFor, hotelModel } from "./config.js";
+import { departmentContacts, TAG_DEPARTMENTS, configFor, hotelModel, welcomeFor } from "./config.js";
 import { getSession, peekSession, recordActivity, pushHistory, patchSession, logAlert, logIncident, stats } from "./state.js";
 import { runInTenant, resolveHotelId, currentHotelId, fromNumberFor, tenantKey } from "./tenant.js";
 import { withLock, createSemaphore, createRateLimiter, withTimeout, retryWithBackoff } from "./concurrency.js";
@@ -1670,17 +1670,26 @@ function flagDuplicateOrder(phone, session, payload) {
 
   const prev = session.lastRoomServiceOrder;
   const now  = Date.now();
-  const same = prev
-    && now - prev.at < DUPLICATE_ORDER_WINDOW_MS
-    && prev.dishes.length === dishes.length
-    && prev.dishes.every(d => dishes.includes(d));
+  const fresh = prev && now - prev.at < DUPLICATE_ORDER_WINDOW_MS ? prev : null;
 
-  patchSession(phone, { lastRoomServiceOrder: { dishes, at: now } });
-  if (!same) return payload;
+  // 🔴 חפיפה, לא זהות. הבדיקה הקודמת דרשה ש*כל* רשימת המנות תהיה זהה,
+  //    ולכן פספסה את המקרה השכיח באמת (נצפה בהרצה חיה): האורח הזמין
+  //    לינגוויני, ואז הוסיף כוס יין — וה-AI שלח את ההזמנה *כולה* מחדש.
+  //    שתי הרשימות אינן זהות (1 מנה מול 2), אז לא הודלק שום דגל, והמטבח
+  //    קיבל שתי מנות לינגוויני. לכן מסמנים כל מנה ש*כבר* יצאה בחלון הזמן,
+  //    גם כשההזמנה החדשה מוסיפה עליה.
+  //    מנה חדשה לגמרי (קינוח שנוסף) עדיין אינה חפיפה ואינה מסומנת.
+  const repeated = fresh ? dishes.filter(d => fresh.dishes.includes(d)) : [];
 
-  const minutes = Math.max(1, Math.round((now - prev.at) / 60_000));
-  console.error(`⚠️ הזמנת שירות חדרים כפולה אפשרית (${phone.slice(-8)}): ${dishes.join(", ")}`);
-  return `${payload}\n⚠️ *ייתכן שזו אותה הזמנה שכבר נשלחה לפני כ-${minutes} דק׳* (${dishes.join(", ")}) — נא לוודא עם האורח לפני הכנה כפולה.`;
+  // זוכרים את איחוד המנות שיצאו בחלון — כדי שגם הזמנה שלישית שחוזרת על
+  // הראשונה תיתפס, ולא רק חזרה על ההזמנה הסמוכה לה.
+  const merged = fresh ? [...new Set([...fresh.dishes, ...dishes])] : dishes;
+  patchSession(phone, { lastRoomServiceOrder: { dishes: merged, at: now } });
+  if (!repeated.length) return payload;
+
+  const minutes = Math.max(1, Math.round((now - fresh.at) / 60_000));
+  console.error(`⚠️ הזמנת שירות חדרים כפולה אפשרית (${phone.slice(-8)}): ${repeated.join(", ")}`);
+  return `${payload}\n⚠️ *ייתכן שזו אותה הזמנה שכבר נשלחה לפני כ-${minutes} דק׳* (${repeated.join(", ")}) — נא לוודא עם האורח לפני הכנה כפולה.`;
 }
 
 // האם התשובה שואלת את האורח משהו? תשובה שמאשרת מנה, בלי תג ובלי שאלה,
@@ -3180,7 +3189,8 @@ async function processIncoming(phone, text, media = null) {
   if (session.messageCount === 1) {
     patchSession(phone, { stage: "active" });
     if (isGenericGreeting(body)) {
-      const welcome = hcfg().welcome[lang] || hcfg().welcome.en;
+      // נבנית מהקונפיג של *המלון הזה* — שמו שלו והשירותים שבאמת קיימים בו.
+      const welcome = welcomeFor(currentHotelId(), lang);
       await wa(phone, welcome, { lang });
       pushHistory(phone, "assistant", welcome);
       return;

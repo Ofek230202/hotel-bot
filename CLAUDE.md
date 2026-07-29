@@ -105,15 +105,18 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
 - Dashboard API + session reset endpoints.
 
 ### What is MISSING / broken (חסר)
-- **No real payment isolation** — Stripe is imported and called directly in `checkin.js` /
-  `checkin-routes.js`. No abstraction layer, no mock. Will not work in Israel.
-- **Check-in loops back to "full name"** — see bug #1 below.
+- ~~No real payment isolation~~ **DONE** — Stripe הוסר לחלוטין. כל התשלומים עוברים דרך
+  `payments/` (`PaymentProvider` + `MockProvider` + `CardComProvider`), ובחירת הספק היא
+  **פר-מלון** ב-`paymentsFor(hotelId)` לפי `config.payment_provider`. מלון בלי credentials
+  נופל ל-Mock עם אזהרה, כדי לא לשבור צ'ק אין.
+- ~~Check-in loops back to "full name"~~ **DONE** — נבע מכשל Stripe שאיפס את הזרימה (באג #1).
 - ~~No persistence~~ **DONE** — state now persists to SQLite (`db.js`, `node:sqlite`); survives restart.
-- **Not multi-tenant** — one global `hotelConfig`, one global `sessions` map keyed only by phone.
-- **No `.env` in repo** — all secrets (ANTHROPIC, TWILIO, STRIPE, BASE_URL) unset locally; with no
-  Stripe key, `new Stripe(undefined)` / `startCheckin` fails.
-- **Email routing not implemented** — goal #4 wants email + WhatsApp to departments; only WhatsApp
-  exists.
+- ~~Not multi-tenant~~ **DONE** — `tenant.js` (AsyncLocalStorage + `hotel_numbers`), סשנים
+  והזמנות ממופתחים ב-`hotelId`, קונפיג פר-מלון. ראה §8.2 ו-§9.
+- ~~Email routing not implemented~~ **DONE** — `email/` (`MockEmailProvider` /
+  `HttpEmailProvider` ל-Resend/SendGrid). `notifyStaff` שולח **וואטסאפ + מייל** לכל מחלקה.
+- **No `.env` in repo** — כל הסודות מוגדרים בסביבה בלבד (ANTHROPIC, TWILIO, BASE_URL,
+  GOOGLE_PLACES_API_KEY, ID_ENCRYPTION_KEY, EMAIL_*).
 - ~~Safety/emergency flow not implemented~~ **DONE** — `emergency.js`: זיהוי דטרמיניסטי (לא תלוי
   ב-AI, רץ לפני כל זרימה אחרת) → הנחיית 101/102/100 לאורח → הסלמה כפולה לביטחון *ולקבלה* →
   `logIncident` מובנה ומתמיד. **זיהוי דו-דרגתי** (`HARD`/`SOFT` + `isInquiry`): מילה חד-משמעית
@@ -137,7 +140,7 @@ Single-file Node/Express app. Functional demo for ONE hotel ("Kempinski"), hardc
   saved on the reservation, escalated to management (low ratings → high priority). Still lacks:
   formal invoice/receipt PDF, minibar check, luggage storage, late-checkout offer.
 - No logging/monitoring, no rate-limiting, no Twilio request validation (security).
-- ~~No tests~~ **PARTIAL** — `e2e.test.mjs` + `places.test.mjs` + `safety.test.mjs` (203 tests, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
+- ~~No tests~~ **PARTIAL** — `e2e` + `places` + `safety` + `scale` + `idsecurity` + `hoteltype` + `tenant-isolation` (**308 tests**, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
   תגים, זהות, **מדיניות סוגי מסמכים, תאריכי שהייה, אישור תנאים, עקביות שפה מקצה לקצה**
   (כולל רינדור עמוד האישור), **המידע המובנה שמגיע ל-AI (system prompt), ומיזוג/שמירת הקונפיג**
   (כולל ריסטארט אמיתי בתהליך נפרד), **וזרימת הצ'ק אאוט המלאה** (הצגת חשבון → אישור → שלושת
@@ -283,7 +286,7 @@ Priority order (to be decided together):
       **stay-date parsing (every HE/EN phrasing + the ambiguous cases) + date confirmation +
       truncated-tag leak + deposit wording** / **check-out state machine (bill preview →
       confirm → all three deposit outcomes + cancel + HE/EN consistency)**
-      (`e2e.test.mjs`/`places.test.mjs`/`safety.test.mjs`, 203 tests, `npm test`). Still missing: the isolated payment provider layer
+      (308 tests, `npm test`). Still missing: deeper coverage of the isolated payment provider layer
       itself.
 
 ### שפה — עקביות מקצה לקצה (ממומש)
@@ -512,7 +515,7 @@ Priority order (to be decided together):
 
 ## 8. ארכיטקטורת עומס, מולטי-טננט מלא ואבטחת מסמכי זיהוי (23.07.2026)
 
-סבב "לבנות נכון ל-100 מלונות × 1000 אורחים". **כל 226 הבדיקות עוברות.**
+סבב "לבנות נכון ל-100 מלונות × 1000 אורחים". **כל 308 הבדיקות עוברות.**
 מסמכי עומק: **`SCALING.md`** (יכולת נוכחית, מה נדרש לסקייל, עלויות) ו-**`SECURITY.md`**
 (מסמכי זיהוי — GDPR + דין ישראלי).
 
@@ -565,6 +568,60 @@ Priority order (to be decided together):
 Twilio לכל מלון, ו-**vault/S3+KMS** למסמכי זיהוי. עלות תשתית התחלתית ~$80–440/חודש;
 המשתנים הדומיננטיים בסקייל הם Twilio ו-Anthropic לפי נפח.
 
+## 9. שני מלונות במקביל — מה שההרצה החיה חשפה (29.07.2026)
+
+הרצה מלאה של **שני מלונות באותו תהליך** לקראת הדגמות ללקוחות (LALA בוטיק,
+דרך בן צבי 78 · קמפינסקי מלא, הירקון 51), עם Claude אמיתי ו-Google אמיתי.
+כלי ההרצה: **`simulate-demo.mjs`** (`npm run demo [lala|kempinski|isolation|geography]`).
+
+### 9.1 מחלקת התקלות שהתגלתה: **ירושה שקטה מ-DEFAULTS**
+קונפיג של מלון נטען כ-overrides **מעל** `DEFAULTS`, ולכן כל שדה שהמלון לא
+הגדיר נשאר *של מלון ברירת המחדל*. שום דבר לא חסר, שום בדיקה לא נכשלת, ואף
+לוג לא צועק — ולכן זה נראה תקין לחלוטין עד שלקוח שואל "למה לא הגיע?".
+
+חמישה מקרים אמיתיים שנתפסו ותוקנו (כולם ב-LALA, שהוגדרה חלקית):
+
+| מה קרה | מדוע זה חמור |
+|---|---|
+| בקשת אחזקה של אורח ב-LALA נשלחה לאחזקה **של קמפינסקי** | הבקשה נעלמת. האורח קיבל "העברתי", ואיש לא טיפל |
+| חשבונית המס של LALA נשאה את **שם העוסק ומספר הח.פ. של קמפינסקי** | מסמך מס שגוי, לא רק תצוגה |
+| הודעת הפתיחה: *"ברוכים הבאים למלון קמפינסקי"* לאורח של LALA | ההודעה הראשונה שאורח רואה |
+| LALA ירשה את **מסעדות המלון** ואת ה-FAQ של קמפינסקי | הקונסיירז' ממליץ על מסעדה שאינה קיימת |
+| `building.key_areas` הבטיח **בריכה בקומה 12 וספא בקומה 3** במלון בן 4 קומות | מידע שגוי שנמסר בביטחון |
+
+⚠️ **`{}` אינו מנקה שדה — רק `null` מנקה.** `restaurants: {}` השאיר את מסעדות
+ברירת המחדל במקומן. זו המלכודת שיצרה שניים מהמקרים למעלה.
+
+### 9.2 התיקונים
+- **`checkTenantIsolation(hotelId)` / `reportTenantIsolation`** (`config.js`) — משווה כל
+  מלון מול `DEFAULTS`: אנשי קשר של 6 מחלקות, פרטי עוסק, מיקום, **ומקטעים שלמים**
+  (`restaurants`/`faq`/`building`/`services`/`local_area`/`wifi`/`arrival`/`parking`/`safety`).
+  רץ בעליית השרת על **כל** מלון רשום, ומוחזר גם מ-`POST /api/hotels` (`isolated`,
+  `sharedWithDefault`) — כך שמלון חדש לא עולה לאוויר עם ההגדרות של מלון אחר.
+  זה ההבדל מ-`checkDepartmentContacts`, שבודק רק מה *חסר*, ולכן פספס את כל אלה.
+- **`welcomeFor(hotelId, lang)`** (`config.js`) — הודעת הפתיחה **נבנית מהמלון**: שמו שלו,
+  ורק השירותים שבאמת קיימים אצלו (מלון בלי בריכה/ספא/חדר כושר לא מציע אותם, וגם לא
+  "טיפול בספא"). `DEFAULTS.welcome` הוא `null`; מלון עם נוסח שיווקי משלו עדיין גובר,
+  עם `{hotel}`.
+- **LALA הוגדרה במלואה** (`sample-hotels.mjs`) — אנשי קשר, עוסק, מרחב מוגן, מבנה מלא,
+  FAQ משלה, `restaurants: null`.
+- **`flagDuplicateOrder`** (`bot.js`) — עבר מ"רשימות מנות זהות" ל**חפיפה**. נצפה חי:
+  אורח הזמין לינגוויני, ואז הוסיף כוס יין — וה-AI שלח את ההזמנה *כולה* מחדש. הרשימות
+  לא היו זהות (1 מול 2), אז שום דגל לא הודלק, והמטבח קיבל **שתי מנות פסטה**.
+- **`addDemoCharges`** (`checkin.js`) — חיובי ההדגמה נגזרים מהשירותים שקיימים במלון
+  (חשבון של בוטיק בלי ספא לא כולל "עיסוי שוודי").
+
+### 9.3 מה אומת בהרצה החיה
+צ'ק אין מלא בשני המלונות (קוד דלת מול כרטיס בקבלה), אימות ת"ז ודרכון,
+**מע"מ 18% לתושב מול 0% לתייר חוץ** (`assessTourist` מהדרכון), קונסיירז' עם מקומות
+אמיתיים סביב *כל* מלון בנפרד, שירות חדרים מהתפריט, חירום (בוטיק → 101 + מנהל תורן
+ו"אין צוות במקום"; מלון מלא → "צוות הביטחון בדרך"), ניתוב מחלקות בוואטסאפ+מייל,
+וצ'ק אאוט מלא עם חשבונית מס-קבלה בשני המלונות. **17 בדיקות בידוד — כולן עברו.**
+הבידוד נעול ב-`tenant-isolation.test.mjs` (11 בדיקות דטרמיניסטיות, בלי AI ובלי רשת).
+
 > Rule for future work: payments change in ONE place (the provider abstraction). Never re-couple
 > business logic to a specific payment vendor. Same rule for the DB (`db.js` + the repository
 > functions), the tenant boundary (`tenant.js`), and ID storage (`idverify/index.js`).
+>
+> **וכלל נוסף, מ-§9:** מלון חדש = **כל** השדות שלו, לא רק שם ומיקום. כל שדה שלא הוגדר
+> שייך עדיין למלון ברירת המחדל. לפני כל הדגמה: `npm run demo` ו-`checkTenantIsolation`.
