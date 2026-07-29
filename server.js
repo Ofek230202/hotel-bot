@@ -403,6 +403,44 @@ app.get("/api/tenant/resolve", auth, (req, res) => {
   });
 });
 
+// ── אילו משתני סביבה השרת הזה באמת רואה? ────────────────
+// למה זה נחוץ: "הגדרתי את המשתנה ב-Railway ולא קרה כלום" הוא כשל שקוף —
+// אי אפשר לדעת מבחוץ אם המשתנה לא נשמר, נשמר בשירות אחר, נשמר בסביבה
+// אחרת, או שיש רווח/שגיאת כתיב בשם. כאן מדווחים מה *התהליך* רואה.
+//
+// 🔒 סודות לעולם לא נחשפים — רק **קיים/חסר** (בוליאני). היחידים שמוצגים
+//    בערכם המלא הם DEMO_HOTEL ו-HOTEL_ID, שאינם סודות ושבהם דווקא חשוב
+//    לראות את הערך המדויק (JSON.stringify חושף רווח מוביל/נגרר).
+app.get("/api/env-check", auth, (req, res) => {
+  const secretNames = [
+    "ANTHROPIC_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN",
+    "GOOGLE_PLACES_API_KEY", "ID_ENCRYPTION_KEY", "EMAIL_API_KEY",
+    "DASHBOARD_PASSWORD",
+  ];
+  const plainNames = [
+    "DEMO_HOTEL", "HOTEL_ID", "TWILIO_WHATSAPP_NUMBER", "BASE_URL",
+    "PORT", "DB_PATH", "EMAIL_PROVIDER", "EMAIL_FROM", "PLACES_PROVIDER",
+    "VALIDATE_TWILIO", "NODE_ENV",
+  ];
+  const present = {};
+  for (const n of secretNames) present[n] = !!process.env[n];
+  const values = {};
+  for (const n of plainNames) {
+    values[n] = process.env[n] === undefined ? null : JSON.stringify(process.env[n]);
+  }
+  // כל שם משתנה שנראה כמו שגיאת כתיב של DEMO_HOTEL — העזרה הממשית.
+  const looksLikeDemoHotel = Object.keys(process.env)
+    .filter(k => /demo|hotel/i.test(k))
+    .sort();
+  res.json({
+    ok: true,
+    node: process.version,
+    secretsPresent: present,
+    values,
+    envKeysMentioningDemoOrHotel: looksLikeDemoHotel,
+  });
+});
+
 // ── ריענון מיפוי המלונות והקונפיג בלי restart ──────────
 // כלי החלפת המלון להדגמה (demo-switch.mjs) רץ בתהליך *נפרד* ומשנה את
 // ה-DB. השרת הרץ מחזיק את המיפוי ואת הקונפיג ב-cache בזיכרון, ולכן לא
