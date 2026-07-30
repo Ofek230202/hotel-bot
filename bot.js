@@ -9,6 +9,7 @@ import { departmentContacts, TAG_DEPARTMENTS, configFor, hotelModel, welcomeFor 
 import { getSession, peekSession, recordActivity, pushHistory, patchSession, logAlert, logIncident, stats } from "./state.js";
 import { runInTenant, resolveHotelId, currentHotelId, fromNumberFor, tenantKey } from "./tenant.js";
 import { withLock, createSemaphore, createRateLimiter, withTimeout, retryWithBackoff } from "./concurrency.js";
+import { withGuestLock } from "./store/index.js";
 import { detectLangSignal, detectLanguageRequest, stripLanguageRequest } from "./i18n.js";
 import { stripInternalTags, hasInternalTag, validateFullName, validateReservationNumber, validateIdMedia, validateStayDates, validateTermsConfirmation, parseCheckinDetails, isSkipWord } from "./validate.js";
 import { resolveNameForms, nameFor }                      from "./names.js";
@@ -3037,7 +3038,13 @@ setInterval(() => { try { guestRateLimiter.sweep(); } catch { /* ignore */ } }, 
 // תואם-לאחור: קריאה בלי meta (בדיקות/סימולציה) → מלון ברירת המחדל.
 export async function handleIncoming(phone, text, media = null, meta = {}) {
   const hotelId = meta.hotelId || resolveHotelId(meta.to);
-  return runInTenant(hotelId, () => withLock(tenantKey(hotelId, phone), () => guardedHandle(phone, text, media)));
+  // 🔴 `withGuestLock` ולא `withLock`: הנעילה המקומית מגנה על תהליך אחד
+  //    בלבד. עם יותר מעותק אחד (וזה קורה ברגע שמוסיפים instance ב-Railway),
+  //    שתי הודעות של אותו אורח יכולות לרוץ בו-זמנית בשני תהליכים — ואז
+  //    מצב הצ'ק אין נדרס או שההזמנה נשלחת פעמיים. עם `REDIS_URL` מוגדר
+  //    הנעילה הופכת למבוזרת; בלעדיו ההתנהגות זהה לחלוטין להיום.
+  return runInTenant(hotelId, () =>
+    withGuestLock(tenantKey(hotelId, phone), () => guardedHandle(phone, text, media)));
 }
 
 async function guardedHandle(phone, text, media = null) {

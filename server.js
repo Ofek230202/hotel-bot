@@ -18,6 +18,7 @@ import { emailIsLive } from "./email/index.js";
 import { updateConfigFor, configFor, hotelModel } from "./config.js";
 import { registerHotelNumber, reloadHotelNumbers } from "./tenant.js";
 import { bootstrapDemoHotel } from "./demo-bootstrap.js";
+import { isDistributed, storeKind } from "./store/index.js";
 import { timingSafeEqual } from "node:crypto";
 import twilio from "twilio";
 import { db } from "./db.js";
@@ -625,6 +626,21 @@ const server = app.listen(PORT, () => {
     console.log(`✅  מייל: ספק אמיתי פעיל (${process.env.EMAIL_PROVIDER || "resend"}) — התראות מחלקה יישלחו במייל.`);
   } else {
     console.warn(`⚠️  מייל: MOCK בלבד (לא נשלח מייל אמיתי). למלון אמיתי הגדירו EMAIL_API_KEY + EMAIL_PROVIDER + EMAIL_FROM. (וואטסאפ עדיין נשלח.)`);
+  }
+
+  // ── מצב משותף בין תהליכים (סקייל אופקי) ──────────────
+  // 🔴 זו התקלה השקטה ביותר בסקייל: הכול נראה תקין עם עותק אחד, וברגע
+  //    שמוסיפים instance שתי הודעות של אותו אורח יכולות לרוץ במקביל —
+  //    צ'ק אין נדרס או הזמנה נשלחת פעמיים. אין שגיאה, אין לוג, רק אורח
+  //    מבולבל. לכן מדווחים בקול על המצב.
+  if (isDistributed()) {
+    console.log(`✅  מצב משותף: Redis פעיל — בטוח להריץ יותר מעותק אחד (נעילה מבוזרת + הגבלת קצב משותפת)`);
+  } else {
+    console.warn(
+      `⚠️  מצב משותף: זיכרון בלבד (אין REDIS_URL). תקין לחלוטין לעותק **אחד**.\n` +
+      `    ⚠️ אל תריצו יותר מ-instance אחד ללא Redis — הנעילה per-guest לא תעבוד בין תהליכים.\n` +
+      `    ראה STORE.md.`
+    );
   }
 
   // ── מדיניות שמירה (retention) של מסמכי זיהוי ──────────
