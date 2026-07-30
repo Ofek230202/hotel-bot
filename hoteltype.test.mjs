@@ -460,7 +460,22 @@ test("Part 2: Optima (מוביל השוק בישראל) עם credentials — נ�
   // יכולות: קריאה כן, post folio לא (מדרדר בחן לצוות).
   assert.equal(p.supports("reservation.read"), true);
   assert.equal(p.supports("folio.post"), false, "Optima לא מצהירה folio.post כברירת מחדל");
-  await assert.rejects(() => p.getReservation({}), (e) => e.notConnected === true, "scaffold זורק בבירור");
+
+  // האדפטר כבר אינו scaffold: עם credentials הוא *מוגדר* ומבצע HTTP אמיתי
+  // (מכוסה מקצה לקצה ב-pms-optima.test.mjs עם fetch מוזרק). מה שנשאר לבדוק
+  // כאן הוא ההתנהגות מול pmsFor: נבחר, מוגדר, ולא חושף סודות.
+  assert.equal(p.isConfigured(), true, "credentials מלאים → מוגדר");
+  assert.equal(p.hotelCode, "H1");
+  assert.equal(await p.getReservation({}), null, "בקשה בלי מספר אישור → null, בלי קריאת רשת");
+  const d = p.describe();
+  assert.equal(d.provider, "optima");
+  assert.ok(!JSON.stringify(d).includes("apiPassword\":\"p\""), "describe לא מחזיר סיסמה");
+
+  // בלי credentials — נכשל *בבירור*, לא מתחזה לעובד.
+  const bare = new OptimaPmsProvider({});
+  assert.equal(bare.isConfigured(), false);
+  await assert.rejects(() => bare.getReservation("ABC"), (e) => e.notConnected === true,
+    "מלון בלי חיבור מקבל שגיאה מפורשת");
 });
 
 test("Part 2: capability flags — Mock תומך בהכל, אדפטר בסיסי בכלום", async () => {
