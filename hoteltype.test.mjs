@@ -434,12 +434,17 @@ test("Part ט' pms: ברירת מחדל = Mock — המאגר המובנה מק�
   assert.equal(await p.getReservation({ confirmationNumber: "X" }), null, "אין רשומה חיצונית → מאגר מובנה");
 });
 
-test("Part ט' pms: apaleo עם credentials = scaffold שזורק בבירור", async () => {
+test("Part ט' pms: apaleo עם credentials — ספק אמיתי מהרישום, לא scaffold", async () => {
   config.updateConfig({ pms_provider: "apaleo", pms_credentials: { clientId: "a", clientSecret: "b", propertyId: "c" } });
   pmsMod.clearPmsCache();
   const p = pmsMod.pmsFor("kempinski");
-  await assert.rejects(() => p.getReservation({}), (e) => e.notConnected === true,
-    "scaffold זורק 'לא מחובר' — לא מדמה נתונים שקריים");
+  // Apaleo עבר מ-scaffold ייעודי למנוע הגנרי שמריץ את המפרט מ-vendors.js.
+  assert.equal(p.constructor.name, "RestPmsProvider");
+  assert.equal(p.vendor, "apaleo");
+  assert.equal(p.isConfigured(), true);
+  assert.equal(p.supports("folio.post"), true, "Apaleo תומכת ברישום חיוב");
+  assert.equal(await p.getReservation({}), null, "בקשה בלי מזהה → null, בלי קריאת רשת");
+  assert.ok(p.describe().docsUrl.includes("apaleo"), "המדריך מפנה לתיעוד הספק");
 });
 
 test("Part ט' pms: apaleo בלי credentials נופל ל-Mock", () => {

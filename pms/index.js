@@ -11,9 +11,12 @@
 //     כשמפעילים ספק אמיתי — ממלאים את גוף השיטות בספק, והלוגיקה זהה.
 // ════════════════════════════════════════════════════════
 import { MockPmsProvider } from "./MockPmsProvider.js";
-import { ApaleoPmsProvider } from "./ApaleoPmsProvider.js";
 import { OptimaPmsProvider } from "./OptimaPmsProvider.js";
+import { RestPmsProvider } from "./RestPmsProvider.js";
+import { vendorSpec, missingCredentials, VENDOR_IDS } from "./vendors.js";
 import { configFor } from "../config.js";
+
+export { VENDOR_IDS, vendorSpec, missingCredentials };
 
 export const pms = new MockPmsProvider(); // ברירת מחדל + תאימות לאחור
 
@@ -30,32 +33,76 @@ export function pmsFor(hotelId) {
   const key = `${name}:${hotelId || "default"}`;
   if (cache.has(key)) return cache.get(key);
 
-  // בונה ספק, ואם חסרים credentials נופל בבטחה ל-Mock (המאגר המובנה).
-  const build = (Provider, label) => {
-    const p = new Provider(creds);
-    if (!p.isConfigured?.()) {
-      console.warn(`⚠️ מלון "${hotelId}" ביקש PMS ${label} בלי credentials — נופלים ל-Mock (המאגר המובנה).`);
+  // ── בחירת הספק ──────────────────────────────────────
+  // 🔴 נפילה בטוחה: מלון שסימן ספק אך חסרים לו פרטים **לא מפיל צ'ק אין**.
+  //    הוא נופל ל-Mock עם אזהרה **שמפרטת בדיוק מה חסר** — אחרת מגלים את
+  //    זה רק כשאורח באמצע צ'ק אין, ובלי לדעת למה.
+  const safe = (make, label) => {
+    try {
+      const p = make();
+      if (!p.isConfigured?.()) {
+        const miss = missingCredentials(label, creds).missing.map(m => m.labelHe || m.key);
+        console.warn(
+          `⚠️ מלון "${hotelId}" ביקש PMS "${label}" אך החיבור אינו שלם — נופלים ל-Mock (המאגר המובנה).` +
+          (miss.length ? ` חסר: ${miss.join(", ")}.` : "") + ` ראה PMS_GUIDE.md.`
+        );
+        return pms;
+      }
+      return p;
+    } catch (e) {
+      console.error(`🚨 בניית ספק ה-PMS "${label}" למלון "${hotelId}" נכשלה — נופלים ל-Mock: ${e?.message || e}`);
       return pms;
     }
-    return p;
   };
 
   let provider;
-  switch (name) {
-    // Optima/Silverbyte — מוביל השוק בישראל (~80–90%). היעד הראשון בישראל.
-    case "optima":
-    case "silverbyte": provider = build(OptimaPmsProvider, "optima"); break;
-    // Apaleo — REST מודרני, ה-scaffold הפתוח לפיתוח מול חשבון dev.
-    case "apaleo":     provider = build(ApaleoPmsProvider, "apaleo"); break;
-    // case "mews":    provider = build(MewsPmsProvider, "mews"); break;
-    // case "opera":   provider = build(OperaOhipProvider, "opera"); break;
-    // case "cloudbeds": provider = build(CloudbedsPmsProvider, "cloudbeds"); break;
-    case "mock":
-    default:
+  if (name === "mock" || !name) {
+    provider = pms;
+  } else {
+    const spec = vendorSpec(name);
+    if (!spec) {
+      console.warn(`⚠️ מלון "${hotelId}" ביקש PMS לא מוכר: "${name}". ספקים נתמכים: ${VENDOR_IDS.join(", ")}. נופלים ל-Mock.`);
       provider = pms;
+    } else if (spec.dedicated === "OptimaPmsProvider") {
+      // אופטימה מקבלת מחלקה ייעודית: XML, כללי folio משלה, ומיפוי ישראלי.
+      provider = safe(() => new OptimaPmsProvider(creds), spec.id);
+    } else {
+      // כל השאר — מנוע גנרי שמריץ את המפרט מ-vendors.js.
+      provider = safe(() => new RestPmsProvider(spec.id, creds), spec.id);
+    }
   }
   cache.set(key, provider);
   return provider;
+}
+
+// ── מוכנות החיבור של מלון ─────────────────────────────
+// לדשבורד/אונבורדינג: מה מוגדר, מה חסר, ומה הספק יודע לעשות.
+// לעולם לא מחזיר סודות.
+export function pmsReadiness(hotelId) {
+  let name = "mock", creds = {};
+  try {
+    const cfg = configFor(hotelId);
+    name  = String(cfg.pms_provider || "mock").toLowerCase();
+    creds = cfg.pms_credentials || {};
+  } catch { /* ignore */ }
+
+  if (name === "mock") {
+    return { hotelId, vendor: "mock", ready: true, mock: true, missing: [],
+             note: "המאגר המובנה הוא מקור האמת (תקין לפיילוט/הדגמה)" };
+  }
+  const spec = vendorSpec(name);
+  if (!spec) return { hotelId, vendor: name, ready: false, unknownVendor: true, missing: [], supported: VENDOR_IDS };
+
+  const miss = missingCredentials(spec.id, creds);
+  const p = pmsFor(hotelId);
+  return {
+    hotelId, vendor: spec.id, label: spec.label, labelHe: spec.labelHe,
+    ready: !p.isMock && !!p.isConfigured?.(),
+    missing: miss.missing,
+    capabilities: p.isMock ? [] : [...(p.capabilities || [])].sort(),
+    docsUrl: spec.docsUrl || null,
+    guideRef: spec.guideRef || "PMS_GUIDE.md",
+  };
 }
 
 export function clearPmsCache() { cache.clear(); }
