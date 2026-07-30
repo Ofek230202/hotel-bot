@@ -7,6 +7,7 @@ import { payments } from "./payments/index.js";
 import { peekSession } from "./state.js";
 import { nameFor } from "./names.js";
 import { hotelConfig, configFor } from "./config.js";
+import { runInTenant } from "./tenant.js";
 
 const router = express.Router();
 
@@ -74,7 +75,14 @@ router.get("/checkin/success", async (req, res) => {
   const roomNumber = reservation.roomNumber || "304";
 
   try {
-    await completeCheckin(rid, roomNumber);
+    // 🔴 חייב לרוץ בהקשר המלון של ההזמנה. `completeCheckin` שולח לאורח
+    //    את אישור הצ'ק אין (חדר, קוד דלת, WiFi) דרך `wa()`, ו-`wa()` גוזר
+    //    את **המספר היוצא** ואת ערוץ הוואטסאפ מ-`currentHotelId()`.
+    //    בקשת HTTP אינה רצה בתוך `runInTenant`, ולכן בלי העטיפה הזו
+    //    ההקשר היה מלון ברירת המחדל — ואורח של LALA היה מקבל את אישור
+    //    הצ'ק אין **מהמספר של קמפינסקי** (או שהספק היה דוחה את ההודעה).
+    //    היום זה בלתי נראה כי יש מספר אחד; זו פצצה מתקתקת למלון השני.
+    await runInTenant(reservation.hotelId, () => completeCheckin(rid, roomNumber));
   } catch (e) {
     console.error("Check-in completion error:", e.message);
   }
@@ -109,7 +117,9 @@ router.post("/checkout/balance/pay", express.urlencoded({ extended: false }), as
   if (!reservation) return res.send(errorPage("no_reservation", pageLang(req, null)));
 
   const lang = pageLang(req, reservation);
-  try { await switchOverageToAlternateCard(rid, lang); }
+  // גם כאן נשלחת הודעה לאורח — ולכן אותה עטיפה, מאותה סיבה (ראה
+  // ההערה ב-/checkin/success).
+  try { await runInTenant(reservation.hotelId, () => switchOverageToAlternateCard(rid, lang)); }
   catch (e) { console.error("Alt-card switch error:", e.message); }
   res.redirect(`/checkout/paid?rid=${rid}`);
 });

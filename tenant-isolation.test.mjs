@@ -236,6 +236,60 @@ test("בידוד: אותו מספר טלפון בשני מלונות = שני ס
 });
 
 // ════════════════════════════════════════════════════════
+//  5ב. הודעות שנשלחות **מחוץ** להקשר הטננט (עמודי התשלום)
+// ════════════════════════════════════════════════════════
+// 🔴 באג אמיתי שנתפס כאן: בקשת HTTP אינה רצה בתוך `runInTenant`. עמוד
+//    ההצלחה של הפיקדון קרא ל-`completeCheckin`, ששולח לאורח את אישור
+//    הצ'ק אין דרך `wa()` — ו-`wa()` גוזר את המספר היוצא מ-`currentHotelId()`.
+//    בלי עטיפה, ההקשר הוא מלון ברירת המחדל, ואורח של LALA היה מקבל את
+//    האישור **מהמספר של קמפינסקי**. עם מספר אחד זה בלתי נראה לחלוטין.
+test("בידוד: אישור צ'ק אין יוצא מהמספר של המלון גם כשההודעה נולדת ב-HTTP", async () => {
+  const phone = "whatsapp:+972500900021";
+  const lalaNumber = tenant.normalizeNumber(numberOf(LALA));
+  const kempNumber = tenant.normalizeNumber(numberOf(KEMP));
+  assert.notEqual(lalaNumber, kempNumber, "הבדיקה דורשת שני מספרים שונים");
+
+  const { reservationId } = await tenant.runInTenant(LALA, () => checkin.startCheckin(
+    phone, { guestName: "דנה כהן", guestNameHe: "דנה כהן", guestNameEn: "Dana Cohen" },
+    "RES-HTTP-1", { stay: { checkIn: "2099-04-01", checkOut: "2099-04-03", nights: 2 } },
+  ));
+
+  sent.length = 0;
+  // מדמים בדיוק את מה שקורה בעמוד /checkin/success: קריאה **בלי** הקשר
+  // טננט, כפי שהיא מגיעה מ-HTTP — אבל עטופה כמו שהקוד עושה עכשיו.
+  await tenant.runInTenant(LALA, () => checkin.completeCheckin(reservationId, "7"));
+
+  const toGuest = sent.filter(m => m.to === phone);
+  assert.ok(toGuest.length, "האורח קיבל אישור");
+  for (const m of toGuest) {
+    assert.equal(
+      tenant.normalizeNumber(String(m.from).replace(/^whatsapp:/, "")), lalaNumber,
+      `🔴 אישור הצ'ק אין יצא מ-${m.from} ולא מהמספר של LALA`,
+    );
+  }
+});
+
+test("בידוד: בלי הקשר טננט ההודעה הייתה יוצאת מהמספר הלא נכון (הוכחת הבאג)", async () => {
+  const phone = "whatsapp:+972500900022";
+  const { reservationId } = await tenant.runInTenant(LALA, () => checkin.startCheckin(
+    phone, { guestName: "דנה כהן", guestNameHe: "דנה כהן", guestNameEn: "Dana Cohen" },
+    "RES-HTTP-2", { stay: { checkIn: "2099-04-01", checkOut: "2099-04-03", nights: 2 } },
+  ));
+
+  sent.length = 0;
+  // ללא runInTenant — כפי שהיה לפני התיקון.
+  await checkin.completeCheckin(reservationId, "7");
+
+  const from = sent.filter(m => m.to === phone).map(m => tenant.normalizeNumber(String(m.from).replace(/^whatsapp:/, "")));
+  assert.ok(from.length, "נשלחה הודעה");
+  // ההזמנה של LALA, אבל ההקשר הוא ברירת המחדל → המספר של קמפינסקי.
+  assert.ok(
+    from.every(f => f === tenant.normalizeNumber(numberOf(KEMP))),
+    "הבדיקה מתעדת את ההתנהגות השגויה שהתיקון מונע — אם היא נכשלת, הבאג הזה כבר לא קיים וניתן למחוק אותה",
+  );
+});
+
+// ════════════════════════════════════════════════════════
 //  6. מודל המלון — כרטיס מול קוד דלת, צוות במקום
 // ════════════════════════════════════════════════════════
 test("מודל: בוטיק = קוד דלת בלי צוות במקום; מלון מלא = כרטיס עם צוות", () => {
