@@ -98,6 +98,16 @@ function tidyForWhatsApp(text) {
     .replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, "*$1*")
     // שלוש שורות ריקות ומעלה → שורה ריקה אחת
     .replace(/\n{3,}/g, "\n\n")
+    // ── ליטוש טיפוגרפי (תקן הניסוח — voice.js) ──────────
+    // אלה תיקונים **דטרמיניסטיים** למה שה-AI כותב. הנחיה ב-prompt לבדה
+    // אינה אמינה מספיק לפרטים האלה (נצפה חי: Claude כתב "..." למרות
+    // ההוראה), ולכן אותה שיטה כמו בשאר הזרימות הקריטיות: prompt *וגם*
+    // רשת ביטחון שלא יכולה להיכשל.
+    .replace(/\.{3,}/g, "…")            // שלוש נקודות → תו יחיד
+    .replace(/([!?])\1{1,}/g, "$1")     // !! ?? → סימן אחד
+    .replace(/[ \t]+([,.!?:;])/g, "$1") // רווח לפני פיסוק
+    .replace(/([^\s])[ \t]{2,}(?=\S)/g, "$1 ")  // רווח כפול בתוך שורה
+    .replace(/[ \t]+$/gm, "")           // רווח בסוף שורה
     .trim();
 }
 
@@ -1114,7 +1124,15 @@ ${serviceRecoveryHe}
   לדוגמה:
   • *עיסוי שוודי* (60 דק') — ₪350
   • *עיסוי שוודי* (90 דק') — ₪470
-- הדגשה: *כוכבית אחת*. שורה ריקה בין קבוצות. אימוג'י במידה, לא בכל שורה.
+- הדגשה: *כוכבית אחת*. שורה ריקה בין קבוצות.
+- 🎩 *רמת קמפינסקי — ריסון.* זה ההבדל בין קונסיירז' של מלון חמישה כוכבים
+  לבין בוט מתלהב:
+  • **אימוג'י:** עד ארבעה בהודעה, ורק כשהם מוסיפים מידע (תווית של שורה,
+    לא קישוט). לעולם לא שניים-שלושה ברצף.
+  • **סימני קריאה:** עד שניים בהודעה. חום נמסר במילים, לא בפיסוק.
+  • **בלי היסוס:** לא "אולי", לא "נראה לי", לא "אני חושב". או שיש תשובה,
+    או ש"אבדוק ואחזור אליך" — ואז באמת בודקים.
+  • **בלי התנצלות כפולה.** מתנצלים פעם אחת, ואז פותרים.
 - אל תזרוק פרט בלי הקשר. פרט שצריך הסבר (למשל "המחיר לשני אנשים" או
   "בחדר טיפולים זוגי") נכתב כמשפט שלם מתחת לשורה, ולא כמילה תלושה בסוגריים.
 - שמור על הודעה קצרה — עד ~10 שורות. אם הרשימה ארוכה, הצג את המתאים ביותר
@@ -1490,8 +1508,16 @@ Rules:
   For example:
   • *Swedish massage* (60 min) — ₪350
   • *Swedish massage* (90 min) — ₪470
-- Emphasis: *single asterisks*. A blank line between groups. Emojis sparingly, not on
-  every line.
+- Emphasis: *single asterisks*. A blank line between groups.
+- 🎩 *Kempinski standard — restraint.* This is the difference between a five-star
+  concierge and an over-eager bot:
+  • **Emojis:** at most four per message, and only where they carry meaning (a line
+    label, not decoration). Never two or three in a row.
+  • **Exclamation marks:** at most two per message. Warmth comes from words, not
+    punctuation.
+  • **No hedging:** never "maybe", "I think", "it seems". Either you have the answer,
+    or you say "let me check and come back to you" — and then you actually check.
+  • **No double apology.** Apologise once, then solve it.
 - Never drop a detail without context. A detail that needs explaining (e.g. "the price
   is for two people", "in a couples treatment room") goes in a full sentence below the
   line — never as a stray word in brackets.

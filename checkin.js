@@ -431,7 +431,9 @@ export async function completeCheckin(reservationId, roomNumber) {
       `${keyLineHe}\n\n` +
       `${depositBlockHe}\n\n` +
       (amenitiesHe ? `${amenitiesHe}\n` : "") +
-      `לכל בקשה — אני כאן! 😊`
+      // ניסוח מרוסן בכוונה: ההודעה כבר נושאת שני סימני קריאה ("אושר!",
+      // "ברוכים הבאים…!"). שלישי הופך אותה מאירוח נלהב למכירתית.
+      `לכל בקשה — אני כאן.`
     : `✅ *Check-in confirmed!*\n\n` +
       `Welcome, *${name}*! 🌟\n\n` +
       `🚪 *Room:* ${res.roomNumber}\n` +
@@ -440,7 +442,7 @@ export async function completeCheckin(reservationId, roomNumber) {
       `${keyLineEn}\n\n` +
       `${depositBlockEn}\n\n` +
       (amenitiesEn ? `${amenitiesEn}\n` : "") +
-      `I'm here for anything you need! 😊`,
+      `I'm here for anything you need.`,
     { lang }
   );
 
@@ -786,12 +788,12 @@ export async function processCheckout(phone, reservationId, lang = "he") {
         `תודה, *${name}*! שמחנו לארח אותך 🌟\n\n` +
         `✅ אין חיובים — *לא בוצע חיוב.*\n` +
         `💚 ההקפאה על הפיקדון (${shekels(res.deposit)}) תשוחרר על ידי חברת האשראי תוך *3-5 ימי עסקים*.\n\n` +
-        `נשמח לראותך שוב! ⭐`
+        `נשמח לראותך שוב. ⭐`
       : `🚪 *Check-out complete!*\n\n` +
         `Thank you, *${name}*! It was a pleasure hosting you 🌟\n\n` +
         `✅ No charges — *nothing was charged.*\n` +
         `💚 The hold on your ${shekels(res.deposit)} deposit will be released by your card issuer within *3–5 business days*.\n\n` +
-        `We hope to see you again! ⭐`,
+        `We hope to see you again. ⭐`,
       { lang }
     );
   }
@@ -804,11 +806,11 @@ export async function processCheckout(phone, reservationId, lang = "he") {
       ? `🚪 *צ'ק אאוט הושלם!*\n\n` +
         `תודה, *${name}*! שמחנו לארח אותך 🌟\n\n` +
         formatFolio(res, lang, { settled: true }) + "\n\n" +
-        `נשמח לראותך שוב! ⭐`
+        `נשמח לראותך שוב. ⭐`
       : `🚪 *Check-out complete!*\n\n` +
         `Thank you, *${name}*! It was a pleasure hosting you 🌟\n\n` +
         formatFolio(res, lang, { settled: true }) + "\n\n" +
-        `We hope to see you again! ⭐`,
+        `We hope to see you again. ⭐`,
       { lang }
     );
   }

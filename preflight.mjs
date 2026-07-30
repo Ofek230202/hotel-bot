@@ -96,6 +96,7 @@ const config  = await import("./config.js");
 const tenant  = await import("./tenant.js");
 const { places, placesLive } = await import("./places/index.js");
 const { haversineMeters } = await import("./places/util.js");
+const { VOICE_RULES, auditAll } = await import("./voice.js");
 const { SAMPLE_HOTELS, seedSampleHotels } = await import("./sample-hotels.mjs");
 
 seedSampleHotels({
@@ -562,40 +563,27 @@ function sectionD() {
   const guestMsgs = outbox.filter(m => !staffNumbers.has(m.to));
   note(`נבדקות ${guestMsgs.length} הודעות לאורחים`);
 
-  const RULES = [
-    ["תג פנימי דלף לאורח",        /\[(HK|HK_URGENT|MAINTENANCE|ROOMSERVICE|CONCIERGE|RECEPTION|SECURITY|EMERGENCY|CHECKIN|CHECKOUT)\b/],
-    ["טבלת markdown (וואטסאפ לא מרנדר)", /\|\s*:?-{3,}/],
-    ["הדגשה כפולה **",            /\*\*/],
-    ["כותרת markdown ###",        /^#{1,6}\s/m],
-    ["קו מפריד ---",              /^\s*[-_*]{3,}\s*$/m],
-    ["undefined בטקסט",           /\bundefined\b/],
-    ["null בטקסט",                /\bnull\b/],
-    ["NaN בטקסט",                 /\bNaN\b/],
-    ["[object Object]",           /\[object Object\]/],
-    ["placeholder שלא הוחלף",     /\{(hotel|deposit|checkout_time|name|room)\}/],
-    ["שלוש שורות ריקות ברצף",     /\n{3,}/],
-    ["צורת לוכסן (הקלד/י)",       /(הקלד|כתוב|בחר|שלח|לחץ)\/[יא]/],
-    ["רווח כפול בתוך משפט",       /\S {2,}\S/],
-  ];
+  // 🔴 מקור אמת אחד לכללי הניסוח: `voice.js`. קודם הייתה כאן רשימת
+  //    כללים משלה, וזה בדיוק המצב שבו שני מקומות מתפצלים — מתקנים כלל
+  //    באחד, והשני ממשיך לאשר טקסט שבור.
+  const res = auditAll(guestMsgs.map(m => ({ body: m.body, to: m.to })));
 
-  const violations = [];
-  for (const m of guestMsgs) {
-    for (const [label, re] of RULES) {
-      if (re.test(m.body)) violations.push({ label, to: m.to, body: m.body.slice(0, 160) });
-    }
-    if (!m.body.trim()) violations.push({ label: "הודעה ריקה", to: m.to, body: "" });
-    if (m.body.length > 1500) violations.push({ label: `הודעה ארוכה מ-1500 (${m.body.length})`, to: m.to, body: m.body.slice(0, 120) });
+  const errorRules = new Map();
+  for (const v of res.violations) {
+    if (v.severity === "info") continue;
+    if (!errorRules.has(v.rule)) errorRules.set(v.rule, { ...v, count: 0 });
+    errorRules.get(v.rule).count++;
   }
 
-  const byLabel = violations.reduce((a, v) => (a[v.label] = (a[v.label] || 0) + 1, a), {});
-  for (const [label] of RULES) {
-    check("D", label.startsWith("הודעה") ? label : `אין: ${label}`, !byLabel[label],
-      byLabel[label] ? `${byLabel[label]} מופעים. דוגמה: ${violations.find(v => v.label === label)?.body}` : "");
-  }
-  check("D", "אין הודעה ריקה", !byLabel["הודעה ריקה"]);
-  check("D", "אין הודעה מעל מגבלת וואטסאפ",
-    !Object.keys(byLabel).some(k => k.startsWith("הודעה ארוכה")),
-    Object.keys(byLabel).filter(k => k.startsWith("הודעה ארוכה")).join(", "));
+  check("D", `כללי הניסוח (${VOICE_RULES.length} כללים) — אין הפרות ברמת שגיאה`,
+    res.bySeverity.error === 0,
+    [...errorRules.values()].filter(v => v.severity === "error")
+      .map(v => `${v.rule} ×${v.count}: ${v.sample}`).join(" | "));
+
+  check("D", "כללי הניסוח — אין אזהרות טון",
+    res.bySeverity.warn === 0,
+    [...errorRules.values()].filter(v => v.severity === "warn")
+      .map(v => `${v.rule} ×${v.count}: ${v.why}`).join(" | "));
 
   // עקביות שפה: אורח אנגלי לא מקבל בלוקים בעברית.
   const enGuest = "whatsapp:+972557000003";
