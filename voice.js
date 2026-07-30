@@ -26,8 +26,14 @@ const HEB = /[֐-׿]/;
 //    בגרסה הראשונה הוא נכלל בטעות, ולכן "⚠️" (שני קודפוינטים) נספר
 //    כשני אמוג׳י — ו-"📝 ⚠️" נראה כשלושה ברצף. המבקר דיווח הפרה שלא
 //    קיימת. כאן ה-VS16 הוא **סיומת אופציונלית** של התו שלפניו.
-const EMOJI_CORE = "[⌚-⌛⏩-⏺◽-◾☀-➿⬀-⯿\\u{1F000}-\\u{1FAFF}]";
-const EMOJI = new RegExp(`${EMOJI_CORE}\\uFE0F?`, "gu");
+// ⚠️ דגל (🇮🇱) הוא **זוג** Regional Indicators, ונספר כשני אמוג׳י — כך
+//    "💳 🇮🇱" בעמוד הפיקדון נראה כשלושה ברצף. הזוג נתפס תחילה, כיחידה.
+const FLAG = "[\\u{1F1E6}-\\u{1F1FF}]{2}";
+// 🔴 טווח ה-Regional Indicators **מוחרג** מהטווח הכללי. בלי ההחרגה
+//    האלטרנטיבה הקצרה עדיין תופסת כל חצי דגל בנפרד בעת backtracking,
+//    ולכן "💳 🇮🇱" (שני אמוג׳י) נספר כשלושה — הכלל נראה מתוקן ולא היה.
+const EMOJI_CORE = "[⌚-⌛⏩-⏺◽-◾☀-➿⬀-⯿\\u{1F000}-\\u{1F1E5}\\u{1F200}-\\u{1FAFF}]";
+const EMOJI = new RegExp(`${FLAG}|${EMOJI_CORE}\\uFE0F?`, "gu");
 
 // ביטויים שקונסיירז' של מלון יוקרה לא אומר, ולמה.
 //
@@ -115,9 +121,12 @@ export const VOICE_RULES = [
   //    הצמידה אמוג׳י משורות שונות. הבדיקה חייבת להיות בתוך שורה אחת
   //    ועל צמידות אמיתית, אחרת המבקר מדווח שקר — ומבקר ששקרן פעם אחת
   //    מפסיקים להקשיב לו.
+  // ⚠️ העטיפה `(?:…)` סביב `EMOJI.source` הכרחית: המקור מכיל חלופה (`|`),
+  //    ובלי סוגריים ה-`\s?` נצמד רק לחלופה האחרונה — והכלל התנהג אחרת
+  //    לגמרי ממה שנראה בקוד.
   { id: "emoji-run", severity: "error",
     test: t => t.split("\n").some(line =>
-      new RegExp(`(?:${EMOJI.source}\\s?){3,}`, "u").test(line.replace(/[^\S\n]{2,}/g, " "))),
+      new RegExp(`(?:(?:${EMOJI.source})\\s?){3,}`, "u").test(line.replace(/[^\S\n]{2,}/g, " "))),
     why: "שלושה אמוג׳י ברצף באותה שורה" },
 
   // רשימת פעלים סגורה פספסה נטיות ("להקליד/י", "מוזמנת/ים"). החתימה
@@ -133,7 +142,8 @@ export const VOICE_RULES = [
       const cleaned = t
         .replace(/\b[A-Z0-9]*\d[A-Z0-9-]*\b/g, " ")          // מזהים עם ספרות
         .replace(/\b[A-Z]+(?:-[A-Z]+)+\b/g, " ")              // מזהים מקופים
-        .replace(/\b(WIFI|WI-FI|VAT|ID|PDF|SMS|OK|VIP|USD|ILS|EUR|GBP|PMS)\b/g, " ");
+        // ORIGINAL הוא סימון חובה על חשבונית מס ("מקור") ולא צעקה.
+        .replace(/\b(WIFI|WI-FI|VAT|ID|PDF|SMS|OK|VIP|USD|ILS|EUR|GBP|PMS|ORIGINAL)\b/g, " ");
       return /\b[A-Z]{5,}\b/.test(cleaned);
     },
     why: "מילים באותיות גדולות באנגלית — נקרא כצעקה" },
@@ -195,6 +205,139 @@ function excerpt(t, rule) {
   }
   return flat.slice(0, 110);
 }
+
+// ════════════════════════════════════════════════════════
+//  עמודי HTML — הפיקדון, האישור והחשבונית
+//  ----------------------------------------------------------
+//  אלה עמודים שהאורח פותח **בטלפון**, לרוב ברגע הרגיש ביותר (מסירת
+//  פרטי כרטיס). הם חלק מהמותג בדיוק כמו הודעת הוואטסאפ, ולכן כפופים
+//  לאותו תקן — ובנוסף לכללים שרלוונטיים רק לדף אינטרנט.
+// ════════════════════════════════════════════════════════
+
+// חילוץ הטקסט שהאורח **רואה**: בלי script/style, בלי תגיות, עם ישויות
+// מפוענחות. בלי זה היינו בודקים CSS ומדווחים שטויות.
+export function visibleText(html) {
+  return String(html ?? "")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|h[1-6]|li|tr)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
+    .replace(/[^\S\n]{2,}/g, " ")
+    // ⚠️ החלפת תגיות ברווח מייצרת רווחים בקצות שורות ושורות ריקות.
+    //    בלי הניקוי הזה המבקר מדווח "רווח בסוף שורה" על כל עמוד — תלונה
+    //    על **שיטת החילוץ שלו**, לא על העמוד. רעש כזה מטביע ממצא אמיתי.
+    .split("\n").map(l => l.trim()).filter((l, i, a) => l || (a[i - 1] || "").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+const HTML_RULES = [
+  { id: "html-no-lang", severity: "error",
+    test: h => !/<html[^>]*\blang=/i.test(h),
+    why: "חסר lang ב-<html> — קורא מסך וגוגל לא יודעים באיזו שפה מדובר" },
+
+  { id: "html-no-dir", severity: "error",
+    test: h => !/<html[^>]*\bdir=/i.test(h),
+    why: "חסר dir — עמוד עברי חייב rtl, אחרת הפיסוק קופץ לצד הלא נכון" },
+
+  { id: "html-dir-mismatch", severity: "error",
+    test: h => /<html[^>]*lang="he"[^>]*dir="ltr"/i.test(h) || /<html[^>]*lang="en"[^>]*dir="rtl"/i.test(h),
+    why: "אי-התאמה בין lang ל-dir" },
+
+  { id: "html-no-viewport", severity: "error",
+    test: h => !/name=["']viewport["']/i.test(h),
+    why: "חסר viewport — האורח פותח בטלפון, והעמוד ייראה מוקטן" },
+
+  { id: "html-no-charset", severity: "error",
+    test: h => !/charset=/i.test(h),
+    why: "חסר charset — עברית עלולה להישבר לג׳יבריש" },
+
+  { id: "html-no-title", severity: "error",
+    test: h => !/<title>\s*\S[\s\S]*?<\/title>/i.test(h),
+    why: "חסרה כותרת <title> — זה מה שנראה בלשונית ובשיתוף" },
+
+  { id: "html-empty-link", severity: "error",
+    test: h => /<a\b[^>]*>\s*<\/a>/i.test(h),
+    why: "קישור בלי טקסט" },
+
+  { id: "html-dead-link", severity: "error",
+    test: h => /<a\b[^>]*href=["'](?:#|)["']/i.test(h),
+    why: "קישור ריק/מת — כפתור שלא מוביל לשום מקום" },
+
+  // ⚠️ אין כאן כלל "מספר קשיח": ב-HTML **מרונדר** מספר הוא תוצאה תקינה,
+  //    ולא ניתן להבחין מהפלט בין מספר שנגזר נכון לבין מספר שנכתב בקוד.
+  //    זו הבחנה שנעשית מול **הציפייה** — `expectWhatsApp` למטה — ובנוסף
+  //    יש בדיקה על קוד המקור עצמו (voice.test.mjs).
+
+  { id: "html-input-no-label", severity: "warn",
+    test: h => {
+      const inputs = h.match(/<input\b[^>]*>/gi) || [];
+      return inputs.some(i => !/type=["'](hidden|submit|button)["']/i.test(i)
+        && !/aria-label=/i.test(i) && !/placeholder=/i.test(i) && !/\bid=/i.test(i));
+    },
+    why: "שדה קלט בלי תווית/placeholder — לא נגיש" },
+
+  { id: "html-lang-mix", severity: "warn",
+    test: (h) => {
+      const lang = (h.match(/<html[^>]*lang="(\w\w)"/i) || [])[1];
+      if (lang !== "en") return false;
+      const text = visibleText(h);
+      // מותרות מילים בודדות (שם מלון); בלוק עברי משמעותי בעמוד אנגלי — לא.
+      return (text.match(/[֐-׿]/g) || []).length > 12;
+    },
+    why: "טקסט עברי משמעותי בעמוד באנגלית" },
+];
+
+/**
+ * בודק עמוד HTML: גם כללי ה-HTML, וגם תקן הניסוח על הטקסט הנראה.
+ */
+export function auditHtml(html, { id = "", expectWhatsApp = null, expectHotelName = null } = {}) {
+  const h = String(html ?? "");
+  const out = [];
+
+  // 🔴 בידוד מלונות בעמוד. שתי הבדיקות האלה תופסות בדיוק את הבאגים
+  //    שהתגלו כאן: כפתור "חזרה לצ'אט" שהוביל לוואטסאפ של מלון אחר,
+  //    ועמוד פיקדון שהיה ממותג בשם מלון אחר.
+  if (expectWhatsApp) {
+    const found = [...h.matchAll(/wa\.me\/(\d{6,})/g)].map(m => m[1]);
+    const want = String(expectWhatsApp).replace(/\D/g, "");
+    const wrong = found.filter(f => f !== want);
+    if (wrong.length) {
+      out.push({ id, rule: "html-wrong-whatsapp", severity: "error",
+        why: `כפתור הצ'אט מוביל ל-${wrong.join(", ")} במקום ל-${want} — האורח נשלח למלון אחר`,
+        sample: `[HTML] ${id}` });
+    }
+  }
+  if (expectHotelName) {
+    const text = visibleText(h);
+    if (!text.includes(expectHotelName)) {
+      out.push({ id, rule: "html-wrong-hotel", severity: "error",
+        why: `שם המלון "${expectHotelName}" אינו מופיע בעמוד — ככל הנראה ממותג במלון אחר`,
+        sample: `[HTML] ${id}: ${text.slice(0, 90)}` });
+    }
+  }
+
+  for (const rule of HTML_RULES) {
+    let hit = false;
+    try { hit = rule.test(h); } catch { hit = false; }
+    if (hit) out.push({ id, rule: rule.id, severity: rule.severity, why: rule.detail?.(h) || rule.why, sample: `[HTML] ${id}` });
+  }
+  // הטקסט הנראה כפוף לאותו תקן כמו הודעת וואטסאפ — פרט לכללים שאין
+  // להם משמעות בדף (אורך, ופיסוק שנובע מפריסה).
+  const skip = new Set(["too-long", "blank-lines", "markdown-leak"]);
+  for (const v of auditText(visibleText(h), { id })) {
+    if (!skip.has(v.rule)) out.push(v);
+  }
+  return out;
+}
+
+export { HTML_RULES };
 
 /** בודק אוסף הודעות ומחזיר סיכום. */
 export function auditAll(messages = []) {

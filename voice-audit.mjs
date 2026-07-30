@@ -179,6 +179,73 @@ async function collect() {
   //    שהאורח באמת קורא.
 }
 
+// ── עמודי HTML — מה שהאורח פותח בטלפון ──────────────────
+// נרנדרים דרך **HTTP אמיתי** מול הראוטר, ולא בקריאה ישירה לפונקציות:
+// כך נבדק בדיוק מה שנשלח לדפדפן, כולל הניתוב, קוד הסטטוס והשפה.
+async function collectPages() {
+  const express = (await import("express")).default;
+  const checkinRouter = (await import("./checkin-routes.js")).default;
+  const app = express();
+  app.use(checkinRouter);
+
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, () => resolve(s));
+  });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const pages = [];
+
+  const get = async (pathname, { lang = "he", label, hotel = null } = {}) => {
+    const res = await fetch(base + pathname, {
+      headers: { "accept-language": lang === "he" ? "he-IL,he;q=0.9" : "en-US,en;q=0.9" },
+      redirect: "follow",
+    });
+    const cfg = hotel ? config.configFor(hotel.id) : null;
+    pages.push({
+      id: `${label || pathname} [${lang}]`, html: await res.text(), status: res.status,
+      // הציפיות שמאתרות דליפה בין מלונות בעמוד עצמו.
+      expectWhatsApp: hotel ? tenant.fromNumberFor(hotel.id) : null,
+      expectHotelName: cfg ? (lang === "he" ? (cfg.name_he || cfg.name) : (cfg.name || cfg.name_he)) : null,
+    });
+  };
+
+  try {
+    // הזמנה אמיתית לכל מלון, כדי שהעמודים יהיו מלאים ולא במצב שגיאה.
+    for (const [hotel, lang] of [[LALA, "he"], [KEMP, "en"]]) {
+      const phone = `whatsapp:+9725559${hotel.id === "lala" ? "1" : "2"}0001`;
+      const { reservationId } = await tenant.runInTenant(hotel.id, () => checkin.startCheckin(
+        phone, { guestName: "דנה כהן", guestNameHe: "דנה כהן", guestNameEn: "Dana Cohen" },
+        `RES-PAGE-${hotel.id}`, { stay: { checkIn: "2099-06-01", checkOut: "2099-06-03", nights: 2 } },
+      ));
+      state.patchSession(phone, { lang }, hotel.id);
+
+      await get(`/checkin/pay?rid=${reservationId}`,    { lang, hotel, label: `${hotel.id}/פיקדון` });
+      await get(`/checkin/cancel?rid=${reservationId}`, { lang, hotel, label: `${hotel.id}/ביטול` });
+      await get(`/checkin/success?rid=${reservationId}`,{ lang, hotel, label: `${hotel.id}/אישור` });
+
+      // יתרה מעל הפיקדון + חשבונית
+      const r = checkin.reservations[reservationId];
+      r.balanceAmount = 12500;
+      await get(`/checkout/balance/pay?rid=${reservationId}`, { lang, hotel, label: `${hotel.id}/יתרה` });
+      await get(`/checkout/paid?rid=${reservationId}`,        { lang, hotel, label: `${hotel.id}/שולם` });
+      await get(`/checkout/skip?rid=${reservationId}`,        { lang, hotel, label: `${hotel.id}/ללא שינוי` });
+
+      tenant.runInTenant(hotel.id, () => checkin.addFolioItem(reservationId, "MINIBAR", lang === "he" ? "מיני בר" : "Mini bar", 11800));
+      await tenant.runInTenant(hotel.id, () => checkin.issueFolioInvoice(r, lang));
+      await get(`/invoice/${reservationId}`, { lang, hotel, label: `${hotel.id}/חשבונית` });
+    }
+    // עמוד שגיאה — הזמנה שאינה קיימת
+    await get(`/checkin/pay?rid=does-not-exist`, { lang: "he", label: "שגיאה" });
+    await get(`/checkin/pay?rid=does-not-exist`, { lang: "en", label: "שגיאה" });
+  } finally {
+    // ⚠️ סגירה מסודרת: בלי ניתוק החיבורים הפתוחים, `process.exit` בסוף
+    //    הריצה נופל על assertion של libuv בזמן שה-handle עדיין נסגר —
+    //    והכלי מחזיר קוד יציאה שגוי שנראה ככישלון.
+    server.closeAllConnections?.();
+    await new Promise(r => server.close(r));
+  }
+  return pages;
+}
+
 // ── הרצה ────────────────────────────────────────────────
 console.log(`\n${C.ye}${C.b}${"═".repeat(70)}\n  🎩 ביקורת ניסוח — רמת קמפינסקי\n${"═".repeat(70)}${C.r}`);
 try { await collect(); }
@@ -213,7 +280,38 @@ function report(title, res, total) {
 report("הודעות לאורח", g, guest.length);
 report("התראות צוות", s, staff.length);
 
-const totalErrors = g.bySeverity.error + s.bySeverity.error;
+// ── עמודי HTML ──────────────────────────────────────────
+let pageErrors = 0;
+try {
+  const { auditHtml } = await import("./voice.js");
+  const pages = await collectPages();
+  const pv = [];
+  for (const p of pages) pv.push(...auditHtml(p.html, { id: p.id, expectWhatsApp: p.expectWhatsApp, expectHotelName: p.expectHotelName }));
+
+  const bySev = { error: 0, warn: 0, info: 0 };
+  const byRule = {};
+  for (const v of pv) { bySev[v.severity]++; byRule[v.rule] = (byRule[v.rule] || 0) + 1; }
+  pageErrors = bySev.error;
+
+  console.log(`${C.b}── עמודי HTML (${pages.length} עמודים) ──${C.r}`);
+  if (!pv.length) console.log(`${C.gr}   ✅ אין הפרות${C.r}\n`);
+  else {
+    console.log(`   ${bySev.error ? C.re : C.dim}שגיאות: ${bySev.error}${C.r} · ${bySev.warn ? C.ye : C.dim}אזהרות: ${bySev.warn}${C.r} · ${C.dim}מידע: ${bySev.info}${C.r}`);
+    for (const [rule, count] of Object.entries(byRule).sort((a, b) => b[1] - a[1])) {
+      const first = pv.find(v => v.rule === rule);
+      const colour = first.severity === "error" ? C.re : first.severity === "warn" ? C.ye : C.dim;
+      console.log(`   ${colour}${first.severity === "error" ? "❌" : first.severity === "warn" ? "⚠️ " : "ℹ️ "} ${rule} ×${count}${C.r} — ${first.why}`);
+      const show = VERBOSE ? pv.filter(v => v.rule === rule) : [first];
+      for (const v of show.slice(0, VERBOSE ? 12 : 3)) console.log(`${C.dim}        ${v.id}: ${v.sample}${C.r}`);
+    }
+    console.log("");
+  }
+} catch (e) {
+  console.error(`${C.re}💥 ביקורת העמודים נכשלה: ${e.stack}${C.r}`);
+  pageErrors = 1;
+}
+
+const totalErrors = g.bySeverity.error + s.bySeverity.error + pageErrors;
 console.log(
   totalErrors === 0
     ? `${C.gr}${C.b}   ✅ אין הפרות ברמת שגיאה — הפלט עומד בתקן.${C.r}\n`
@@ -221,4 +319,6 @@ console.log(
 );
 
 try { fs.unlinkSync(process.env.DB_PATH); } catch {}
-process.exit(totalErrors === 0 ? 0 : 1);
+// יציאה בטיק הבא — נותן ל-handles להיסגר לפני שהתהליך נהרג.
+process.exitCode = totalErrors === 0 ? 0 : 1;
+setImmediate(() => process.exit(process.exitCode));

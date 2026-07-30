@@ -153,6 +153,85 @@ test("auditAll מסכם לפי חומרה וכלל", () => {
 // ════════════════════════════════════════════════════════
 //  הפלט האמיתי של המערכת עומד בתקן
 // ════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════
+//  עמודי HTML
+// ════════════════════════════════════════════════════════
+const { auditHtml, visibleText } = await import("./voice.js");
+const htmlIds = (h, o) => auditHtml(h, o).map(v => v.rule);
+
+const GOOD_PAGE = `<!DOCTYPE html>
+<html lang="he" dir="rtl"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>אישור פיקדון — לאלה בוטיק</title></head>
+<body><div class="hotel">✦ לאלה בוטיק</div>
+<h1>אישור פיקדון שהייה</h1>
+<a href="https://wa.me/15550001007" class="back-btn">💬 חזרה לצ'אט</a>
+</body></html>`;
+
+test("HTML: עמוד תקין עובר", () => {
+  assert.deepEqual(auditHtml(GOOD_PAGE).filter(v => v.severity !== "info"), []);
+});
+
+test("HTML: תופס חוסרים שמשפיעים על אורח בטלפון", () => {
+  assert.ok(htmlIds(GOOD_PAGE.replace(' lang="he"', "")).includes("html-no-lang"));
+  assert.ok(htmlIds(GOOD_PAGE.replace(' dir="rtl"', "")).includes("html-no-dir"));
+  assert.ok(htmlIds(GOOD_PAGE.replace(/<meta name="viewport"[^>]*>/, "")).includes("html-no-viewport"));
+  assert.ok(htmlIds(GOOD_PAGE.replace(/<meta charset[^>]*>/, "")).includes("html-no-charset"));
+  assert.ok(htmlIds(GOOD_PAGE.replace(/<title>.*?<\/title>/, "")).includes("html-no-title"));
+  // עמוד עברי שסומן ltr — הפיסוק יקפוץ לצד הלא נכון
+  assert.ok(htmlIds(GOOD_PAGE.replace('dir="rtl"', 'dir="ltr"')).includes("html-dir-mismatch"));
+});
+
+test("HTML: תופס קישור מת וקישור בלי טקסט", () => {
+  assert.ok(htmlIds(GOOD_PAGE.replace(/href="[^"]*"/, 'href="#"')).includes("html-dead-link"));
+  assert.ok(htmlIds(GOOD_PAGE.replace(/>💬 חזרה לצ'אט</, "><")).includes("html-empty-link"));
+});
+
+// 🔴 שני הבאגים האמיתיים שנמצאו בעמודים, ושהיו בלתי נראים עם מלון אחד.
+test("HTML: תופס כפתור צ'אט שמוביל למלון אחר", () => {
+  const r = auditHtml(GOOD_PAGE, { expectWhatsApp: "+15550001001" });
+  const v = r.find(x => x.rule === "html-wrong-whatsapp");
+  assert.ok(v, "🔴 אורח נשלח לוואטסאפ של מלון אחר ואיש לא שם לב");
+  assert.match(v.why, /15550001007/);
+  // עם הציפייה הנכונה — נקי
+  assert.ok(!htmlIds(GOOD_PAGE, { expectWhatsApp: "+15550001007" }).includes("html-wrong-whatsapp"));
+});
+
+test("HTML: תופס עמוד שממותג בשם מלון אחר", () => {
+  assert.ok(htmlIds(GOOD_PAGE, { expectHotelName: "מלון קמפינסקי" }).includes("html-wrong-hotel"),
+    "🔴 עמוד הפיקדון של LALA היה ממותג Kempinski");
+  assert.ok(!htmlIds(GOOD_PAGE, { expectHotelName: "לאלה בוטיק" }).includes("html-wrong-hotel"));
+});
+
+test("HTML: תקן הניסוח חל גם על הטקסט הנראה", () => {
+  assert.ok(htmlIds(GOOD_PAGE.replace("אישור פיקדון שהייה", "החדר שלך undefined")).includes("code-value"),
+    "🔴 'undefined' בעמוד — בדיוק מה שקרה בשורת הבריכה במלון בלי בריכה");
+  assert.ok(htmlIds(GOOD_PAGE.replace("אישור פיקדון שהייה", "רגע...")).includes("three-dots"));
+});
+
+test("HTML: חילוץ הטקסט הנראה מתעלם מ-CSS ו-JS", () => {
+  const t = visibleText(`<style>body{color:red}</style><script>var x="הודעה סודית"</script><p>שלום</p>`);
+  assert.equal(t, "שלום", "CSS/JS לא נכנסים לביקורת — אחרת מדווחים שטויות");
+  assert.ok(!visibleText(GOOD_PAGE).includes("<"), "אין תגיות בטקסט הנראה");
+  assert.ok(!/[ \t]$/m.test(visibleText(GOOD_PAGE)), "אין רווחים בקצה שורה מהחילוץ עצמו");
+});
+
+test("HTML: דגל הוא אמוג׳י אחד, לא שניים", () => {
+  // 🔴 "💳 🇮🇱" בעמוד הפיקדון סומן כשלושה אמוג׳י ברצף: הדגל הוא זוג
+  //    Regional Indicators, וטווח האמוג׳י הכללי בלע כל חצי בנפרד.
+  assert.ok(!htmlIds(GOOD_PAGE.replace("<h1>", "<h1>💳 🇮🇱 ")).includes("emoji-run"));
+  assert.ok(auditText("💳 🇮🇱").length === 0, "שני אמוג׳י אינם רצף");
+  assert.ok(has("🎉 🎊 🥳 🌟", "emoji-run"), "אבל ארבעה כן");
+});
+
+test("HTML: אין מספר וואטסאפ קשיח בקוד המקור", async () => {
+  const fs = await import("node:fs");
+  const src = fs.readFileSync("checkin-routes.js", "utf8");
+  const hard = src.match(/wa\.me\/\d{6,}/g) || [];
+  assert.deepEqual(hard, [],
+    `🔴 מספר קשיח בקוד: ${hard.join(", ")} — חייב להיגזר מ-fromNumberFor(hotelId)`);
+});
+
 test("הודעות הפתיחה של שני המלונות עומדות בתקן", async () => {
   const config = await import("./config.js");
   for (const hid of ["lala", "kempinski"]) {

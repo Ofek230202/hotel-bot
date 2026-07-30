@@ -7,7 +7,7 @@ import { payments } from "./payments/index.js";
 import { peekSession } from "./state.js";
 import { nameFor } from "./names.js";
 import { hotelConfig, configFor } from "./config.js";
-import { runInTenant } from "./tenant.js";
+import { runInTenant, fromNumberFor } from "./tenant.js";
 
 const router = express.Router();
 
@@ -93,7 +93,7 @@ router.get("/checkin/success", async (req, res) => {
 // ── Cancel page ───────────────────────────────────────
 router.get("/checkin/cancel", (req, res) => {
   const reservation = reservations[req.query?.rid];
-  res.send(cancelPage(pageLang(req, reservation)));
+  res.send(cancelPage(pageLang(req, reservation), reservation?.hotelId));
 });
 
 // ── יתרה מעל הפיקדון — תשלום בכרטיס *אחר* ──────────────
@@ -104,7 +104,7 @@ router.get("/checkout/balance/pay", (req, res) => {
   const { rid } = req.query;
   const reservation = reservations[rid];
   if (!reservation || !reservation.balanceAmount) {
-    return res.send(errorPage("no_balance", pageLang(req, reservation)));
+    return res.send(errorPage("no_balance", pageLang(req, reservation), reservation?.hotelId));
   }
   res.send(balancePage(rid, reservation, pageLang(req, reservation)));
 });
@@ -129,13 +129,13 @@ router.get("/checkout/paid", (req, res) => {
   const { rid } = req.query;
   const reservation = reservations[rid];
   const amount = shekels(reservation?.balanceAmount || 0);
-  res.send(balancePaidPage(amount, pageLang(req, reservation)));
+  res.send(balancePaidPage(amount, pageLang(req, reservation), reservation?.hotelId));
 });
 
 // דף "נשאר בכרטיס הפיקדון" (האורח ביטל את החלפת הכרטיס)
 router.get("/checkout/skip", (req, res) => {
   const reservation = reservations[req.query?.rid];
-  res.send(balanceSkipPage(pageLang(req, reservation)));
+  res.send(balanceSkipPage(pageLang(req, reservation), reservation?.hotelId));
 });
 
 // ── חשבונית מס-קבלה — מסמך HTML מלא (Part ה') ──────────
@@ -145,7 +145,7 @@ router.get("/checkout/skip", (req, res) => {
 router.get("/invoice/:rid", (req, res) => {
   const reservation = reservations[req.params.rid];
   if (!reservation || !reservation.invoice) {
-    return res.send(errorPage("no_reservation", pageLang(req, reservation)));
+    return res.send(errorPage("no_reservation", pageLang(req, reservation), reservation?.hotelId));
   }
   const lang = reservation.invoice.lang || pageLang(req, reservation);
   res.send(invoicePage(reservation, lang));
@@ -319,6 +319,10 @@ function successPage(reservation, roomNumber, lang = "he") {
         room: "Room", stay: "Stay", checkout: "Check-out", deposit: "Deposit",
         breakfast: "Breakfast", pool: "Pool", wifiPass: "Password", back: "💬 Back to chat" };
 
+  // 🔴 שורה בלי ערך לא מוצגת. קודם נכתב `[T.pool, pool.hours]` תמיד, ולכן
+  //    במלון בוטיק בלי בריכה העמוד הציג לאורח שורה "בריכה — undefined".
+  //    זה בדיוק אותו דפוס שתוקן בהודעות: מלון אחד יורש הנחות של מלון אחר.
+  //    `filter` על ערך ריק, ולא רק על `null` של השורה עצמה.
   const rows = [
     [T.room, `🚪 ${roomNumber}`],
     stay ? [T.stay, `📅 ${stay}`] : null,
@@ -326,10 +330,12 @@ function successPage(reservation, roomNumber, lang = "he") {
     [T.deposit, `${shekels(reservation.deposit)} ✓`],
     [T.breakfast, bf.hours],
     [T.pool, pool.hours],
-  ].filter(Boolean);
+  ].filter(r => r && r[1] != null && String(r[1]).trim() !== "");
 
   return shellPage({
-    lang, title: T.title, icon: "✅", hotelName: cfg.name,
+    // hotelId ולא hotelName: כך השם נבחר **בשפת העמוד** (עברית → name_he),
+    // ואורח שקורא עברית לא מקבל שם לטיני בלבד.
+    lang, hotelId: reservation?.hotelId, title: T.title, icon: "✅",
     body: `
   <h1>${T.heading}</h1>
   <p class="welcome">${T.sub}</p>
@@ -348,7 +354,7 @@ function successPage(reservation, roomNumber, lang = "he") {
 
   <p class="deposit-note">${depositExplainer(lang).replace(/\n/g, "<br>")}</p>
 
-  <a href="https://wa.me/14155238886" class="back-btn">${T.back}</a>`,
+  ${backBtn(lang, reservation?.hotelId, T.back)}`,
   });
 }
 
@@ -364,26 +370,53 @@ const ERRORS = {
   },
 };
 
-function errorPage(kind, lang = "he") {
+function errorPage(kind, lang = "he", hotelId = null) {
   const t = (ERRORS[kind] || ERRORS.no_reservation)[lang === "he" ? "he" : "en"];
   return shellPage({
-    lang, title: t.title, icon: "❌", accent: "rgba(239,68,68,0.2)",
+    lang, hotelId, title: t.title, icon: "❌", accent: "rgba(239,68,68,0.2)",
     body: `<h1>${t.title}</h1>
   <p class="welcome">${t.body}</p>
-  <a href="https://wa.me/14155238886" class="back-btn">${lang === "he" ? "💬 חזרה לצ'אט" : "💬 Back to chat"}</a>`,
+  ${backBtn(lang, hotelId)}`,
   });
 }
 
 // ── שלד עמוד משותף ─────────────────────────────────────
 // dir/lang/יישור נגזרים משפת העמוד — כדי שעמוד באנגלית לא ייצא RTL.
-function shellPage({ lang, title, icon, body, accent = "rgba(201,168,76,0.2)", hotelName = hotelConfig.name }) {
+// ── כפתור "חזרה לצ'אט" — פר-מלון ────────────────────────
+// 🔴 המספר היה **קשיח בקוד** בחמישה עמודים (מספר ה-sandbox). אורח של
+//    מלון שני היה נשלח לוואטסאפ של המלון הראשון — כלומר לצ'אט של עסק
+//    אחר לגמרי. עם מספר אחד זה נראה תקין לחלוטין.
+//    עכשיו הקישור נגזר מ-`fromNumberFor(hotelId)`, במקום אחד.
+function backBtn(lang, hotelId = null, label = null) {
   const he = lang === "he";
+  const digits = String(fromNumberFor(hotelId) || process.env.TWILIO_WHATSAPP_NUMBER || "").replace(/\D/g, "");
+  const text = label || (he ? "💬 חזרה לצ'אט" : "💬 Back to chat");
+  // בלי מספר — לא מייצרים קישור שבור; מציגים טקסט בלבד.
+  if (!digits) return `<span class="back-btn">${text}</span>`;
+  return `<a href="https://wa.me/${digits}" class="back-btn">${text}</a>`;
+}
+
+// 🔴 שני באגים רב-מלוניים שהיו כאן, ושניהם היו בלתי נראים עם מלון אחד:
+//
+//  1. `hotelName` נפל לברירת המחדל (קמפינסקי) בכל עמוד שלא העביר אותו
+//     במפורש — ביטול, שגיאה, ותשלום יתרה. אורח של LALA היה רואה עמוד
+//     ממותג **בשם מלון אחר**.
+//  2. כפתור "חזרה לצ'אט" נשא מספר וואטסאפ **קשיח בקוד** (מספר ה-sandbox),
+//     בחמישה מקומות. אורח של מלון שני היה נשלח לוואטסאפ של המלון הראשון.
+//
+// שניהם נפתרים כאן, בשלד — כדי ששום עמוד לא יוכל לשכוח. `hotelId` הוא
+// הפרמטר היחיד שצריך להעביר, והשלד גוזר ממנו גם את השם וגם את הקישור.
+function shellPage({ lang, title, icon, body, accent = "rgba(201,168,76,0.2)", hotelId = null, hotelName = null }) {
+  const he = lang === "he";
+  const cfg = configFor(hotelId);
+  // שם בשפת העמוד: אורח שקורא עברית לא אמור לראות שם לטיני בלבד.
+  const name = hotelName || (he ? (cfg.name_he || cfg.name) : (cfg.name || cfg.name_he));
   return `<!DOCTYPE html>
 <html lang="${he ? "he" : "en"}" dir="${he ? "rtl" : "ltr"}">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${title} — ${hotelName}</title>
+<title>${escapeHtml(title)} — ${escapeHtml(name)}</title>
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;600;700&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -408,7 +441,7 @@ h1{font-family:'Playfair Display',serif;font-size:28px;margin-bottom:8px}
 <body>
 <div class="card">
   <div class="icon">${icon}</div>
-  <div class="hotel">✦ ${hotelName}</div>
+  <div class="hotel">✦ ${escapeHtml(name)}</div>
   ${body}
 </div>
 </body>
@@ -419,12 +452,16 @@ h1{font-family:'Playfair Display',serif;font-size:28px;margin-bottom:8px}
 function paymentPage(rid, reservation, lang = "he") {
   const he = lang === "he";
   const cfg = configFor(reservation?.hotelId); // מיתוג לפי המלון של ההזמנה
+  // 🔴 שם המלון **של ההזמנה**, בשפת העמוד. קודם היה כאן hotelConfig.name
+  //    (מלון ברירת המחדל), ולכן עמוד הפיקדון של אורח LALA — העמוד שבו הוא
+  //    מוסר פרטי כרטיס — היה ממותג בשם "Kempinski Hotel".
+  const hotelName = he ? (cfg.name_he || cfg.name) : (cfg.name || cfg.name_he);
   const amount = ((reservation.deposit || 50000) / 100).toFixed(0); // ₪500
   const stay = formatStayShort(stayOf(reservation), lang);
   const T = he
     ? {
-        title: `אישור פיקדון — ${hotelConfig.name}`,
-        hotel: `✦ ${hotelConfig.name}`,
+        title: `אישור פיקדון — ${hotelName}`,
+        hotel: `✦ ${hotelName}`,
         heading: "אישור פיקדון שהייה",
         sub: stay || "הקפאת פיקדון מאובטחת",
         depositLabel: "סכום הפיקדון",
@@ -442,8 +479,8 @@ function paymentPage(rid, reservation, lang = "he") {
         invalid: "נא למלא את כל השדות כנדרש",
       }
     : {
-        title: `Confirm Deposit — ${hotelConfig.name}`,
-        hotel: `✦ ${hotelConfig.name}`,
+        title: `Confirm Deposit — ${hotelName}`,
+        hotel: `✦ ${hotelName}`,
         heading: "Confirm Security Deposit",
         sub: stay || "Secure deposit hold",
         depositLabel: "Deposit amount",
@@ -589,12 +626,16 @@ input::placeholder{color:rgba(250,250,248,0.25)}
 function balancePage(rid, reservation, lang = "he") {
   const he = lang === "he";
   const cfg = configFor(reservation?.hotelId); // מיתוג לפי המלון של ההזמנה
+  // 🔴 שם המלון **של ההזמנה**, בשפת העמוד. קודם היה כאן hotelConfig.name
+  //    (מלון ברירת המחדל), ולכן עמוד הפיקדון של אורח LALA — העמוד שבו הוא
+  //    מוסר פרטי כרטיס — היה ממותג בשם "Kempinski Hotel".
+  const hotelName = he ? (cfg.name_he || cfg.name) : (cfg.name || cfg.name_he);
   const amount = ((reservation.balanceAmount || 0) / 100).toFixed(0);
   const name = escapeHtml(nameFor(reservation, lang)); // escape — קלט אורח ב-HTML (Part ב')
   const T = he
     ? {
-        title: `תשלום יתרה בכרטיס אחר — ${hotelConfig.name}`,
-        hotel: `✦ ${hotelConfig.name}`,
+        title: `תשלום יתרה בכרטיס אחר — ${hotelName}`,
+        hotel: `✦ ${hotelName}`,
         heading: "תשלום יתרה בכרטיס אחר",
         sub: `חדר ${reservation.roomNumber} · ${name}`,
         amountLabel: "יתרה לתשלום (מעל הפיקדון)",
@@ -605,8 +646,8 @@ function balancePage(rid, reservation, lang = "he") {
         secure: "🔒 מאובטח — דמו, לא מבוצע חיוב אמיתי", invalid: "נא למלא את כל השדות כנדרש",
       }
     : {
-        title: `Pay balance with another card — ${hotelConfig.name}`,
-        hotel: `✦ ${hotelConfig.name}`,
+        title: `Pay balance with another card — ${hotelName}`,
+        hotel: `✦ ${hotelName}`,
         heading: "Pay balance with another card",
         sub: `Room ${reservation.roomNumber} · ${name}`,
         amountLabel: "Balance due (over the deposit)",
@@ -718,43 +759,43 @@ input::placeholder{color:rgba(250,250,248,0.25)}
 }
 
 // דף אישור לאחר העברת ההפרש לכרטיס אחר
-function balancePaidPage(amount, lang = "he") {
+function balancePaidPage(amount, lang = "he", hotelId = null) {
   const he = lang === "he";
   return shellPage({
-    lang, icon: "✅",
+    lang, hotelId, icon: "✅",
     title: he ? "התשלום עודכן" : "Payment updated",
     body: `<h1>${he ? "התשלום עודכן" : "Payment updated"}</h1>
   <p class="welcome">${he
       ? `ההפרש (${amount}) חויב מהכרטיס החדש שהזנת, במקום מכרטיס הפיקדון.<br>תודה!`
       : `The difference (${amount}) was charged to the new card you entered, instead of your deposit card.<br>Thank you!`}</p>
-  <a href="https://wa.me/14155238886" class="back-btn">${he ? "💬 חזרה לצ'אט" : "💬 Back to chat"}</a>`,
+  ${backBtn(lang, hotelId)}`,
   });
 }
 
 // דף לאחר ביטול החלפת הכרטיס (ההפרש נשאר על כרטיס הפיקדון)
-function balanceSkipPage(lang = "he") {
+function balanceSkipPage(lang = "he", hotelId = null) {
   const he = lang === "he";
   return shellPage({
-    lang, icon: "↩️",
+    lang, hotelId, icon: "↩️",
     title: he ? "ללא שינוי" : "No change made",
     body: `<h1>${he ? "ללא שינוי" : "No change made"}</h1>
   <p class="welcome">${he
       ? "ההפרש נשאר מחויב מכרטיס הפיקדון שהזנת בצ'ק אין.<br>אפשר לפנות לקבלה בכל שאלה."
       : "The difference remains charged to the card you entered at check-in.<br>Reception is happy to help with any question."}</p>
-  <a href="https://wa.me/14155238886" class="back-btn">${he ? "💬 חזרה לצ'אט" : "💬 Back to chat"}</a>`,
+  ${backBtn(lang, hotelId)}`,
   });
 }
 
-function cancelPage(lang = "he") {
+function cancelPage(lang = "he", hotelId = null) {
   const he = lang === "he";
   return shellPage({
-    lang, icon: "↩️", accent: "rgba(239,68,68,0.2)",
+    lang, hotelId, icon: "↩️", accent: "rgba(239,68,68,0.2)",
     title: he ? "אישור הפיקדון בוטל" : "Deposit cancelled",
     body: `<h1>${he ? "אישור הפיקדון בוטל" : "Deposit confirmation cancelled"}</h1>
   <p class="welcome">${he
       ? "לא בוצעה הקפאת פיקדון ולא בוצע חיוב.<br>אפשר לחזור לוואטסאפ ולנסות שוב, או לפנות לקבלה."
       : "No deposit hold was placed and nothing was charged.<br>Head back to WhatsApp to try again, or contact reception."}</p>
-  <a href="https://wa.me/14155238886" class="back-btn">${he ? "💬 חזרה לצ'אט" : "💬 Back to chat"}</a>`,
+  ${backBtn(lang, hotelId)}`,
   });
 }
 
