@@ -614,8 +614,11 @@ await bootstrapDemoHotel().catch(e => console.error("⚠️ bootstrapDemoHotel �
 const server = app.listen(PORT, () => {
   console.log(`\n🏨  Hotel Concierge Bot v4 — :${PORT}`);
   console.log(`📊  Dashboard → http://localhost:${PORT}`);
-  console.log(`🔄  Reset session: /reset/+972XXXXXXXXX?token=${PASS}`);
-  console.log(`🔄  Reset all: /reset-all?token=${PASS}\n`);
+  // 🔴 הסיסמה **לא** מודפסת. קודם היא נכתבה כאן במלואה, ולוגים של Railway
+  //    נשמרים וניתנים לצפייה — כלומר סיסמת הניהול של המערכת ישבה בלוג
+  //    לכל מי שיש לו גישה אליו. מדפיסים את הנתיב בלבד.
+  console.log(`🔄  Reset session: /reset/+972XXXXXXXXX?token=<DASHBOARD_PASSWORD>`);
+  console.log(`🔄  Reset all: /reset-all?token=<DASHBOARD_PASSWORD>\n`);
 
   // חיפוש אמיתי אחד מול Google, כדי שמפתח פסול יתגלה *עכשיו* ולא באמצע
   // הדגמה מול לקוח. לא ממתינים לו — השרת כבר מקבל בקשות; הכשל מטופל

@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --experimental-test-module-mocks --test e2e.test.mjs places.test.mjs safety.test.mjs scale.test.mjs idsecurity.test.mjs hoteltype.test.mjs tenant-isolation.test.mjs demo-switch.test.mjs demo-bootstrap.test.mjs pms-optima.test.mjs pms-vendors.test.mjs store.test.mjs voice.test.mjs persistence.test.mjs payments.test.mjs",
+    "test": "node --experimental-test-module-mocks --test e2e.test.mjs places.test.mjs safety.test.mjs scale.test.mjs idsecurity.test.mjs hoteltype.test.mjs tenant-isolation.test.mjs demo-switch.test.mjs demo-bootstrap.test.mjs pms-optima.test.mjs pms-vendors.test.mjs store.test.mjs voice.test.mjs persistence.test.mjs payments.test.mjs all-hotels.test.mjs",
     "voice": "node --experimental-test-module-mocks voice-audit.mjs",
     "pms:guide": "node pms-guide.mjs",
     "demo": "node --experimental-test-module-mocks simulate-demo.mjs",
