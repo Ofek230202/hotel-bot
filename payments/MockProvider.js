@@ -27,18 +27,18 @@ export class MockProvider extends PaymentProvider {
 
   // "חיוב" מצליח תמיד ומחזיר את הסכום שביקשנו לחייב.
   async capture({ amount } = {}) {
-    return { success: true, capturedAmount: amount || 0, status: "captured" };
+    return { ok: true, success: true, capturedAmount: amount || 0, status: "captured" };
   }
 
   // "ביטול" הרשאה מצליח תמיד.
   async cancel() {
-    return { success: true, status: "canceled" };
+    return { ok: true, success: true, status: "canceled" };
   }
 
   // "חיוב נוסף" מאותו כרטיס (מעבר לפיקדון) — מצליח תמיד ומחזיר את הסכום.
   // ב-Mock לא מתבצע חיוב אמיתי; אצל CardCom זה יהיה חיוב חוזר לפי token.
   async chargeSameCard({ amount } = {}) {
-    return { success: true, chargedAmount: amount || 0, status: "charged" };
+    return { ok: true, success: true, chargedAmount: amount || 0, status: "charged" };
   }
 
   // יצירת תשלום ליתרה בכרטיס אחר — מחזיר קישור לעמוד התשלום (paymentPageUrl),

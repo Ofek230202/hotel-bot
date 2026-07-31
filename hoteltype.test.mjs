@@ -231,7 +231,7 @@ test("paymentsFor: cardcom בלי credentials נופל ל-Mock — לא שובר
   assert.equal(auth.status, "authorized", "נפילה בטוחה ל-Mock");
 });
 
-test("paymentsFor: cardcom עם credentials בוחר CardComProvider (scaffold זורק בבירור)", async () => {
+test("paymentsFor: cardcom עם credentials בוחר CardComProvider ומוגדר", async () => {
   config.updateConfig({
     payment_provider: "cardcom",
     payment_credentials: { terminalNumber: "1000", apiName: "x", apiPassword: "y" },
@@ -239,8 +239,17 @@ test("paymentsFor: cardcom עם credentials בוחר CardComProvider (scaffold �
   pay.clearPaymentsCache();
   const p = pay.paymentsFor("kempinski");
   assert.ok(p instanceof cardcom.CardComProvider, "נבחר ספק CardCom");
-  await assert.rejects(() => p.authorizeDeposit({}), (e) => e.notConnected === true,
-    "ה-scaffold זורק שגיאת 'לא מחובר' — לא מדמה הצלחה שקרית");
+  // CardCom כבר אינו scaffold — הוא מבצע קריאות HTTP אמיתיות (מכוסה
+  // מקצה לקצה ב-payments.test.mjs עם fetch מוזרק).
+  assert.equal(p.isConfigured(), true);
+  assert.equal(p.terminalNumber, "1000");
+
+  // בלי credentials — נכשל בבירור ולא מתחזה לעובד.
+  const bare = new cardcom.CardComProvider({});
+  assert.equal(bare.isConfigured(), false);
+  await assert.rejects(() => bare.authorizeDeposit({}), (e) => e.notConnected === true);
+  // ואימות webhook סינכרוני מסרב תמיד — חייבים שאילתה חוזרת ל-CardCom.
+  assert.throws(() => p.verifyWebhook({}), /verifyWebhookAsync/);
 });
 
 // ════════════════════════════════════════════════════════

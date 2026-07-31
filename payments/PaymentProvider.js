@@ -6,6 +6,17 @@
 //  מדבר אך ורק עם הממשק הזה — לעולם לא עם ספק תשלום ספציפי.
 // ════════════════════════════════════════════════════════
 
+// ── חוזה התשובה — אחיד לכל הספקים ──────────────────────
+// 🔴 נמצא בפועל: `MockProvider` החזיר `{ success }` ו-`CardComProvider`
+//    החזיר `{ ok }`. שני ספקים מאחורי ממשק אחד שמדברים אחרת הם בדיוק מה
+//    שהשכבה נועדה למנוע — קוד שבודק `.ok` היה נשבר בשקט במעבר ל-Mock.
+//    הסטנדרט: **`ok`**. `success` נשמר כשם נרדף לתאימות לאחור.
+//
+//    capture       → { ok, capturedAmount, transactionId?, raw? }
+//    cancel        → { ok, raw? }
+//    chargeSameCard→ { ok, chargedAmount, transactionId?, raw? }
+//    authorizeDeposit / createBalancePayment → { paymentId, redirectUrl, raw? }
+//    💰 כל הסכומים **באגורות** (מספר שלם), כמו בכל שאר המערכת.
 export class PaymentProvider {
   /**
    * יוצר הרשאת פיקדון (pre-authorization) — "תופס" סכום בלי לחייב בפועל.
