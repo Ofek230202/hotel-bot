@@ -13,7 +13,8 @@
 | **מלונות מוגדרים** | **LALA Boutique** (בוטיק · דרך בן צבי 78 · קוד לדלת · בלי צוות במקום) · **The David Kempinski** (מלון מלא · הירקון 51 · כרטיס בקבלה · צוות 24/7) |
 | **בידול** | מלא ומאומת — מיקום, קונסיירז', מחלקות, עוסק לחשבונית, שירותים. אין מסלול שבו פרט של מלון אחד מגיע לאורח של השני |
 | **ענן (פרודקשן)** | Railway · `https://hotel-bot-production-0230.up.railway.app` · Node v24.18.0 |
-| **מלון פעיל בענן** | **LALA** — דרך `DEMO_HOTEL=lala` (משתנה סביבה) |
+| **מלון פעיל בענן** | **קמפינסקי** (הוגדר ידנית 31.07). ⚠️ `DEMO_HOTEL` ב-Railway עדיין `lala` — **redeploy יחזיר ל-LALA**. לקיבוע: `DEMO_HOTEL=kempinski` |
+| **מלון פעיל מקומית** | קמפינסקי (`npm run demo:kempinski`) |
 | **מספר וואטסאפ** | `whatsapp:+14155238886` (Twilio Sandbox) — מספר **אחד** שמשרת מלון אחר בכל יום |
 | **תשלומים** | `payments/` — Mock (דמו) / CardCom (סליקה ישראלית), בחירה פר-מלון. **Stripe הוסר לגמרי** |
 | **PMS** | `pms/` — Mock פעיל. **13 מערכות נתמכות** (אופטימה · אורקל/OHIP · Mews · Cloudbeds · Apaleo · protel · Fidelio · Guestline · RoomRaccoon · StayNTouch · Clock · Hotelogix · eZee). ראה `PMS_GUIDE.md` ו-`OPTIMA_PMS.md` |

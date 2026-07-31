@@ -116,13 +116,22 @@ if (vr?.hotelId === want) {
   process.exit(1);
 }
 
+// 🔴 שלושה מצבים שונים לגמרי, ואסור לבלבל ביניהם. הגרסה הראשונה אמרה
+//    "ההגדרה תשרוד redeploy" גם כש-DEMO_HOTEL הצביע על מלון **אחר** —
+//    כלומר הבטיחה יציבות בדיוק במצב שבו השינוי ייהרס.
 if (!vr.demoHotel) {
   console.log(
-    `\n${C.ye}   ⚠️ חשוב: DEMO_HOTEL אינו מוגדר בענן.${C.r}\n` +
-    `${C.dim}      ההגדרה שנכתבה עכשיו יושבת בבסיס הנתונים, ועל Railway היא\n` +
-    `      תימחק ב-redeploy הבא. כדי שזה יחזיק: Railway → Variables →\n` +
-    `      DEMO_HOTEL = ${want}${C.r}\n`
+    `\n${C.ye}   ⚠️ DEMO_HOTEL אינו מוגדר בענן — השינוי הזה **זמני**.${C.r}\n` +
+    `${C.dim}      הוא יושב בבסיס הנתונים, ועל Railway מערכת הקבצים בת-חלוף,\n` +
+    `      ולכן הוא יימחק ב-redeploy הבא.\n` +
+    `      כדי שיחזיק: Railway → Variables → DEMO_HOTEL = ${want}${C.r}\n`
+  );
+} else if (String(vr.demoHotel).toLowerCase() !== want) {
+  console.log(
+    `\n${C.re}${C.b}   ⚠️ שימי לב: DEMO_HOTEL בענן הוא "${vr.demoHotel}" — ולא "${want}".${C.r}\n` +
+    `${C.re}      הענן עונה עכשיו כ-"${want}", אבל ב-redeploy הבא הוא **יחזור ל-"${vr.demoHotel}"**.${C.r}\n` +
+    `${C.dim}      כדי שהשינוי יחזיק: Railway → Variables → DEMO_HOTEL = ${want}${C.r}\n`
   );
 } else {
-  console.log(`\n${C.gr}   ✅ DEMO_HOTEL=${vr.demoHotel} מוגדר — ההגדרה תשרוד redeploy.${C.r}\n`);
+  console.log(`\n${C.gr}   ✅ DEMO_HOTEL=${vr.demoHotel} תואם — ההגדרה תשרוד redeploy.${C.r}\n`);
 }
