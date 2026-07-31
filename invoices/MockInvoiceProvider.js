@@ -13,7 +13,7 @@
 //     *אחורה* מהסכום הכולל: net = total / 1.18, vat = total − net.
 // ════════════════════════════════════════════════════════
 import { InvoiceProvider } from "./InvoiceProvider.js";
-import { nextInvoiceSeq } from "../db.js";
+import { nextInvoiceSeqSafe } from "../db.js";
 
 export class MockInvoiceProvider extends InvoiceProvider {
   async issueInvoice({
@@ -39,7 +39,9 @@ export class MockInvoiceProvider extends InvoiceProvider {
 
     // ── מספר סידורי רץ, פר-מלון ─────────────────────────
     const hotelId = res.hotelId || "kempinski";
-    const seq     = nextInvoiceSeq(hotelId);
+    // await: במסלול Postgres זו הקצאה אטומית (UPDATE … RETURNING). בלעדיה
+    // שני צ'ק אאוטים בו-זמנית יכולים לקבל אותו מספר חשבונית — בעיה חוקית.
+    const seq     = await nextInvoiceSeqSafe(hotelId);
     const year    = new Date().getFullYear();
     const number  = `${year}-${String(seq).padStart(5, "0")}`;
 

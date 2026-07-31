@@ -221,3 +221,27 @@ export function nextInvoiceSeq(hotelId = DEFAULT_HOTEL_ID) {
   db.prepare(`UPDATE invoice_counters SET seq = seq + 1 WHERE hotel_id = ?`).run(hotelId);
   return db.prepare(`SELECT seq FROM invoice_counters WHERE hotel_id = ?`).get(hotelId).seq;
 }
+
+// ── מסלול Postgres (אופציונלי) ─────────────────────────
+// מוזרק מבחוץ (`setPgDriver`) ולא נוצר כאן, כדי שהפרויקט לא ייקח תלות
+// ב-`pg` על מי שלא צריך אותה. כשהוא מוגדר — `nextInvoiceSeqSafe` עוברת
+// למסלול האטומי, וזו הנקודה היחידה שבה **חובה** להשתמש בו.
+let _pg = null;
+export function setPgDriver(driver) { _pg = driver; return _pg; }
+export function pgDriver() { return _pg; }
+export function isPostgres() { return !!_pg; }
+
+/**
+ * מספר חשבונית רץ — הגרסה שבטוחה בשני העולמות.
+ *
+ * 🔴 למה זו פונקציה נפרדת ולמה היא async: ב-SQLite שלושת הצעדים אטומיים
+ *    רק משום שהתהליך חד-חוטי. ברגע שיש Postgres וכמה תהליכים, שני
+ *    צ'ק אאוטים בו-זמנית מקבלים את **אותו מספר** — שתי חשבוניות מס עם
+ *    מספר סידורי זהה. זו בעיה חוקית, לא באג תצוגה. במסלול Postgres
+ *    משתמשים ב-`UPDATE … RETURNING` שנועל את השורה.
+ *    כל הקוראים (`issueInvoice`) הם async ממילא.
+ */
+export async function nextInvoiceSeqSafe(hotelId = DEFAULT_HOTEL_ID, year = new Date().getFullYear()) {
+  if (_pg) return _pg.nextInvoiceSeq(hotelId, year);
+  return nextInvoiceSeq(hotelId);
+}

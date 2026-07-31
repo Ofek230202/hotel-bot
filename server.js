@@ -19,6 +19,7 @@ import { updateConfigFor, configFor, hotelModel } from "./config.js";
 import { registerHotelNumber, reloadHotelNumbers } from "./tenant.js";
 import { bootstrapDemoHotel } from "./demo-bootstrap.js";
 import { isDistributed, storeKind } from "./store/index.js";
+import { initPersistence, persistenceKind, flushPersistence, persistenceStats } from "./store/persistence.js";
 import { timingSafeEqual } from "node:crypto";
 import twilio from "twilio";
 import { db } from "./db.js";
@@ -596,6 +597,18 @@ app.use(express.static("dashboard/public"));
 // מגיעה, וגם הלוג שמודפס בעלייה משקף את המצב הנכון.
 // בענן זו הדרך היחידה שמחזיקה — מערכת הקבצים שם בת-חלוף, ולכן ההגדרה
 // נגזרת ממשתנה סביבה ולא מבסיס הנתונים. ראה demo-bootstrap.js.
+// ── שכבת ההתמדה ────────────────────────────────────────
+// חייבת לרוץ **לפני** ה-listen: במסלול Postgres האתחול אסינכרוני
+// (יצירת סכימה + בדיקת חיבור), ואסור שהודעה ראשונה תגיע לפניו.
+// בלי DATABASE_URL זו פעולת no-op וההתנהגות זהה להיום.
+try {
+  await initPersistence();
+} catch (e) {
+  // 🔴 לא ממשיכים בשקט: מסד שהוגדר ולא עלה פירושו נתונים שנעלמים.
+  console.error(`\n🚨 אתחול מסד הנתונים נכשל: ${e?.message || e}\n   השרת לא יעלה. ראה STORE.md.\n`);
+  process.exit(1);
+}
+
 await bootstrapDemoHotel().catch(e => console.error("⚠️ bootstrapDemoHotel נכשל:", e?.message || e));
 
 const server = app.listen(PORT, () => {
@@ -633,6 +646,13 @@ const server = app.listen(PORT, () => {
   //    שמוסיפים instance שתי הודעות של אותו אורח יכולות לרוץ במקביל —
   //    צ'ק אין נדרס או הזמנה נשלחת פעמיים. אין שגיאה, אין לוג, רק אורח
   //    מבולבל. לכן מדווחים בקול על המצב.
+  // ── מסד הנתונים ──────────────────────────────────────
+  if (persistenceKind() === "postgres") {
+    console.log(`🗄️  מסד נתונים: PostgreSQL — מתאים לריבוי עותקים ולנפח גדול`);
+  } else {
+    console.log(`🗄️  מסד נתונים: SQLite (${process.env.DB_PATH || "hotel.db"}) — מצוין לעותק אחד. לסקייל: DATABASE_URL, ראה STORE.md`);
+  }
+
   if (isDistributed()) {
     console.log(`✅  מצב משותף: Redis פעיל — בטוח להריץ יותר מעותק אחד (נעילה מבוזרת + הגבלת קצב משותפת)`);
   } else {
@@ -740,9 +760,20 @@ function gracefulShutdown(signal) {
     process.exit(0);
   }, Number(process.env.SHUTDOWN_GRACE_MS) || 25_000);
   force.unref();
-  server.close(() => {
+  server.close(async () => {
+    // 🔴 שטיפת תור הכתיבות **לפני** סגירת החיבור. במסלול Postgres
+    //    הכתיבות מתבצעות ברקע כדי לשמור על API סינכרוני; יציאה בלי
+    //    flush פירושה איבוד השינויים האחרונים — בדיוק ברגע שבו
+    //    Railway מכבה עותק אחרי deploy.
+    try {
+      const pending = persistenceStats().pending;
+      if (pending) console.log(`💾 שוטפים ${pending} כתיבות ממתינות…`);
+      await flushPersistence();
+    } catch (e) {
+      console.error("⚠️ שטיפת הכתיבות נכשלה:", e?.message || e);
+    }
     try { db.close(); } catch { /* כבר סגור */ }
-    console.log("✅ כל הבקשות הסתיימו וה-DB נסגר — יציאה נקייה.");
+    console.log("✅ כל הבקשות הסתיימו, הכתיבות נשמרו וה-DB נסגר — יציאה נקייה.");
     clearTimeout(force);
     process.exit(0);
   });
