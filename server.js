@@ -4,10 +4,10 @@
 import express   from "express";
 import dotenv    from "dotenv";
 import { handleIncoming, wa, notifyStaff } from "./bot.js";
-import { allSessions, sessions, staffAlerts, incidents, stats, deleteSession, clearAllSessions, sessionByRoom, peekSession } from "./state.js";
+import { allSessions, sessionCount, sessionCacheInfo, staffAlerts, incidents, stats, deleteSession, clearAllSessions, sessionByRoom, peekSession } from "./state.js";
 import { fromNumberFor, resolveHotelId, normalizeNumber } from "./tenant.js";
 import { hotelConfig, updateConfig, resetConfig, checkDepartmentContacts, checkTenantIsolation, reportTenantIsolation, clearConfigCache, printRoutingTable, routingTable, DEPARTMENTS } from "./config.js";
-import { reservations, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES, autoChargeOnNoShow, findNoShowReservations } from "./checkin.js";
+import { reservations, getReservationByRoom, activeReservationCount, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES, autoChargeOnNoShow, findNoShowReservations } from "./checkin.js";
 import checkinRouter from "./checkin-routes.js";
 import { smokePlaces } from "./places/index.js";
 import { listIdDocuments, retrieveIdDocument, accessLogFor, purgeExpiredIdDocuments, RETENTION_DAYS } from "./idverify/index.js";
@@ -184,9 +184,9 @@ app.get("/reset-all", auth, (req, res) => {
 app.get("/api/stats", auth, (req, res) => {
   res.json({
     ...stats,
-    activeSessions: Object.keys(sessions).length,
+    activeSessions: sessionCount(),
     checkedIn: allSessions().filter(s => s.stage === "checked_in").length,
-    activeReservations: Object.values(reservations).filter(r => r.stage === "checked_in").length,
+    activeReservations: activeReservationCount(),
   });
 });
 
@@ -252,11 +252,11 @@ app.post("/api/charge", auth, (req, res) => {
   const { room, roomNumber, reservationId, amount, category, description } = req.body;
   const targetRoom = String(room ?? roomNumber ?? "");
 
+  // מגובה-DB: סריקת הזיכרון הייתה מוצאת רק הזמנות "חמות", ולכן חדר של
+  // אורח שלא כתב לאחרונה היה מוחזר כ"לא נמצא".
   const reservation = reservationId
     ? reservations[reservationId]
-    : Object.values(reservations).find(
-        r => r.roomNumber === targetRoom && r.stage === "checked_in"
-      );
+    : getReservationByRoom(targetRoom);
 
   if (!reservation) {
     return res.status(404).json({ error: "No active (checked-in) reservation for that room/id" });
@@ -281,9 +281,7 @@ app.post("/api/charge", auth, (req, res) => {
 
 // ── DEMO: view a room's folio (for verifying charges) ─
 app.get("/api/folio/:room", auth, (req, res) => {
-  const reservation = Object.values(reservations).find(
-    r => r.roomNumber === String(req.params.room) && r.stage === "checked_in"
-  );
+  const reservation = getReservationByRoom(req.params.room);
   if (!reservation) return res.status(404).json({ error: "No active reservation for that room" });
   res.json({
     reservationId: reservation.id,
@@ -327,11 +325,11 @@ app.post("/api/no-show", auth, async (req, res) => {
 
   // מצב יחיד — לפי reservationId או חדר פעיל.
   const targetRoom = String(room ?? roomNumber ?? "");
+  // מגובה-DB: סריקת הזיכרון הייתה מוצאת רק הזמנות "חמות", ולכן חדר של
+  // אורח שלא כתב לאחרונה היה מוחזר כ"לא נמצא".
   const reservation = reservationId
     ? reservations[reservationId]
-    : Object.values(reservations).find(
-        r => r.roomNumber === targetRoom && r.stage === "checked_in"
-      );
+    : getReservationByRoom(targetRoom);
 
   if (!reservation) {
     return res.status(404).json({ error: "No active (checked-in) reservation for that room/id" });

@@ -16,6 +16,7 @@
 //    snapshot ישן מה-DB.
 // ════════════════════════════════════════════════════════
 import { db, DEFAULT_HOTEL_ID } from "./db.js";
+import { LruCache } from "./store/LruCache.js";
 
 const HOTEL = DEFAULT_HOTEL_ID;
 
@@ -1202,7 +1203,10 @@ export const DEPARTMENTS = [
 
 // קונפיג מלא של מלון מסוים. המלון הנוכחי מוחזר מהזיכרון; כל מלון
 // אחר נטען מה-DB (אותה טבלה, hotel_id אחר) ונשמר ב-cache.
-const configCache = new Map();
+// 🔴 חסום גם הוא: עם מיליוני מלונות, Map בלי גבול היה מחזיק את הקונפיג
+//    המלא של **כל** מלון שאי פעם נגעו בו. הקונפיג נטען מחדש מה-DB
+//    בהחטאה, ולכן הפינוי בטוח לחלוטין.
+const configCache = new LruCache({ max: Number(process.env.CONFIG_CACHE_MAX) || 5_000 });
 export function configFor(hotelId = HOTEL) {
   if (hotelId === HOTEL) return hotelConfig;
   if (!configCache.has(hotelId)) {

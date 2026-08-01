@@ -11,6 +11,7 @@ import { nameFor } from "./names.js";
 import { configFor, hotelModel } from "./config.js";
 import { db, DEFAULT_HOTEL_ID } from "./db.js";
 import { currentHotelId } from "./tenant.js";
+import { LruCache } from "./store/LruCache.js";
 
 // הקונפיג של המלון שאליו שייכת ההזמנה. הזמנה נושאת hotelId משלה, ולכן
 // גם פונקציות שרצות *מחוץ* להקשר ה-tenant (למשל דף התשלום ב-checkin-routes)
@@ -27,7 +28,64 @@ function baseUrl() {
   return process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
 }
 
-export const reservations = {};
+// ── cache ההזמנות — חסום, read-through ─────────────────
+// 🔴 כמו הסשנים: קודם **כל** ההזמנות של **כל** המלונות ישבו בזיכרון
+//    לנצח. עכשיו LRU חסום עם טעינה מה-DB בהחטאה.
+//
+//    `reservations` נשאר **אובייקט** כלפי חוץ (Proxy), כי `server.js`
+//    ו-`checkin-routes.js` ניגשים ל-`reservations[rid]` — ועמוד הפיקדון
+//    חייב למצוא הזמנה גם אם היא פונתה מהזיכרון. ה-Proxy עושה את הטעינה
+//    בשקט, ולכן אף קורא לא השתנה.
+const reservationCache = new LruCache({
+  max:   Number(process.env.RESERVATION_CACHE_MAX) || 20_000,
+  ttlMs: Number(process.env.RESERVATION_CACHE_TTL_MS) || 48 * 3600_000,
+});
+
+function rowToReservation(row) {
+  if (!row?.data) return null;
+  try {
+    const r = JSON.parse(row.data);
+    if (!r?.id) return null;
+    if (!r.hotelId) r.hotelId = row.hotel_id || DEFAULT_HOTEL_ID;
+    return r;
+  } catch { return null; }
+}
+
+/** טוען הזמנה בודדת לפי id (read-through). */
+export function loadReservation(id) {
+  if (!id) return null;
+  const hit = reservationCache.get(id);
+  if (hit) return hit;
+  try {
+    const r = rowToReservation(db.prepare(`SELECT hotel_id, data FROM reservations WHERE id = ?`).get(id));
+    if (r) reservationCache.set(r.id, r);
+    return r;
+  } catch (e) { console.error("loadReservation failed:", e?.message || e); return null; }
+}
+
+export const reservations = new Proxy({}, {
+  get(_t, prop) {
+    if (typeof prop !== "string") return undefined;
+    return loadReservation(prop) ?? undefined;
+  },
+  set(_t, prop, value) {
+    if (typeof prop === "string" && value) reservationCache.set(prop, value);
+    return true;
+  },
+  has(_t, prop) { return typeof prop === "string" && !!loadReservation(prop); },
+  deleteProperty(_t, prop) { reservationCache.delete(prop); return true; },
+  // ⚠️ ownKeys משקף את ה-cache החם בלבד. לכן **אין** להסתמך על
+  //    Object.values(reservations) לחיפושים — לשם כך יש פונקציות
+  //    מגובות-DB (getActiveReservation / findNoShowReservations / …).
+  ownKeys() { return reservationCache.values().map(r => r.id); },
+  getOwnPropertyDescriptor(_t, prop) {
+    const r = loadReservation(prop);
+    return r ? { value: r, enumerable: true, configurable: true, writable: true } : undefined;
+  },
+});
+
+/** מצב ה-cache — לניטור. */
+export function reservationCacheInfo() { return reservationCache.info(); }
 
 // ── persistence (שלב 2) — write-through ל-DB דרך db.js ─
 // כל הזמנה נשמרת כ-JSON מלא (כולל ה-folio) בעמודת data; id/phone/room/
@@ -58,17 +116,25 @@ function persist(res) {
   });
 }
 
-// הידרציה: טעינת ההזמנות מה-DB ל-cache בעליית התהליך (כל המלונות).
-// הזמנות ממופתחות לפי id (uuid גלובלי), אבל כל אחת נושאת hotelId משלה
-// כדי שחיפושים לפי טלפון/חדר יסננו לפי המלון הנכון.
-for (const row of db.prepare(`SELECT hotel_id, data FROM reservations`).all()) {
+// ⚠️ אין יותר הידרציה של **כל** ההזמנות בעלייה. זו הייתה תקרת הזיכרון:
+//    מיליון מלונות × הזמנות = קריסה, ורוב הרשומות אינן פעילות בכלל.
+//    ההזמנות נטענות read-through לפי הצורך (`loadReservation`), והחיפושים
+//    (טלפון/חדר/no-show) עוברים דרך שאילתות DB במקום סריקת זיכרון.
+
+// חיפוש הזמנות לפי שדה, מגובה-DB. מחזיר רשומות מנורמלות ומחמם את ה-cache.
+function queryReservations(sql, params = []) {
   try {
-    const r = JSON.parse(row.data);
-    if (r && r.id) {
-      if (!r.hotelId) r.hotelId = row.hotel_id || HOTEL;
-      reservations[r.id] = r;
+    const rows = db.prepare(sql).all(...params);
+    const out = [];
+    for (const row of rows) {
+      const r = rowToReservation(row);
+      if (r) { reservationCache.set(r.id, r); out.push(r); }
     }
-  } catch { /* שורה פגומה — מדלגים */ }
+    return out;
+  } catch (e) {
+    console.error("queryReservations failed:", e?.message || e);
+    return [];
+  }
 }
 
 // ── סכומים — מקור אמת אחד ─────────────────────────────
@@ -763,8 +829,8 @@ async function settleFolio(res, { overageDescription } = {}) {
 export async function processCheckout(phone, reservationId, lang = "he") {
   const hid = currentHotelId();
   const res = reservationId
-    ? reservations[reservationId]
-    : Object.values(reservations).find(r => r.phone === phone && r.stage === "checked_in" && (r.hotelId || HOTEL) === hid);
+    ? loadReservation(reservationId)
+    : getActiveReservation(phone, hid);
 
   if (!res) throw new Error("No active reservation found");
 
@@ -1046,16 +1112,42 @@ export async function autoChargeOnNoShow(reservationId, lang = "he") {
 
 // ── מאתר הזמנות no-show — עברו את תאריך הצ'ק אאוט ועדיין checked_in ──
 // בפרודקשן: cron יריץ את זה מדי כמה דקות ויקרא ל-autoChargeOnNoShow לכל אחת.
+// 🔴 מגובה-DB ולא סריקת זיכרון: אחרי הפינוי, סריקה הייתה מוצאת רק את
+//    ההזמנות ה"חמות" — כלומר אורח שלא כתב לאחרונה היה נעלם מ-no-show
+//    ולא היה מחויב, ואורח קיים היה נראה כלא-מאוכלס.
 export function findNoShowReservations(now = new Date()) {
-  return Object.values(reservations).filter(r =>
-    r.stage === "checked_in" && r.checkoutDate && new Date(r.checkoutDate) <= now
-  );
+  return queryReservations(
+    `SELECT hotel_id, data FROM reservations WHERE stage = 'checked_in' AND checkout_date IS NOT NULL`,
+  ).filter(r => r.checkoutDate && new Date(r.checkoutDate) <= now);
+}
+
+/** הזמנה פעילה לפי מספר חדר — מגובה-DB, עם בידוד מלון. */
+export function getReservationByRoom(room, hotelId = null) {
+  const rows = hotelId
+    ? queryReservations(
+        `SELECT hotel_id, data FROM reservations WHERE hotel_id = ? AND room_number = ? AND stage = 'checked_in'`,
+        [hotelId, String(room)])
+    : queryReservations(
+        `SELECT hotel_id, data FROM reservations WHERE room_number = ? AND stage = 'checked_in'`,
+        [String(room)]);
+  return rows[0] || null;
+}
+
+/** כמה הזמנות מאוכלסות כרגע (מקור אמת: ה-DB). */
+export function activeReservationCount(hotelId = null) {
+  try {
+    const row = hotelId
+      ? db.prepare(`SELECT COUNT(*) AS n FROM reservations WHERE hotel_id = ? AND stage = 'checked_in'`).get(hotelId)
+      : db.prepare(`SELECT COUNT(*) AS n FROM reservations WHERE stage = 'checked_in'`).get();
+    return row?.n || 0;
+  } catch { return 0; }
 }
 
 export function getActiveReservation(phone, hotelId = currentHotelId()) {
-  return Object.values(reservations).find(
-    r => r.phone === phone && r.stage === "checked_in" && (r.hotelId || HOTEL) === hotelId
-  );
+  return queryReservations(
+    `SELECT hotel_id, data FROM reservations WHERE hotel_id = ? AND phone = ? AND stage = 'checked_in'`,
+    [hotelId, phone],
+  )[0];
 }
 
 // ── הזמנה שממתינה לתשלום הפיקדון ──────────────────────
@@ -1063,8 +1155,11 @@ export function getActiveReservation(phone, hotelId = currentHotelId()) {
 // לעבור שפה באמצע, או שכתב "להמשיך בצ'ק אין", מקבל את אותו קישור תשלום
 // שוב — במקום להתחיל את הצ'ק אין מהתחלה. מחזירה את החדשה ביותר.
 export function getPendingReservation(phone, hotelId = currentHotelId()) {
-  return Object.values(reservations)
-    .filter(r => r.phone === phone && r.stage === "pending_payment" && r.paymentUrl && (r.hotelId || HOTEL) === hotelId)
+  return queryReservations(
+    `SELECT hotel_id, data FROM reservations WHERE hotel_id = ? AND phone = ? AND stage = 'pending_payment'`,
+    [hotelId, phone],
+  )
+    .filter(r => r.paymentUrl)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
 }
 

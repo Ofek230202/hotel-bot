@@ -222,10 +222,19 @@ async function sectionA() {
     // 3. שם מקום שהוחזר *רק* למלון אחד לא מופיע בהודעה של השני.
     const namesL = new Set(srchL.flatMap(s => s.names));
     const namesK = new Set(srchK.flatMap(s => s.names));
-    const onlyL  = [...namesL].filter(n => !namesK.has(n));
-    const onlyK  = [...namesK].filter(n => !namesL.has(n));
-    for (const n of onlyL) if (n.length > 3 && textK.includes(n)) problems.push(`שם "${n}" מ-LALA הופיע בהודעה של קמפינסקי`);
-    for (const n of onlyK) if (n.length > 3 && textL.includes(n)) problems.push(`שם "${n}" מקמפינסקי הופיע בהודעה של LALA`);
+    // ⚠️ **רשתות סניפים.** "איזי קפה" הופיע בתוצאות של קמפינסקי, ובתוצאות
+    //    של LALA הופיע "איזי קפה פלורנטין" — הסניף הקרוב אליה. הבוט המליץ
+    //    נכון, אבל השוואת מחרוזות פשוטה ראתה את השם הקצר *בתוך* הארוך
+    //    ודיווחה דליפה. בעיר מלאת רשתות זה היה מצלצל כל הזמן ומאבד אמון.
+    //    לכן שם נחשב "בלעדי למלון אחד" רק אם אף שם בתוצאות של המלון השני
+    //    אינו מכיל אותו ואינו מוכל בו.
+    const distinct = (name, ownNames) =>
+      ![...ownNames].some(o => o.includes(name) || name.includes(o));
+
+    const onlyL = [...namesL].filter(n => n.length > 3 && distinct(n, namesK));
+    const onlyK = [...namesK].filter(n => n.length > 3 && distinct(n, namesL));
+    for (const n of onlyL) if (textK.includes(n)) problems.push(`שם "${n}" מ-LALA הופיע בהודעה של קמפינסקי`);
+    for (const n of onlyK) if (textL.includes(n)) problems.push(`שם "${n}" מקמפינסקי הופיע בהודעה של LALA`);
     namesCompared += onlyL.length + onlyK.length;
     if (srchL.length && srchK.length) dualSearchRounds++;
 

@@ -21,9 +21,22 @@ import { v4 as uuidv4 } from "uuid";
 import { db, DEFAULT_HOTEL_ID } from "./db.js";
 import { currentHotelId, tenantKey } from "./tenant.js";
 
-// ה-cache מפתוח לפי tenantKey(hotelId, phone). server.js משתמש ב-
-// Object.keys(sessions).length כמונה סשנים פעילים (בכל המלונות) — עדיין תקף.
-export const sessions    = {};  // tenantKey → GuestSession (cache חי, מגובה ל-DB)
+import { LruCache } from "./store/LruCache.js";
+
+// ── cache הסשנים — חסום, read-through ──────────────────
+// 🔴 השינוי שמסיר את תקרת הסקייל. קודם זה היה `{}` שגדל לנצח והחזיק את
+//    **כל** הסשנים של **כל** המלונות; מיליון מלונות = קריסת זיכרון.
+//    עכשיו: LRU חסום. אורח פעיל יושב בזיכרון, אורח שסיים מפונה, וכשהוא
+//    כותב שוב הסשן נטען מה-DB. בטוח **רק** משום שהכתיבה היא write-through
+//    (ראה `persist`) — כל שינוי כבר ב-DB לפני שהפינוי יכול לקרות.
+//
+//    ברירת המחדל 50k סשנים ~ מלונות רבים בו-זמנית; TTL של 24ש' מוודא
+//    שסשן נטוש לא תופס מקום. שניהם ניתנים לכוונון ב-env.
+export const sessionCache = new LruCache({
+  max:   Number(process.env.SESSION_CACHE_MAX) || 50_000,
+  ttlMs: Number(process.env.SESSION_CACHE_TTL_MS) || 24 * 3600_000,
+});
+
 export const staffAlerts = [];  // התראות צוות — cache חי, מגובה ל-DB
 export const incidents   = [];  // יומן אירועי חירום — cache חי, מגובה ל-DB
 
@@ -97,27 +110,54 @@ function persist(s) {
   });
 }
 
-// ── הידרציה: טעינת כל הסשנים (כל המלונות) ל-cache ──────
-// כולל *ריפוי* של סשנים שנפגעו: הודעה ריקה בהיסטוריה גורמת ל-400 מול
-// Claude בכל הודעה הבאה — מנקים אותן כאן פעם אחת.
-for (const row of db.prepare(`SELECT hotel_id, phone, data FROM sessions`).all()) {
+// ── read-through: טעינת סשן בודד מה-DB ─────────────────
+// 🔴 זה מה שהופך את הפינוי לבטוח. קודם **כל** הסשנים של **כל** המלונות
+//    נטענו לזיכרון בעלייה ונשארו שם לנצח — מה שעובד למלון–שניים ונופל
+//    במיליוני מלונות. עכשיו ה-cache חסום, וסשן שפונה נטען בחזרה מה-DB
+//    בפעם הבאה שנוגעים בו. שום מידע לא אובד, כי הכתיבה היא write-through.
+//
+// *ריפוי* היסטוריה נעשה כאן, בטעינה: הודעה ריקה בהיסטוריה גורמת ל-400
+// מול Claude בכל הודעה הבאה.
+function rowToSession(row) {
+  if (!row?.data) return null;
   try {
     const s = JSON.parse(row.data);
-    if (!s || !s.phone) continue;
+    if (!s || !s.phone) return null;
     if (!s.hotelId) s.hotelId = row.hotel_id || DEFAULT_HOTEL_ID;
-    const key = tenantKey(s.hotelId, s.phone);
     if (Array.isArray(s.history)) {
       const clean = s.history.filter(h => typeof h?.content === "string" && h.content.trim());
       if (clean.length !== s.history.length) {
         console.log(`🧹 סשן ${s.phone}@${s.hotelId}: נוקו ${s.history.length - clean.length} הודעות ריקות מההיסטוריה`);
         s.history = clean;
-        sessions[key] = s;
         persist(s);
-        continue;
       }
     }
-    sessions[key] = s;
-  } catch { /* שורה פגומה — מדלגים */ }
+    return s;
+  } catch { return null; }
+}
+
+const selectSessionStmt = db.prepare(`SELECT hotel_id, phone, data FROM sessions WHERE hotel_id = ? AND phone = ?`);
+
+// טעינה סינכרונית (SQLite). מחזירה את הסשן או null.
+function loadSession(phone, hotelId) {
+  try { return rowToSession(selectSessionStmt.get(hotelId, phone)); }
+  catch (e) { console.error("loadSession failed:", e?.message || e); return null; }
+}
+
+/**
+ * מבטיח שהסשן נמצא ב-cache. נקרא **בכניסת ההודעה** (`handleIncoming`),
+ * לפני כל הקוד הסינכרוני שקורא `getSession`.
+ *
+ * במסלול SQLite `getSession` יודע לטעון לבד, ולכן זו רשת ביטחון בלבד;
+ * במסלול Postgres (קריאה אסינכרונית) זו **הנקודה היחידה** שבה הסשן
+ * נטען, ובלעדיה סשן שפונה היה נראה כאורח חדש.
+ */
+export async function ensureSessionLoaded(phone, hotelId = currentHotelId()) {
+  const key = tenantKey(hotelId, phone);
+  if (sessionCache.has(key)) return sessionCache.get(key);
+  const s = loadSession(phone, hotelId);
+  if (s) sessionCache.set(key, s);
+  return s;
 }
 
 // ── GuestSession schema ───────────────────────────────
@@ -125,7 +165,17 @@ for (const row of db.prepare(`SELECT hotel_id, phone, data FROM sessions`).all()
 // hotelId מבודד את הסשן למלון; ברירת מחדל — המלון של ההקשר הנוכחי.
 export function getSession(phone, hotelId = currentHotelId()) {
   const key = tenantKey(hotelId, phone);
-  if (!sessions[key]) {
+  let cached = sessionCache.get(key);
+
+  // 🔴 read-through: החטאה ב-cache אינה "אורח חדש". הסשן עשוי להיות
+  //    ב-DB ורק פונה מהזיכרון — יצירת סשן חדש כאן הייתה **מוחקת לאורח
+  //    את ההיסטוריה באמצע שיחה**. לכן מנסים לטעון לפני שיוצרים.
+  if (!cached) {
+    const loaded = loadSession(phone, hotelId);
+    if (loaded) { sessionCache.set(key, loaded); cached = loaded; }
+  }
+
+  if (!cached) {
     const s = {
       id:            uuidv4(),
       phone,
@@ -144,16 +194,24 @@ export function getSession(phone, hotelId = currentHotelId()) {
       messageCount:  0,
       sentiment:     "neutral",     // positive | neutral | negative
     };
-    sessions[key] = s;
+    sessionCache.set(key, s);
     persist(s);
+    return s;
   }
-  return sessions[key];
+  return cached;
 }
 
 // מציץ בסשן קיים בלי ליצור חדש (undefined אם אין). משמש היכן שיצירת
 // סשן היא תופעת לוואי לא רצויה (למשל קריאת lang בטיפול בשגיאה).
+// גם כאן read-through — אחרת "אין סשן" היה תלוי בשאלה אם הוא פונה,
+// והתנהגות המערכת הייתה משתנה לפי מצב הזיכרון.
 export function peekSession(phone, hotelId = currentHotelId()) {
-  return sessions[tenantKey(hotelId, phone)];
+  const key = tenantKey(hotelId, phone);
+  const hit = sessionCache.get(key);
+  if (hit) return hit;
+  const loaded = loadSession(phone, hotelId);
+  if (loaded) sessionCache.set(key, loaded);
+  return loaded || undefined;
 }
 
 // ── רישום פעילות של הודעה נכנסת ────────────────────────
@@ -188,19 +246,37 @@ export function patchSession(phone, patch, hotelId = currentHotelId()) {
 // ── מחיקת סשן (reset) — מהזיכרון וגם מה-DB ─────────────
 export function deleteSession(phone, hotelId = currentHotelId()) {
   const key = tenantKey(hotelId, phone);
-  const existed = !!sessions[key];
-  delete sessions[key];
+  // "היה קיים" נקבע מול ה-DB ולא מול ה-cache: סשן שפונה מהזיכרון עדיין
+  // קיים, ודיווח "לא היה" היה שקר שתלוי במצב הזיכרון.
+  const existed = sessionCache.has(key) || !!loadSession(phone, hotelId);
+  sessionCache.delete(key);
   db.prepare(`DELETE FROM sessions WHERE hotel_id = ? AND phone = ?`).run(hotelId, phone);
   return existed;
 }
 
 // ── איפוס כל הסשנים (כל המלונות) — מהזיכרון וגם מה-DB ───
 export function clearAllSessions() {
-  const count = Object.keys(sessions).length;
-  for (const k of Object.keys(sessions)) delete sessions[k];
+  // נספר מול ה-DB ולא מול ה-cache: אחרי פינוי, הספירה בזיכרון קטנה
+  // מהאמת, והדיווח "אופסו N סשנים" היה שגוי.
+  let count = 0;
+  try { count = db.prepare(`SELECT COUNT(*) AS n FROM sessions`).get()?.n || 0; } catch { /* ignore */ }
+  sessionCache.clear();
   db.prepare(`DELETE FROM sessions`).run();
   return count;
 }
+
+/** מספר הסשנים הקיימים (מקור אמת: ה-DB, לא ה-cache). */
+export function sessionCount(hotelId = null) {
+  try {
+    const row = hotelId
+      ? db.prepare(`SELECT COUNT(*) AS n FROM sessions WHERE hotel_id = ?`).get(hotelId)
+      : db.prepare(`SELECT COUNT(*) AS n FROM sessions`).get();
+    return row?.n || 0;
+  } catch { return sessionCache.size; }
+}
+
+/** מצב ה-cache — לניטור ולדשבורד. */
+export function sessionCacheInfo() { return sessionCache.info(); }
 
 const insertAlertStmt = db.prepare(
   `INSERT INTO alerts (id, hotel_id, dept, priority, at, data) VALUES (?, ?, ?, ?, ?, ?)`
@@ -239,10 +315,26 @@ export function logIncident(incident) {
 }
 
 // כל הסשנים (בכל המלונות), החדשים בפעילות קודם. אופציונלית לפי מלון.
-export function allSessions(hotelId = null) {
-  let list = Object.values(sessions);
-  if (hotelId) list = list.filter(s => (s.hotelId || DEFAULT_HOTEL_ID) === hotelId);
-  return list.sort((a, b) => new Date(b.lastActiveAt) - new Date(a.lastActiveAt));
+//
+// 🔴 שואל את ה-DB ולא את ה-cache. אחרי הפינוי, סריקת הזיכרון הייתה
+//    מחזירה רק את מי שפעיל *כרגע* — כלומר הדשבורד היה מציג חלק שרירותי
+//    מהאורחים ונראה כאילו אורחים נעלמו.
+//    `limit` מגן על דשבורד של מיליוני סשנים.
+export function allSessions(hotelId = null, { limit = 500 } = {}) {
+  try {
+    const rows = hotelId
+      ? db.prepare(`SELECT hotel_id, phone, data FROM sessions WHERE hotel_id = ?
+                     ORDER BY last_active_at DESC LIMIT ?`).all(hotelId, limit)
+      : db.prepare(`SELECT hotel_id, phone, data FROM sessions
+                     ORDER BY last_active_at DESC LIMIT ?`).all(limit);
+    return rows.map(rowToSession).filter(Boolean);
+  } catch (e) {
+    console.error("allSessions failed:", e?.message || e);
+    // נפילה חיננית: לפחות מה שחם בזיכרון, כדי שהדשבורד לא יישבר.
+    let list = sessionCache.values();
+    if (hotelId) list = list.filter(s => (s.hotelId || DEFAULT_HOTEL_ID) === hotelId);
+    return list.sort((a, b) => new Date(b.lastActiveAt) - new Date(a.lastActiveAt));
+  }
 }
 
 // ── מציאת סשן לפי מספר חדר (Part ו') ───────────────────
@@ -251,7 +343,23 @@ export function allSessions(hotelId = null) {
 // בפעילות האחרונה. סינון אופציונלי לפי מלון (בידוד מולטי-טננט).
 export function sessionByRoom(room, hotelId = null) {
   const key = String(room);
-  return Object.values(sessions)
-    .filter(s => String(s.roomNumber) === key && (!hotelId || (s.hotelId || DEFAULT_HOTEL_ID) === hotelId))
-    .sort((a, b) => new Date(b.lastActiveAt) - new Date(a.lastActiveAt))[0] || null;
+  // מול ה-DB: אורח ששוהה בחדר אך לא כתב לאחרונה עשוי להיות מפונה
+  // מהזיכרון — והקבלה הייתה מקבלת "לא נמצא" על אורח שקיים.
+  try {
+    const rows = hotelId
+      ? db.prepare(`SELECT hotel_id, phone, data FROM sessions WHERE hotel_id = ?
+                     ORDER BY last_active_at DESC LIMIT 2000`).all(hotelId)
+      : db.prepare(`SELECT hotel_id, phone, data FROM sessions
+                     ORDER BY last_active_at DESC LIMIT 2000`).all();
+    for (const row of rows) {
+      const s = rowToSession(row);
+      if (s && String(s.roomNumber) === key) return s;
+    }
+    return null;
+  } catch (e) {
+    console.error("sessionByRoom failed:", e?.message || e);
+    return sessionCache.values()
+      .filter(s => String(s.roomNumber) === key && (!hotelId || (s.hotelId || DEFAULT_HOTEL_ID) === hotelId))
+      .sort((a, b) => new Date(b.lastActiveAt) - new Date(a.lastActiveAt))[0] || null;
+  }
 }
