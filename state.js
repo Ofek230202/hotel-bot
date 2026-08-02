@@ -436,15 +436,32 @@ export async function getIncidentAsync(id) {
   } catch { return null; }
 }
 
+// כתיבת הרשומה הממוזגת. מופרד כדי ששני המסלולים (סינכרוני/אסינכרוני)
+// יכתבו בדיוק אותו דבר.
+function writeIncident(cur, patch) {
+  const next = { ...cur, ...patch, id: cur.id, hotelId: cur.hotelId, at: cur.at };
+  const idx = incidents.findIndex(i => i.id === cur.id);
+  if (idx >= 0) incidents[idx] = next; else incidents.unshift(next);
+  updateIncidentStmt.run(next.status || "open", JSON.stringify(next), cur.id);
+  return next;
+}
+
 /** ממזג שדות לאירוע ושומר. מחזיר את הרשומה המעודכנת, או null אם אין. */
 export function updateIncident(id, patch = {}) {
   const cur = getIncident(id);
-  if (!cur) return null;
-  const next = { ...cur, ...patch, id: cur.id, hotelId: cur.hotelId, at: cur.at };
-  const idx = incidents.findIndex(i => i.id === id);
-  if (idx >= 0) incidents[idx] = next; else incidents.unshift(next);
-  updateIncidentStmt.run(next.status || "open", JSON.stringify(next), id);
-  return next;
+  return cur ? writeIncident(cur, patch) : null;
+}
+
+/**
+ * גרסה אסינכרונית — עובדת גם מול Postgres.
+ *
+ * 🔴 הכרחית: אחרי ריסטארט האירוע אינו ב-`incidents` החי, ולכן הגרסה
+ *    הסינכרונית נופלת לקריאת DB — שזורקת ב-Postgres. כלומר אישור קבלה
+ *    על אירוע ישן היה נכשל בדיוק במצב שבו הוא הכי חשוב.
+ */
+export async function updateIncidentAsync(id, patch = {}) {
+  const cur = await getIncidentAsync(id);
+  return cur ? writeIncident(cur, patch) : null;
 }
 
 /** אירועים שממתינים לאישור קבלה ועבר זמנם — הדלק של סולם ההסלמה. */

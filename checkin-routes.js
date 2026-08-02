@@ -4,12 +4,27 @@
 import express from "express";
 import { reservations, ensureReservationLoaded, completeCheckin, depositExplainer, switchOverageToAlternateCard, markPaid, formatStayShort, stayOf, shekels } from "./checkin.js";
 import { payments } from "./payments/index.js";
-import { peekSession } from "./state.js";
+import { peekSession, ensureSessionLoaded } from "./state.js";
 import { nameFor } from "./names.js";
-import { hotelConfig, configFor } from "./config.js";
+import { hotelConfig, configFor, ensureConfigLoaded } from "./config.js";
 import { runInTenant, fromNumberFor } from "./tenant.js";
 
 const router = express.Router();
+
+// ── טעינה מלאה לפני רינדור עמוד ────────────────────────
+// 🔴 עמוד HTML קורא **שלושה** דברים סינכרונית: ההזמנה (`reservations[id]`),
+//    הסשן (דרך `pageLang` → `peekSession`) והקונפיג של המלון (`configFor`).
+//    לטעון רק את ההזמנה לא מספיק: במסלול Postgres `pageLang` היה נכשל,
+//    ואורח שעשה צ'ק אין באנגלית היה נוחת על עמוד שבור — או, גרוע יותר,
+//    על עמוד שממותג בשם מלון ברירת המחדל במקום המלון שלו.
+//    זו נקודה אחת שכל מסלול HTTP עובר דרכה, כדי שלא נשכח אחד מהשלושה.
+async function loadForPage(rid) {
+  const reservation = await ensureReservationLoaded(rid);
+  if (!reservation) return null;
+  await ensureConfigLoaded(reservation.hotelId);
+  await ensureSessionLoaded(reservation.phone, reservation.hotelId);
+  return reservation;
+}
 
 // ── שפת העמוד — מקור אמת אחד לכל דף HTML ───────────────
 // אורח שעשה צ'ק אין באנגלית חייב לראות *כל* עמוד באנגלית, כולל דף
@@ -33,7 +48,7 @@ function pageLang(req, reservation) {
 // לא נשמר בשום מקום. שכבת התשלום המבודדת (Mock) נשארת כפי שהיא.
 router.get("/checkin/pay", async (req, res) => {
   const { rid } = req.query;
-  const reservation = await ensureReservationLoaded(rid);
+  const reservation = await loadForPage(rid);
 
   if (!reservation) return res.send(errorPage("no_reservation", pageLang(req, null)));
 
@@ -50,7 +65,7 @@ router.get("/checkin/pay", async (req, res) => {
 // ומנתב לדף האישור הקיים שמשלים את הצ'ק אין. אין כאן שום חיוב אמיתי.
 router.post("/checkin/pay", express.urlencoded({ extended: false }), async (req, res) => {
   const rid = req.body?.rid || req.query?.rid;
-  const reservation = await ensureReservationLoaded(rid);
+  const reservation = await loadForPage(rid);
 
   if (!reservation) return res.send(errorPage("no_reservation", pageLang(req, null)));
 
@@ -61,7 +76,7 @@ router.post("/checkin/pay", express.urlencoded({ extended: false }), async (req,
 // ── Success page (after guest pays) ──────────────────
 router.get("/checkin/success", async (req, res) => {
   const { rid } = req.query;
-  const reservation = await ensureReservationLoaded(rid);
+  const reservation = await loadForPage(rid);
 
   if (!reservation) return res.send(errorPage("no_reservation", pageLang(req, null)));
 
@@ -92,7 +107,7 @@ router.get("/checkin/success", async (req, res) => {
 
 // ── Cancel page ───────────────────────────────────────
 router.get("/checkin/cancel", async (req, res) => {
-  const reservation = await ensureReservationLoaded(req.query?.rid);
+  const reservation = await loadForPage(req.query?.rid);
   res.send(cancelPage(pageLang(req, reservation), reservation?.hotelId));
 });
 
@@ -102,7 +117,7 @@ router.get("/checkin/cancel", async (req, res) => {
 // GET: מציג טופס להזנת כרטיס חדש.
 router.get("/checkout/balance/pay", async (req, res) => {
   const { rid } = req.query;
-  const reservation = await ensureReservationLoaded(rid);
+  const reservation = await loadForPage(rid);
   if (!reservation || !reservation.balanceAmount) {
     return res.send(errorPage("no_balance", pageLang(req, reservation), reservation?.hotelId));
   }
@@ -113,7 +128,7 @@ router.get("/checkout/balance/pay", async (req, res) => {
 // חיוב ההפרש מכרטיס הפיקדון לכרטיס האחר דרך switchOverageToAlternateCard.
 router.post("/checkout/balance/pay", express.urlencoded({ extended: false }), async (req, res) => {
   const rid = req.body?.rid || req.query?.rid;
-  const reservation = await ensureReservationLoaded(rid);
+  const reservation = await loadForPage(rid);
   if (!reservation) return res.send(errorPage("no_reservation", pageLang(req, null)));
 
   const lang = pageLang(req, reservation);
@@ -127,14 +142,14 @@ router.post("/checkout/balance/pay", express.urlencoded({ extended: false }), as
 // דף אישור לאחר העברת ההפרש לכרטיס אחר
 router.get("/checkout/paid", async (req, res) => {
   const { rid } = req.query;
-  const reservation = await ensureReservationLoaded(rid);
+  const reservation = await loadForPage(rid);
   const amount = shekels(reservation?.balanceAmount || 0);
   res.send(balancePaidPage(amount, pageLang(req, reservation), reservation?.hotelId));
 });
 
 // דף "נשאר בכרטיס הפיקדון" (האורח ביטל את החלפת הכרטיס)
 router.get("/checkout/skip", async (req, res) => {
-  const reservation = await ensureReservationLoaded(req.query?.rid);
+  const reservation = await loadForPage(req.query?.rid);
   res.send(balanceSkipPage(pageLang(req, reservation), reservation?.hotelId));
 });
 
@@ -143,7 +158,7 @@ router.get("/checkout/skip", async (req, res) => {
 // עם כל שדות החובה. הקישור נשלח לאורח בוואטסאפ. בפרודקשן ספק אמיתי
 // יחזיר PDF; כאן המסמך הוא HTML נקי לתצוגה/הדפסה.
 router.get("/invoice/:rid", async (req, res) => {
-  const reservation = await ensureReservationLoaded(req.params.rid);
+  const reservation = await loadForPage(req.params.rid);
   if (!reservation || !reservation.invoice) {
     return res.send(errorPage("no_reservation", pageLang(req, reservation), reservation?.hotelId));
   }
@@ -172,8 +187,11 @@ router.post("/payments/webhook",
       const rid = session.metadata?.reservation_id;
       const phone = session.metadata?.phone;
 
-      if (rid && markPaid(rid)) {
-        console.log(`✅ Payment received for reservation ${rid}`);
+      // `markPaid` קורא את ההזמנה סינכרונית — טוענים אותה קודם. webhook
+      // הוא מסלול כסף: הזמנה שלא נמצאה כאן פירושה תשלום שהתקבל ולא נרשם.
+      if (rid) {
+        await ensureReservationLoaded(rid);
+        if (markPaid(rid)) console.log(`✅ Payment received for reservation ${rid}`);
       }
     }
 

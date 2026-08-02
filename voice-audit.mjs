@@ -339,6 +339,15 @@ console.log(
 );
 
 try { fs.unlinkSync(process.env.DB_PATH); } catch {}
-// יציאה בטיק הבא — נותן ל-handles להיסגר לפני שהתהליך נהרג.
+
+// ── יציאה ────────────────────────────────────────────────
+// 🔴 `process.exit()` מיידי הרג את התהליך בזמן ש-handle של libuv עדיין
+//    נסגר, ו-Windows החזיר assertion (`UV_HANDLE_CLOSING`) עם קוד יציאה
+//    שנראה ככישלון — **אחרי** שהביקורת עברה בהצלחה. כלי איכות שמדווח
+//    כישלון על ריצה תקינה גרוע מכלי שלא קיים.
+//
+//    לכן: קובעים קוד יציאה ונותנים ללולאה להתרוקן מעצמה. הטיימר הוא
+//    `unref` — הוא אינו מחזיק את התהליך, אבל אם משהו *אחר* מחזיק אותו
+//    (interval שלא שוחרר), הוא יוצא בכוח אחרי חלון שבו הכול כבר נסגר.
 process.exitCode = totalErrors === 0 ? 0 : 1;
-setImmediate(() => process.exit(process.exitCode));
+setTimeout(() => process.exit(process.exitCode), 250).unref();

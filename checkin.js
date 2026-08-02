@@ -8,7 +8,7 @@ import { payments, paymentsFor, PAYMENT_CURRENCY } from "./payments/index.js";
 import { invoicesFor } from "./invoices/index.js";
 import { recordStay } from "./profiles.js";
 import { nameFor } from "./names.js";
-import { configFor, hotelModel } from "./config.js";
+import { configFor, hotelModel, ensureConfigLoaded } from "./config.js";
 import { db, DEFAULT_HOTEL_ID } from "./db.js";
 import { prepare, queryAll, queryAllAsync } from "./store/Repo.js";
 import { currentHotelId } from "./tenant.js";
@@ -81,10 +81,16 @@ export function loadReservation(id) {
 export async function ensureReservationLoaded(id) {
   if (!id) return null;
   const hit = reservationCache.get(id);
-  if (hit) return hit;
+  if (hit) { await ensureConfigLoaded(hit.hotelId); return hit; }
   try {
     const r = rowToReservation(await selectResStmt.getAsync(id));
     if (r) reservationCache.set(r.id, r);
+    // 🔴 גם הקונפיג של המלון. הזמנה בלי הקונפיג שלה חסרת ערך: כל שימוש בה
+    //    (שעת צ'ק אאוט, מחירים, זהות עסקית לחשבונית, שם המלון בעמוד) קורא
+    //    `cfgOf(res)` **סינכרונית**. לטעון רק את ההזמנה היה משאיר את הקוד
+    //    נופל לברירות המחדל שבקוד — כלומר חשבונית עם פרטי העוסק של מלון
+    //    אחר. שני הדברים נטענים יחד, בנקודה אחת, כדי שאי אפשר לשכוח.
+    if (r) await ensureConfigLoaded(r.hotelId);
     return r;
   } catch (e) { console.error("loadReservation failed:", e?.message || e); return null; }
 }
@@ -163,8 +169,13 @@ function queryReservations(sql, params = []) {
 }
 
 async function queryReservationsAsync(sql, params = []) {
-  try { return absorbRows(await queryAllAsync(sql, params)); }
-  catch (e) { console.error("queryReservations failed:", e?.message || e); return []; }
+  try {
+    const out = absorbRows(await queryAllAsync(sql, params));
+    // אותו נימוק כמו ב-`ensureReservationLoaded`: הזמנה בלי הקונפיג של
+    // המלון שלה תיקרא עם ברירות המחדל שבקוד.
+    for (const hid of new Set(out.map(r => r.hotelId))) await ensureConfigLoaded(hid);
+    return out;
+  } catch (e) { console.error("queryReservations failed:", e?.message || e); return []; }
 }
 
 // ── סכומים — מקור אמת אחד ─────────────────────────────

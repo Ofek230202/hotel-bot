@@ -31,7 +31,7 @@
 //     מבטיח שאדם באמת יצא לחדר. אין תחליף לנוהל מלון — אבל עכשיו לפחות
 //     אי אפשר שאיש לא יידע.
 // ════════════════════════════════════════════════════════
-import { updateIncident, getIncidentAsync, findUnacknowledgedIncidents, logAlert } from "./state.js";
+import { updateIncident, updateIncidentAsync, getIncidentAsync, findUnacknowledgedIncidents, logAlert } from "./state.js";
 import { configFor, hotelModel, DEPARTMENTS } from "./config.js";
 import { runInTenant } from "./tenant.js";
 import { withGuestLock } from "./store/index.js";
@@ -48,7 +48,10 @@ export const MAX_LEVEL = 2;
 let notify = async () => {};
 export function setNotifier(fn) { if (typeof fn === "function") notify = fn; }
 
-/** מזרים לאירוע חדש מועד יעד לאישור. נקרא מיד אחרי ההסלמה הראשונה. */
+// מזרים לאירוע חדש מועד יעד לאישור. נקרא **מיד** אחרי `logIncident`, ולכן
+// הרשומה עדיין ב-cache החי וגרסה סינכרונית בטוחה כאן. כל שאר העדכונים
+// (אישור, סגירה, הסלמה) נוגעים באירועים שעשויים להיות ישנים — ולכן הם
+// אסינכרוניים: אחרי ריסטארט האירוע כבר לא בזיכרון.
 export function armIncident(incidentId, { now = new Date() } = {}) {
   return updateIncident(incidentId, {
     ackDeadline:     new Date(now.getTime() + ACK_TIMEOUT_MS).toISOString(),
@@ -67,7 +70,7 @@ export async function acknowledgeIncident(incidentId, { actor = "staff", note = 
   if (!inc) return { notFound: true };
   if (inc.ackAt) return { alreadyAcked: true, incident: inc };
 
-  const updated = updateIncident(incidentId, {
+  const updated = await updateIncidentAsync(incidentId, {
     ackAt: new Date().toISOString(), ackBy: actor, ackNote: note || null,
     ackDeadline: null,           // ← מנטרל את הסולם
   });
@@ -86,7 +89,7 @@ export async function closeIncident(incidentId, { actor = "staff", resolution = 
   if (!resolution || !String(resolution).trim()) {
     return { needsResolution: true };
   }
-  const updated = updateIncident(incidentId, {
+  const updated = await updateIncidentAsync(incidentId, {
     status: "closed", closedAt: new Date().toISOString(), closedBy: actor,
     resolution: String(resolution).trim(),
     // אירוע סגור שלא אושר — מסמנים את הסגירה גם כאישור, אחרת הסורק
@@ -139,7 +142,7 @@ export async function escalateIncident(inc, { now = new Date() } = {}) {
   const next    = (inc.escalationLevel ?? 0) + 1;
   if (next > MAX_LEVEL) {
     // מיצינו את הסולם. מפסיקים להציף, אבל **לא** מסמנים כמטופל.
-    updateIncident(inc.id, { ackDeadline: null, escalationExhausted: true });
+    await updateIncidentAsync(inc.id, { ackDeadline: null, escalationExhausted: true });
     console.error(`🚨 אירוע ${inc.id.slice(0, 8)}: סולם ההסלמה מוצה ואיש לא אישר קבלה.`);
     return { exhausted: true };
   }
@@ -161,7 +164,7 @@ export async function escalateIncident(inc, { now = new Date() } = {}) {
   }
 
   // מועד יעד חדש — הדרג הבא ייבדק בעוד ACK_TIMEOUT_MS.
-  updateIncident(inc.id, {
+  await updateIncidentAsync(inc.id, {
     escalationLevel: next,
     ackDeadline:     new Date(now.getTime() + ACK_TIMEOUT_MS).toISOString(),
     escalations:     [...(inc.escalations || []), { level: next, at: now.toISOString() }],

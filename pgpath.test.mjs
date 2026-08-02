@@ -209,6 +209,54 @@ test("הזמנה: חיפושים אסינכרוניים מוצאים הזמנה 
 });
 
 // ════════════════════════════════════════════════════════
+//  עמודי HTTP — המסלול שאינו עובר ב-handleIncoming
+// ════════════════════════════════════════════════════════
+test("עמוד הפיקדון נטען מ-Postgres — כולל הסשן והקונפיג, לא רק ההזמנה", async () => {
+  // 🔴 זו הייתה מלכודת אמיתית: המסלול טען את ההזמנה בלבד, אבל העמוד קורא
+  //    **גם** את הסשן (דרך pageLang) ו**גם** את הקונפיג של המלון. אורח
+  //    שנחת על עמוד התשלום היה מקבל 500 — או, גרוע יותר, עמוד שממותג
+  //    בשם מלון ברירת המחדל במקום המלון שלו.
+  const express = (await import("express")).default;
+  const router  = (await import("./checkin-routes.js")).default;
+
+  const phone = "whatsapp:+972500900030";
+  await state.ensureSessionLoaded(phone, HID);
+  state.patchSession(phone, { lang: "en" }, HID);
+  const { reservationId } = await tenant.runInTenant(HID, () => checkin.startCheckin(
+    phone, { guestName: "Page Guest", guestNameHe: "אורח עמוד", guestNameEn: "Page Guest" },
+    "RES-PG-PAGE", { stay: { checkIn: "2099-11-01", checkOut: "2099-11-03", nights: 2 } },
+  ));
+  await flushPersistence();
+
+  // מרוקנים הכול — כאילו העמוד נפתח בתהליך אחר, שעות אחרי הצ'ק אין.
+  state.sessionCache.clear();
+  config.clearConfigCache();
+
+  const app = express();
+  app.use(router);
+  const server = await new Promise(r => { const s = app.listen(0, () => r(s)); });
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const res  = await fetch(`${base}/checkin/pay?rid=${reservationId}`);
+    assert.equal(res.status, 200, "🔴 עמוד הפיקדון נפל");
+    const html = await res.text();
+
+    // ההזמנה נמצאה: מזהה ההזמנה מופיע בטופס (ולא עמוד "הזמנה לא נמצאה").
+    assert.ok(html.includes(reservationId), "🔴 העמוד לא מצא את ההזמנה");
+    // הסשן נטען מה-DB: השפה היא של השיחה, לא ברירת המחדל.
+    assert.match(html, /lang="en"/,
+      "🔴 שפת הסשן אבדה — אורח שדיבר אנגלית קיבל עמוד בעברית");
+    // הקונפיג נטען: העמוד ממותג בשם המלון ולא נופל לברירות המחדל בשקט.
+    const cfg = config.configFor(HID);
+    assert.ok(html.includes(cfg.name) || html.includes(cfg.name_he),
+      "🔴 העמוד לא ממותג בשם המלון — הקונפיג לא נטען");
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise(r => server.close(r));
+  }
+});
+
+// ════════════════════════════════════════════════════════
 //  קונפיג — הדבר שהיה נשאר ריק בשקט
 // ════════════════════════════════════════════════════════
 test("קונפיג: נשמר ונטען פר-מלון, בלי ערבוב בין מלונות", async () => {
@@ -250,6 +298,34 @@ test("מספרים: מיפוי המלונות נטען מ-Postgres", async () =>
   await tenant.reloadHotelNumbersAsync();
   assert.equal(tenant.resolveHotelId("whatsapp:+15551230000"), "pg_hotel_a",
     "🔴 הודעה הייתה מנותבת למלון ברירת המחדל במקום למלון הנכון");
+});
+
+// ════════════════════════════════════════════════════════
+//  אירועי חירום — אישור קבלה על אירוע שכבר לא בזיכרון
+// ════════════════════════════════════════════════════════
+test("אישור קבלה עובד על אירוע ישן (אחרי ריסטארט) מול Postgres", async () => {
+  // 🔴 המקרה שבו זה הכי חשוב: deploy באמצע אירוע חירום. האירוע כבר לא
+  //    ב-cache החי, ואיש הביטחון לוחץ על הקישור שבהתראה. אם האישור נכשל
+  //    כאן, האירוע יוסלם שוב — או שהצוות יחשוב שאישר כשלא.
+  const esc = await import("./escalation.js");
+  const inc = state.logIncident({
+    hotelId: HID, phone: "whatsapp:+972500900040", roomNumber: "1801",
+    guestName: "אורח חירום", kind: "injury", description: "[injury] נפילה",
+  });
+  esc.armIncident(inc.id);
+  await flushPersistence();
+
+  state.incidents.length = 0;               // "ריסטארט" — האירוע רק ב-DB
+
+  const ack = await esc.acknowledgeIncident(inc.id, { actor: "משה (ביטחון)" });
+  assert.equal(ack.ok, true, "🔴 אישור קבלה נכשל על אירוע שאינו בזיכרון");
+  assert.equal(ack.incident.ackBy, "משה (ביטחון)");
+
+  await flushPersistence();
+  state.incidents.length = 0;
+  const fromDb = await state.getIncidentAsync(inc.id);
+  assert.equal(fromDb.ackBy, "משה (ביטחון)", "🔴 האישור לא נשמר ל-Postgres");
+  assert.equal(fromDb.ackDeadline, null, "🔴 הסולם לא נוטרל — האירוע יוסלם שוב");
 });
 
 // ════════════════════════════════════════════════════════
