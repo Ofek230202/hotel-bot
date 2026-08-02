@@ -13,11 +13,16 @@
 // ════════════════════════════════════════════════════════
 import { MockInvoiceProvider } from "./MockInvoiceProvider.js";
 import { configFor } from "../config.js";
+import { LruCache } from "../store/LruCache.js";
 
 // ה-Mock הגלובלי — ברירת מחדל ותאימות לאחור.
 export const invoices = new MockInvoiceProvider();
 
-const providerCache = new Map();
+// 🔴 חסום, לא Map פתוח. זה cache **פר-מלון**: עם מיליון מלונות Map
+//    ללא גבול היה מחזיק מופע ספק לכל מלון שאי פעם נגעו בו, לנצח — בדיוק
+//    התקרה שהוסרה מהסשנים וההזמנות, שנשארה כאן. מופע ספק הוא חסר-מצב
+//    (credentials בלבד), ולכן פינוי בטוח לחלוטין: הוא פשוט נבנה מחדש.
+const providerCache = new LruCache({ max: Number(process.env.PROVIDER_CACHE_MAX) || 5_000 });
 
 export function invoicesFor(hotelId) {
   let name = "mock";

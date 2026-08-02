@@ -15,12 +15,17 @@ import { OptimaPmsProvider } from "./OptimaPmsProvider.js";
 import { RestPmsProvider } from "./RestPmsProvider.js";
 import { vendorSpec, missingCredentials, VENDOR_IDS } from "./vendors.js";
 import { configFor } from "../config.js";
+import { LruCache } from "../store/LruCache.js";
 
 export { VENDOR_IDS, vendorSpec, missingCredentials };
 
 export const pms = new MockPmsProvider(); // ברירת מחדל + תאימות לאחור
 
-const cache = new Map();
+// 🔴 חסום, לא Map פתוח. זה cache **פר-מלון**: עם מיליון מלונות Map
+//    ללא גבול היה מחזיק מופע ספק לכל מלון שאי פעם נגעו בו, לנצח — בדיוק
+//    התקרה שהוסרה מהסשנים וההזמנות, שנשארה כאן. מופע ספק הוא חסר-מצב
+//    (credentials בלבד), ולכן פינוי בטוח לחלוטין: הוא פשוט נבנה מחדש.
+const cache = new LruCache({ max: Number(process.env.PROVIDER_CACHE_MAX) || 5_000 });
 
 export function pmsFor(hotelId) {
   let name = "mock", creds = {};

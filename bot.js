@@ -2890,8 +2890,13 @@ async function handleFeedback(phone, text, lang) {
   const m = raw.match(/\b([1-5])\s*(?:\/\s*5|כוכבים|stars?)?\b/);
   const rating = m ? +m[1] : null;
   if (rid) {
-    try { saveFeedback(rid, { rating, text: raw }); }
-    catch (e) { console.error("saveFeedback failed:", e?.message || e); }
+    // חימום לפני קריאה סינכרונית: המשוב מגיע אחרי הצ'ק אאוט, ועד אז
+    // ההזמנה כבר עשויה להיות מפונה מה-cache. משוב שאבד הוא הדבר היחיד
+    // שהאורח התבקש לתת — ולכן אסור לו להיכשל בשקט.
+    try {
+      await ensureReservationLoaded(rid);
+      saveFeedback(rid, { rating, text: raw });
+    } catch (e) { console.error("saveFeedback failed:", e?.message || e); }
   }
   // מעדכן את הדירוג האחרון בפרופיל האורח (Part י') — לזיכרון לביקור הבא.
   if (rating != null) {

@@ -145,7 +145,14 @@ function parseJson(text) {
   const start = cleaned.indexOf("{");
   const end   = cleaned.lastIndexOf("}");
   if (start === -1 || end === -1) throw new Error(`no JSON in model reply: ${cleaned.slice(0, 120)}`);
-  return JSON.parse(cleaned.slice(start, end + 1));
+  // JSON פגום זרק `SyntaxError` יבש ("Unexpected token") בלי מה שהמודל
+  // באמת אמר — כלומר אי אפשר היה לאבחן למה אימות הזהות של אורח נכשל.
+  // הקורא עדיין מקבל חריגה (זה החוזה), אבל כזו שאפשר לחקור.
+  try {
+    return JSON.parse(cleaned.slice(start, end + 1));
+  } catch (e) {
+    throw new Error(`malformed JSON in model reply (${e.message}): ${cleaned.slice(0, 200)}`);
+  }
 }
 
 // ── הבדיקה עצמה ────────────────────────────────────────

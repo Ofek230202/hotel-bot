@@ -17,6 +17,7 @@
 import { MockProvider } from "./MockProvider.js";
 import { CardComProvider } from "./CardComProvider.js";
 import { configFor } from "../config.js";
+import { LruCache } from "../store/LruCache.js";
 
 // מטבע המערכת — שקלים (ILS). סכומים נשמרים באגורות (50000 = ₪500).
 export const PAYMENT_CURRENCY = "ils";
@@ -27,7 +28,11 @@ export const payments = new MockProvider();
 // ── בחירת ספק פר-מלון ──────────────────────────────────
 // cache לפי ספק+מלון: אותו מלון מקבל את אותה מופע ספק (חשוב ל-CardCom
 // שמחזיק credentials). מלון בלי הגדרה → Mock.
-const providerCache = new Map();
+// 🔴 חסום, לא Map פתוח. זה cache **פר-מלון**: עם מיליון מלונות Map
+//    ללא גבול היה מחזיק מופע ספק לכל מלון שאי פעם נגעו בו, לנצח — בדיוק
+//    התקרה שהוסרה מהסשנים וההזמנות, שנשארה כאן. מופע ספק הוא חסר-מצב
+//    (credentials בלבד), ולכן פינוי בטוח לחלוטין: הוא פשוט נבנה מחדש.
+const providerCache = new LruCache({ max: Number(process.env.PROVIDER_CACHE_MAX) || 5_000 });
 
 export function paymentsFor(hotelId) {
   let name = "mock";

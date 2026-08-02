@@ -13,6 +13,7 @@ import { db, DEFAULT_HOTEL_ID } from "./db.js";
 import { prepare, queryAll, queryAllAsync } from "./store/Repo.js";
 import { currentHotelId } from "./tenant.js";
 import { LruCache } from "./store/LruCache.js";
+import { withGuestLock } from "./store/index.js";
 
 // הקונפיג של המלון שאליו שייכת ההזמנה. הזמנה נושאת hotelId משלה, ולכן
 // גם פונקציות שרצות *מחוץ* להקשר ה-tenant (למשל דף התשלום ב-checkin-routes)
@@ -398,7 +399,7 @@ export async function startCheckin(phone, nameInput, reservationId, opts = {}) {
 // ומסמנים את ההזמנה כ-cash. מכאן הצ'ק אין מסתיים בלי דף תשלום — הפקיד
 // גובה בקבלה. מחזיר את ההזמנה, או null אם לא נמצאה.
 export async function switchDepositToCash(reservationId) {
-  const res = reservations[reservationId];
+  const res = await ensureReservationLoaded(reservationId);
   if (!res) return null;
   if (res.depositMethod !== "cash" && res.paymentId && !res.captured && !res.refunded) {
     try { await paymentsFor(res.hotelId).cancel({ paymentId: res.paymentId }); }
@@ -412,7 +413,7 @@ export async function switchDepositToCash(reservationId) {
 
 // ── Complete check-in ─────────────────────────────────
 export async function completeCheckin(reservationId, roomNumber) {
-  const res = reservations[reservationId];
+  const res = await ensureReservationLoaded(reservationId);
   if (!res) throw new Error("Reservation not found");
 
   // ── הגנת idempotency (Bug #2) ─────────────────────────
@@ -800,7 +801,25 @@ export function formatInvoiceSummary(inv, lang = "he") {
 // היחס בין סך החיובים לפיקדון, ומעדכן את שדות ההזמנה. אינו שולח הודעות
 // לאורח — האחריות לכך על הקורא (processCheckout / autoChargeOnNoShow).
 // מחזיר: { total, deposit, captured, overage, released }
-async function settleFolio(res, { overageDescription } = {}) {
+//
+// 🔴 **נעילה פר-הזמנה — הגנת חיוב כפול אמיתית.**
+//    הדגלים (`captured`/`overageCharged`) נקבעים רק **אחרי** ה-await
+//    שמחזיר מספק הסליקה, ולכן הם מגנים מפני ריצה *חוזרת* (קריסה ואז
+//    ריצה שנייה) אבל **לא** מפני שתי ריצות **במקביל**: שתיהן רואות
+//    `captured === false`, שתיהן קוראות ל-capture, והאורח מחויב פעמיים.
+//
+//    זה לא תרחיש תיאורטי: צ'ק אאוט בצ'אט רץ תחת נעילת האורח
+//    (`handleIncoming` → `withGuestLock`), אבל `autoChargeOnNoShow` מופעל
+//    מ-cron/API — **מחוץ** לאותה נעילה. אורח שכותב "צ'ק אאוט" בדיוק
+//    כשה-cron מחייב אותו על no-show הוא בדיוק ההצטלבות הזו.
+//
+//    `withGuestLock` על מזהה ההזמנה מסדר את שתי הריצות בזו אחר זו, וגם
+//    בין תהליכים (עם `REDIS_URL`). השנייה תמצא את הדגלים כבר דלוקים.
+async function settleFolio(res, opts = {}) {
+  return withGuestLock(`reservation:${res.id}`, () => settleFolioLocked(res, opts));
+}
+
+async function settleFolioLocked(res, { overageDescription } = {}) {
   const total   = getFolioTotal(res.id);
   const deposit = res.deposit;
 
@@ -866,8 +885,11 @@ async function settleFolio(res, { overageDescription } = {}) {
       });
       res.overageCharged = true;
       res.overageAmount  = extra.chargedAmount;
+      // 🔴 רק אחרי הצלחה. קודם זה נכתב **גם כשהחיוב נכשל**, ואז הרשומה
+      //    הצהירה "ההפרש חויב מכרטיס הפיקדון" בזמן שלא חויב כלום —
+      //    רישום כספי שקרי, והצוות היה מברר מול האורח על סכום שלא נגבה.
+      res.overageChargedTo = "deposit_card";
     } catch (e) { console.error("Overage charge error:", e.message); }
-    res.overageChargedTo = "deposit_card";
     persist(res);
   }
   return { total, deposit, captured: deposit, overage, released: 0 };
@@ -1046,7 +1068,7 @@ export async function processCheckout(phone, reservationId, lang = "he") {
 // לכרטיס האחר ומודיעים לאורח. בפרודקשן (CardCom): מבטלים את חיוב ההפרש
 // מכרטיס הפיקדון ומחייבים את הכרטיס החדש — הכל דרך אותה שכבת payments.
 export async function switchOverageToAlternateCard(reservationId, lang = "he") {
-  const res = reservations[reservationId];
+  const res = await ensureReservationLoaded(reservationId);
   if (!res) throw new Error("Reservation not found");
   if (!res.overageAmount) return res; // אין הפרש — אין מה להחליף
 
@@ -1078,7 +1100,7 @@ export async function switchOverageToAlternateCard(reservationId, lang = "he") {
 // בלולאה). בפרודקשן זה ייקרא אוטומטית ע"י cron/מנוע זמן שירוץ בשעת הצ'ק אאוט
 // לכל הזמנה שעברה את checkoutDate ועדיין במצב checked_in.
 export async function autoChargeOnNoShow(reservationId, lang = "he") {
-  const res = reservations[reservationId];
+  const res = await ensureReservationLoaded(reservationId);
   if (!res) throw new Error("Reservation not found");
   if (res.stage !== "checked_in") {
     // כבר עשה צ'ק אאוט / כבר טופל — לא מחייבים פעמיים.
