@@ -5,17 +5,20 @@
 
 ---
 
-## 0. מצב נוכחי — קרא את זה קודם (30.07.2026)
+## 0. מצב נוכחי — קרא את זה קודם (02.08.2026)
 
 | | |
 |---|---|
-| **בדיקות** | **510 עוברות, 0 נכשלות** (`npm test`) |
+| **בדיקות** | **510 עוברות, 0 נכשלות** (`npm test`, 20 קבצים) · voice 0 שגיאות · demo 17/17 · preflight 65/65 |
 | **מלונות מוגדרים** | **LALA Boutique** (בוטיק · דרך בן צבי 78 · קוד לדלת · בלי צוות במקום) · **The David Kempinski** (מלון מלא · הירקון 51 · כרטיס בקבלה · צוות 24/7) |
 | **בידול** | מלא ומאומת — מיקום, קונסיירז', מחלקות, עוסק לחשבונית, שירותים. אין מסלול שבו פרט של מלון אחד מגיע לאורח של השני |
-| **ענן (פרודקשן)** | Railway · `https://hotel-bot-production-0230.up.railway.app` · Node v24.18.0 |
-| **מלון פעיל בענן** | **קמפינסקי** (הוגדר ידנית 31.07). ⚠️ `DEMO_HOTEL` ב-Railway עדיין `lala` — **redeploy יחזיר ל-LALA**. לקיבוע: `DEMO_HOTEL=kempinski` |
+| **ענן (פרודקשן)** | Railway · `https://hotel-bot-production-0230.up.railway.app` · **auto-deploy מ-main פעיל ומאומת** |
+| **מלון פעיל בענן** | **קמפינסקי — מקובע.** `DEMO_HOTEL=kempinski` מוגדר ב-Railway, ולכן **שורד redeploy**. אומת ב-`cloud:check` |
 | **מלון פעיל מקומית** | קמפינסקי (`npm run demo:kempinski`) |
 | **מספר וואטסאפ** | `whatsapp:+14155238886` (Twilio Sandbox) — מספר **אחד** שמשרת מלון אחר בכל יום |
+| **מסד נתונים** | SQLite (ברירת מחדל) **או Postgres** לפי `DATABASE_URL` — נקודת החלפה אחת. כל גישה עוברת ב-`store/Repo.js`. ⚠️ מסלול PG טרם נבדק מול שרת אמיתי |
+| **זיכרון** | חסום — LRU + TTL לסשנים/הזמנות/קונפיג, עם read-through. אין יותר תקרת RAM |
+| **חירום** | זיהוי דטרמיניסטי → הנחיית 101 → הסלמה → **סולם אישור-קבלה** (`escalation.js`, §8.6) |
 | **תשלומים** | `payments/` — Mock (דמו) / CardCom (סליקה ישראלית), בחירה פר-מלון. **Stripe הוסר לגמרי** |
 | **PMS** | `pms/` — Mock פעיל. **13 מערכות נתמכות** (אופטימה · אורקל/OHIP · Mews · Cloudbeds · Apaleo · protel · Fidelio · Guestline · RoomRaccoon · StayNTouch · Clock · Hotelogix · eZee). ראה `PMS_GUIDE.md` ו-`OPTIMA_PMS.md` |
 | **סטטוס עסקי** | הודגם ל-LALA (30.07) — התקבל היטב. השלב הבא: חיבורי PMS אמיתיים |
@@ -220,7 +223,7 @@ instance, שתי הודעות של אותו אורח רצות במקביל בש�
 
 **בדיקה מהירה לפני כל הדגמה:**
 ```
-npm test                                              # 323 בדיקות
+npm test                                              # 510 בדיקות
 npm run cloud:check -- <railway-url> --expect=lala    # מה הענן באמת מחזיק
 npm run demo:verify lala                              # מה האורח יקבל (בלי לשלוח)
 ```
@@ -279,7 +282,10 @@ Node/Express app, **מולטי-טננט**. שני מלונות מוגדרים ו
 | `bot.js` | **The brain.** `handleIncoming` orchestrates: language detect → welcome → check-in/out intent → check-in state machine → AI concierge (Claude) → `runActions` parses `[HK:...]`/`[MAINTENANCE:...]` tags and notifies staff. | Works, but fragile (see bugs) |
 | `checkin.js` | Check-in / deposit / folio (bill) / check-out logic. Stay dates (`stayCheckIn`/`stayCheckOut`/`nights`) + accepted terms version live on the reservation. Deposit amount + hotel strings come from `config.js`. | Works |
 | `checkin-routes.js` | Deposit / success / cancel / balance HTML pages + payment webhook. **All pages bilingual** — `pageLang()` picks HE/EN per guest (session → Accept-Language → HE), `shellPage()` is the shared HE/EN shell. | Works |
-| `state.js` | State עם **write-through ל-SQLite** (`sessions`, `staffAlerts`, `incidents`, `stats`). כל סשן ממופתח ב-`tenantKey(hotelId, phone)` — אותו טלפון בשני מלונות = **שני סשנים נפרדים**. `getSession` (טהור), `peekSession`, `patchSession`, `recordActivity`, `logAlert`, `logIncident`. | Works · מתמיד · מולטי-טננט |
+| `state.js` | State עם **write-through ל-DB** (`sessions`, `staffAlerts`, `incidents`, `stats`). כל סשן ממופתח ב-`tenantKey(hotelId, phone)` — אותו טלפון בשני מלונות = **שני סשנים נפרדים**. `getSession` (טהור, read-through), `peekSession`, `patchSession`, `recordActivity`, `logAlert`, `logIncident`, `updateIncident(Async)`, `hydrateState`. ה-cache **חסום** (LRU+TTL) — ראה §"read-through". | Works · מתמיד · מולטי-טננט |
+| **`store/Repo.js`** | **התפר היחיד בין הקוד ל-DB.** `prepare(sql)` מחזיר משפט שמדבר גם עם SQLite וגם עם Postgres: כתיבה סינכרונית (תור מסודר), קריאה סינכרונית **זורקת** ב-PG, ו-`*Async()` עובד בשניהם. בלעדיו Postgres קיבל סכימה ולא נתונים. | Works |
+| **`escalation.js`** | **סולם הסלמת חירום** — מועד יעד לאישור קבלה, הסלמה לדרג הבא, סגירת אירוע עם תיעוד. מגובה-DB (שורד ריסטארט) ונעול per-incident (שורד ריבוי עותקים). ראה §8.6. | Works |
+| `server-pages.js` | עמודי HTML של **הצוות** (אישור קבלה על אירוע חירום). מודול נפרד כדי שביקורת הניסוח תוכל לבדוק אותם בלי להרים שרת. | Works |
 | `payments/` | **שכבת התשלום המבודדת** — `PaymentProvider` (ממשק) · `MockProvider` (דמו, בלי חיוב) · `CardComProvider` (סליקה ישראלית). `paymentsFor(hotelId)` בוחר ספק **פר-מלון**. ראה §5. | Works (mock; CardCom מוכן) |
 | `email/` | **ניתוב מייל למחלקות** — `EmailProvider` · `MockEmailProvider` (לוג) · `HttpEmailProvider` (Resend/SendGrid אמיתי לפי `EMAIL_API_KEY`). `notifyStaff` שולח **וואטסאפ + מייל** לכל בקשה. `emailIsLive` מתריע בעלייה אם רק מוק. | Works |
 | `invoices/` | **חשבונית מס-קבלה** — `InvoiceProvider` · `MockInvoiceProvider` (כל שדות החובה בישראל, מספר סידורי רץ פר-מלון, מע"מ 18% לתושב / 0% לתייר חוץ). נקודת החלפה אחת לספק אמיתי (Green Invoice/iCount/CardCom). | Works (mock) |
@@ -384,12 +390,14 @@ Node/Express app, **מולטי-טננט**. שני מלונות מוגדרים ו
   its own section) and asks the guest for **feedback** (1–5 rating and/or a note; skippable) —
   saved on the reservation, escalated to management (low ratings → high priority). Still lacks:
   formal invoice/receipt PDF, minibar check, luggage storage, late-checkout offer.
-- No logging/monitoring, no rate-limiting, no Twilio request validation (security).
-- ~~No tests~~ **PARTIAL** — `e2e` + `places` + `safety` + `scale` + `idsecurity` + `hoteltype` + `tenant-isolation` + `demo-switch` + `demo-bootstrap` (**323 tests**, `npm test`) מכסה צ'ק אין, אימות קלט, שפה,
-  תגים, זהות, **מדיניות סוגי מסמכים, תאריכי שהייה, אישור תנאים, עקביות שפה מקצה לקצה**
-  (כולל רינדור עמוד האישור), **המידע המובנה שמגיע ל-AI (system prompt), ומיזוג/שמירת הקונפיג**
-  (כולל ריסטארט אמיתי בתהליך נפרד), **וזרימת הצ'ק אאוט המלאה** (הצגת חשבון → אישור → שלושת
-  מקרי הפיקדון + ביטול + עקביות שפה). עדיין חסרות בדיקות לשכבת התשלום המבודדת עצמה.
+- ~~No logging/monitoring~~ · ~~no rate-limiting~~ · ~~no Twilio request validation~~ — **חלקית**:
+  יש `createRateLimiter` per-guest, `VALIDATE_TWILIO` (opt-in), ודדופ של הודעות נכנסות
+  (`MessageSid`). **עדיין חסר:** לוגים מובנים (JSON) ומוניטורינג חיצוני.
+- ~~No tests~~ **DONE** — **510 בדיקות ב-20 קבצים** (`npm test`), ראה הטבלה ב-§7.
+  מכסות צ'ק אין, אימות קלט, שפה, תגים, זהות, מדיניות מסמכים, תאריכי שהייה, אישור תנאים,
+  עקביות שפה מקצה לקצה, זרימת צ'ק אאוט מלאה, **שכבת התשלום** (`payments.test.mjs`),
+  **מסלול Postgres** (`pgpath.test.mjs`), **cache ופינוי** (`lru` + `readthrough`),
+  **הסלמת חירום** (`escalation.test.mjs`), ו**כל המלונות בלולאה** (`all-hotels.test.mjs`).
 
 ### ID document storage (אחסון תעודות זהות)
 `idverify/MockIdProvider` שומר את התמונה ל-`id-documents/` (ב-`.gitignore`) **מוצפנת**
@@ -426,9 +434,12 @@ Node/Express app, **מולטי-טננט**. שני מלונות מוגדרים ו
 
 ## 4. State storage (איך נשמר ה-state)
 
-- **Now persisted to SQLite** (`db.js`, built-in `node:sqlite`). `state.js` (sessions, alerts,
-  incidents, stats) and `checkin.js` (reservations + folio) keep a live in-memory **write-through
-  cache** that is hydrated from the DB on startup and saved on every mutation. Survives restart.
+- **מתמיד ל-SQLite או ל-Postgres** — הבחירה לפי `DATABASE_URL`, דרך נקודת החלפה אחת
+  (`store/persistence.js`). כל גישה ל-DB עוברת ב-**`store/Repo.js`** (`prepare(sql)`),
+  ולכן אין קוד עסקי שיודע מול איזה מסד הוא מדבר.
+- `state.js` (sessions, alerts, incidents, stats) ו-`checkin.js` (reservations + folio)
+  מחזיקים **cache חסום** (LRU + TTL) בכתיבת write-through, עם **read-through** בהחטאה.
+  שורד ריסטארט; הזיכרון חסום גם במיליוני מלונות.
 - כל טבלה נושאת `hotel_id`, וכל שאילתה מסוננת לפיו.
 - ~~Not persisted — restart wipes everything~~ (resolved).
 - **מולטי-טננט — עובד**: סשנים ממופתחים ב-`tenantKey(hotelId, phone)`, הזמנות נושאות
@@ -436,8 +447,10 @@ Node/Express app, **מולטי-טננט**. שני מלונות מוגדרים ו
   אותו מלון בלבד. אותו טלפון בשני מלונות = שני סשנים נפרדים. אומת בעומס: 600 שיחות
   במקביל ב-6 מלונות, בלי דליפה (§9.5).
 - **מה שעוד נדרש לסקייל אמיתי** (100 מלונות × 1000 אורחים, ראה `SCALING.md`):
-  Postgres מנוהל (המעבר דורש הפיכת שכבת ה-state ל-async), Redis לסשנים ולנעילות
-  מבוזרות בריבוי תהליכים, מספר Twilio לכל מלון, ו-vault/S3+KMS למסמכי זיהוי.
+  ~~Postgres (המעבר דורש הפיכת שכבת ה-state ל-async)~~ **✅ נעשה** (`store/Repo.js`) —
+  נותר רק להריץ מול שרת אמיתי; ~~Redis לנעילות מבוזרות~~ **✅ נעשה** (`store/lock.js`,
+  מופעל עם `REDIS_URL`). **עדיין נדרש:** מספר Twilio לכל מלון, ו-vault/S3+KMS
+  למסמכי זיהוי.
 
 ---
 
@@ -520,9 +533,12 @@ Priority order (to be decided together):
       license is a genuine government document, so the AI returns `is_id=true` for it and the
       old `valid` check let it through. Now declined with an explicit bilingual explanation and
       never stored.
-- [ ] **P2 — Harden:** Twilio webhook signature validation, rate limiting, idempotency/dedup of
-      inbound webhooks, structured logging, remove the hardcoded room "304".
-      (Done: currency → ILS; hotel name / deposit / WiFi / services now read from `config.js`.)
+- [~] **P2 — Harden — רובו נעשה.** ✅ אימות חתימת Twilio (`VALIDATE_TWILIO`, opt-in) ·
+      ✅ הגבלת קצב per-guest (`createRateLimiter`) + משותפת ב-Redis · ✅ דדופ של הודעות
+      נכנסות לפי `MessageSid` (retry של טוויליו לא יעובד פעמיים) · ✅ מטבע ILS ·
+      ✅ שם/פיקדון/WiFi/שירותים מהקונפיג · ✅ סודות מוסתרים מה-API ומהלוגים.
+      **עדיין פתוח:** לוגים מובנים (JSON) + מוניטורינג חיצוני, והחדר הקשיח "304"
+      (יש כבר נקודת חיבור ל-PMS ב-`checkin-routes.js`; יוחלף כשמלון יחבר PMS אמיתי).
 - [x] **P2 — Persist `hotelConfig`.** Done: `config.js` now layers `DEFAULTS` (code) under
       `overrides` (DB table `config`, per `hotel_id`). `updateConfig` deep-merges and persists —
       survives restart; `{services:{spa:{he:{hours}}}}` no longer wipes the other services.
@@ -549,13 +565,10 @@ Priority order (to be decided together):
 - [ ] **P2 — Full payment policy** (see §1): charge for the stay itself, advances/deposits
       (מקדמות) at booking, and payment at reception on a different card — all through the existing
       `payments/` abstraction. (Documented only; not built yet.)
-- [ ] **P3 — Tests** — done for check-in / input validation / language / tags / ID /
-      **service rendering + concierge (area knowledge, request types, provider failure)** /
-      **stay-date parsing (every HE/EN phrasing + the ambiguous cases) + date confirmation +
-      truncated-tag leak + deposit wording** / **check-out state machine (bill preview →
-      confirm → all three deposit outcomes + cancel + HE/EN consistency)**
-      (323 tests, `npm test`). Still missing: deeper coverage of the isolated payment provider layer
-      itself.
+- [x] **P3 — Tests. Done — 510 בדיקות ב-20 קבצים** (`npm test`), ובנוסף שלושה כלים
+      שרצים מול Claude ו-Google אמיתיים: `npm run voice` (ניסוח + 20 עמודי HTML),
+      `npm run demo` (17 בדיקות בידוד), `npm run preflight` (65 בדיקות).
+      הפער שהיה רשום כאן — כיסוי שכבת התשלום — **נסגר** (`payments.test.mjs`).
 
 ### שפה — עקביות מקצה לקצה (ממומש)
 אורח שפתח באנגלית מקבל אנגלית ב**כל** נקודה: כל שלבי הצ'אט, עמוד הפיקדון, **עמוד האישור**
@@ -603,8 +616,9 @@ Priority order (to be decided together):
 
 | פקודה | מה היא עושה |
 |---|---|
-| `npm test` | **323 בדיקות** — `e2e` · `places` · `safety` · `scale` · `idsecurity` · `hoteltype` · `tenant-isolation` · `demo-switch` · `demo-bootstrap` |
-| `npm run preflight` | בדיקת ענק לפני הדגמה (§9.5) — 78 בדיקות עם Claude ו-Google אמיתיים |
+| `npm test` | **510 בדיקות ב-20 קבצים** — `e2e` · `places` · `safety` · `scale` · `idsecurity` · `hoteltype` · `tenant-isolation` · `demo-switch` · `demo-bootstrap` · `pms-optima` · `pms-vendors` · `store` · `voice` · `persistence` · `payments` · `all-hotels` · `lru` · `readthrough` · **`pgpath`** · **`escalation`** |
+| `npm run voice` | ביקורת ניסוח — 77 הודעות לאורח + 21 לצוות + **20 עמודי HTML** |
+| `npm run preflight` | בדיקת ענק לפני הדגמה (§9.5) — 65 בדיקות עם Claude ו-Google אמיתיים (המספר גדל עם מספר הסבבים) |
 | `npm run demo` | סימולציית שני המלונות מקצה לקצה |
 | `npm run demo:lala` / `demo:kempinski` | **מפנה את מספר ה-Twilio למלון** (§9.4) |
 | `npm run demo:status` / `demo:verify` | מי פעיל עכשיו / אימות חי מול המספר האמיתי |
@@ -1023,7 +1037,15 @@ npm run demo:status      # מי פעיל עכשיו
 **החלק שמגן על הבדיקה מעצמה:** סבב שבו ה-AI רק שאל שאלת הבהרה ולא חיפש אינו מוכיח
 דבר על בידול. לכן A סופר כמה סבבים באמת הפעילו חיפוש בשני המלונות וכמה שמות מקומות
 ייחודיים הושוו, ונכשל אם הכיסוי דליל. בהרצה של 25 סבבים: 20/25 סבבים עם חיפוש כפול,
-170 שמות שהושוו, **78/78 בדיקות עברו**.
+170 שמות שהושוו, **78/78 בדיקות עברו**. (מספר הבדיקות גדל עם מספר הסבבים; ב-14 סבבים
+זה 65/65.)
+
+> 🔴 **תוצאה חיובית-שגויה שתוקנה (02.08.2026):** חלק A דיווח על "דליפה" כי
+> `"איזי קפה"` (שהוחזר לקמפינסקי) הוא **תת-מחרוזת** של `"איזי קפה פלורנטין"` —
+> הסניף שבאמת קרוב ל-LALA. הבוט המליץ נכון; השוואת מחרוזות פשוטה קראה לזה
+> דליפה. בעיר מלאת רשתות זה היה מצלצל כל הזמן ומאבד אמון בכלי. עכשיו שם
+> נחשב "בלעדי למלון" רק אם אף שם בתוצאות של המלון השני אינו מכיל אותו ואינו
+> מוכל בו.
 
 > Rule for future work: payments change in ONE place (the provider abstraction). Never re-couple
 > business logic to a specific payment vendor. Same rule for the DB (`db.js` + the repository
