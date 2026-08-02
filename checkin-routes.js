@@ -291,7 +291,7 @@ td{padding:9px 6px;border-bottom:1px solid #eee}
 }
 
 // בריחת HTML בסיסית — פרטי אורח/עסק לא ישברו את המסמך ולא יאפשרו הזרקה.
-function escapeHtml(s) {
+export function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
@@ -406,7 +406,7 @@ function backBtn(lang, hotelId = null, label = null) {
 //
 // שניהם נפתרים כאן, בשלד — כדי ששום עמוד לא יוכל לשכוח. `hotelId` הוא
 // הפרמטר היחיד שצריך להעביר, והשלד גוזר ממנו גם את השם וגם את הקישור.
-function shellPage({ lang, title, icon, body, accent = "rgba(201,168,76,0.2)", hotelId = null, hotelName = null }) {
+export function shellPage({ lang, title, icon, body, accent = "rgba(201,168,76,0.2)", hotelId = null, hotelName = null }) {
   const he = lang === "he";
   const cfg = configFor(hotelId);
   // שם בשפת העמוד: אורח שקורא עברית לא אמור לראות שם לטיני בלבד.

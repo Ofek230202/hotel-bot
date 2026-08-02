@@ -410,6 +410,62 @@ export function logIncident(incident) {
   return rec;
 }
 
+// ── עדכון אירוע קיים (אישור קבלה / הסלמה / סגירה) ──────
+// 🔴 האירוע חייב להתעדכן **גם ב-DB ולא רק בזיכרון**: סולם ההסלמה נשען על
+//    `ackDeadline` שנקרא מה-DB אחרי ריסטארט. אירוע שאושר בזיכרון בלבד היה
+//    מוסלם שוב אחרי עלייה מחדש — צוות שמקבל אזעקה חוזרת על אירוע סגור
+//    מפסיק להאמין להתראות, וזה הנזק הגרוע ביותר במערכת בטיחות.
+const updateIncidentStmt = prepare(`UPDATE incidents SET status = ?, data = ? WHERE id = ?`);
+const selectIncidentStmt = prepare(`SELECT data FROM incidents WHERE id = ?`);
+
+export function getIncident(id) {
+  const hot = incidents.find(i => i.id === id);
+  if (hot) return hot;
+  try {
+    const row = selectIncidentStmt.get(id);
+    return row?.data ? JSON.parse(row.data) : null;
+  } catch { return null; }
+}
+
+export async function getIncidentAsync(id) {
+  const hot = incidents.find(i => i.id === id);
+  if (hot) return hot;
+  try {
+    const row = await selectIncidentStmt.getAsync(id);
+    return row?.data ? JSON.parse(row.data) : null;
+  } catch { return null; }
+}
+
+/** ממזג שדות לאירוע ושומר. מחזיר את הרשומה המעודכנת, או null אם אין. */
+export function updateIncident(id, patch = {}) {
+  const cur = getIncident(id);
+  if (!cur) return null;
+  const next = { ...cur, ...patch, id: cur.id, hotelId: cur.hotelId, at: cur.at };
+  const idx = incidents.findIndex(i => i.id === id);
+  if (idx >= 0) incidents[idx] = next; else incidents.unshift(next);
+  updateIncidentStmt.run(next.status || "open", JSON.stringify(next), id);
+  return next;
+}
+
+/** אירועים שממתינים לאישור קבלה ועבר זמנם — הדלק של סולם ההסלמה. */
+const overdueIncidentsStmt = prepare(
+  `SELECT data FROM incidents WHERE status = 'open' ORDER BY at DESC LIMIT ${INCIDENTS_CAP}`
+);
+
+export async function findUnacknowledgedIncidents(now = new Date()) {
+  let rows = [];
+  try { rows = await overdueIncidentsStmt.allAsync(); } catch { return []; }
+  const out = [];
+  for (const row of rows) {
+    try {
+      const inc = JSON.parse(row.data);
+      if (inc.ackAt || !inc.ackDeadline) continue;
+      if (new Date(inc.ackDeadline) <= now) out.push(inc);
+    } catch { /* שורה פגומה */ }
+  }
+  return out;
+}
+
 // כל הסשנים (בכל המלונות), החדשים בפעילות קודם. אופציונלית לפי מלון.
 //
 // 🔴 שואל את ה-DB ולא את ה-cache. אחרי הפינוי, סריקת הזיכרון הייתה

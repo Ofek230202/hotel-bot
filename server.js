@@ -9,6 +9,8 @@ import { fromNumberFor, resolveHotelId, normalizeNumber } from "./tenant.js";
 import { hotelConfig, updateConfig, resetConfig, checkDepartmentContacts, checkTenantIsolation, reportTenantIsolation, clearConfigCache, printRoutingTable, routingTable, DEPARTMENTS } from "./config.js";
 import { reservations, ensureReservationLoaded, getReservationByRoomAsync, activeReservationCountAsync, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES, autoChargeOnNoShow, findNoShowReservationsAsync } from "./checkin.js";
 import checkinRouter from "./checkin-routes.js";
+import { incidentAckPage } from "./server-pages.js";
+import { acknowledgeIncident, closeIncident, sweepUnacknowledged, startEscalationSweeper, ACK_TIMEOUT_MS } from "./escalation.js";
 import { smokePlaces } from "./places/index.js";
 import { listIdDocuments, retrieveIdDocument, accessLogFor, purgeExpiredIdDocuments, RETENTION_DAYS } from "./idverify/index.js";
 import { DEFAULT_HOTEL_ID } from "./tenant.js";
@@ -245,6 +247,48 @@ app.post("/api/alert", auth, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ════════════════════════════════════════════════════════
+//  אירועי חירום — אישור קבלה, סגירה, וסולם ההסלמה
+//  ----------------------------------------------------------
+//  🔴 עד עכשיו ההסלמה נשלחה ואיש לא אישר קבלה. טלפון כבוי או משמרת
+//     שהתחלפה = אורח פצוע שאיש אינו בדרך אליו, בזמן שהמערכת מדווחת
+//     "טופל". כאן נסגר המעגל. ראה escalation.js.
+// ════════════════════════════════════════════════════════
+
+// אישור קבלה. GET **וגם** POST במכוון: איש הביטחון מקבל קישור בוואטסאפ
+// ולוחץ עליו מהטלפון — לחיצה היא GET. אישור אינו פעולה הרסנית.
+async function handleAck(req, res) {
+  const actor = req.query.actor || req.body?.actor || req.headers["x-actor"] || "staff";
+  const note  = req.query.note  || req.body?.note  || null;
+  const out   = await acknowledgeIncident(req.params.id, { actor, note });
+  if (out.notFound) return res.status(404).json({ error: "incident not found" });
+  if (out.alreadyAcked) {
+    return res.send(incidentAckPage(out.incident, { already: true }));
+  }
+  res.send(incidentAckPage(out.incident, { already: false }));
+}
+app.get("/incident/:id/ack", handleAck);          // הקישור מההתראה
+app.post("/api/incident/:id/ack", auth, handleAck);
+
+// סגירת אירוע — דורשת תיאור מה נעשה בפועל.
+app.post("/api/incident/:id/close", auth, async (req, res) => {
+  const out = await closeIncident(req.params.id, {
+    actor:      req.body?.actor || req.headers["x-actor"] || "staff",
+    resolution: req.body?.resolution,
+  });
+  if (out.notFound) return res.status(404).json({ error: "incident not found" });
+  if (out.needsResolution) {
+    return res.status(400).json({ error: "resolution required — an incident closed without a record is not closed" });
+  }
+  res.json({ ok: true, incident: out.incident });
+});
+
+// הרצה ידנית של סורק ההסלמה (הוא רץ מחזורית ממילא) — לבדיקה ולניטור.
+app.post("/api/incidents/sweep", auth, async (req, res) => {
+  try { res.json({ ok: true, ...(await sweepUnacknowledged()) }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // ── DEMO: add a charge to a room's folio ──────────────
@@ -686,6 +730,13 @@ const server = app.listen(PORT, async () => {
   // ואז כל 6 שעות. unref כדי שלא יעכב יציאה תקינה של התהליך.
   purgeExpiredIdDocuments().catch(() => {});
   setInterval(() => purgeExpiredIdDocuments().catch(() => {}), 6 * 3600_000).unref();
+
+  // ── סולם ההסלמה של אירועי חירום ──────────────────────
+  // 🔴 חייב לרוץ, אחרת אירוע שלא אושר פשוט נשכח. הסורק מגובה-DB, ולכן
+  //    ריסטארט (deploy קורה בדיוק כשמשהו נשבר) לא מאבד אירועים פתוחים.
+  startEscalationSweeper();
+  sweepUnacknowledged().catch(() => {});   // אירועים שנשארו פתוחים מלפני העלייה
+  console.log(`🚨 סולם הסלמת חירום פעיל — אירוע ללא אישור קבלה מוסלם תוך ${Math.round(ACK_TIMEOUT_MS / 60_000)} דק׳`);
 
   // ── מי עונה לכל מספר — הדבר הראשון שרוצים לראות בעלייה ──
   // 🔴 קודם הודפסה כאן טבלת הניתוב של *מלון ברירת המחדל* בלבד. כשהמספר

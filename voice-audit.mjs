@@ -236,6 +236,26 @@ async function collectPages() {
     // עמוד שגיאה — הזמנה שאינה קיימת
     await get(`/checkin/pay?rid=does-not-exist`, { lang: "he", label: "שגיאה" });
     await get(`/checkin/pay?rid=does-not-exist`, { lang: "en", label: "שגיאה" });
+
+    // ── עמוד אישור הקבלה של אירוע חירום ────────────────
+    // איש הביטחון פותח אותו מהטלפון באמצע אירוע. אם הוא לא ברור ומיידי,
+    // הוא לא ייקרא — ולכן הוא כפוף לאותו תקן כמו עמודי האורח.
+    const { incidentAckPage } = await import("./server-pages.js");
+    for (const hotel of [LALA, KEMP]) {
+      const cfg = config.configFor(hotel.id);
+      const inc = {
+        id: "inc-audit-1", hotelId: hotel.id, roomNumber: "512", guestName: "דנה כהן",
+        description: "[injury] נפלתי במקלחת ואני לא מצליחה לקום", ackBy: "יוסי", ackAt: new Date(0).toISOString(),
+      };
+      for (const already of [false, true]) {
+        pages.push({
+          id: `${hotel.id}/אישור-חירום${already ? " (חוזר)" : ""} [he]`,
+          html: incidentAckPage(inc, { already }), status: 200,
+          expectWhatsApp: tenant.fromNumberFor(hotel.id),
+          expectHotelName: cfg.name_he || cfg.name,
+        });
+      }
+    }
   } finally {
     // ⚠️ סגירה מסודרת: בלי ניתוק החיבורים הפתוחים, `process.exit` בסוף
     //    הריצה נופל על assertion של libuv בזמן שה-handle עדיין נסגר —

@@ -20,6 +20,21 @@ import { resolveIdPolicy, idCollectionNotice }            from "./idverify/polic
 import { concierge, REQUEST_TYPES }                       from "./concierge/index.js";
 import { places, PLACE_CATEGORIES, placesLive }           from "./places/index.js";
 import { detectEmergency, emergencyGuestMessage, emergencyKindHe, emergencyDial } from "./emergency.js";
+import { armIncident, setNotifier, ACK_TIMEOUT_MS } from "./escalation.js";
+
+// ── שורת "אשרו קבלה" בהתראת החירום ─────────────────────
+// הצוות חייב לדעת *שמצפים* ממנו לאשר, ו*מה קורה* אם לא — אחרת ההסלמה
+// הבאה תיראה לו כמו תקלה במערכת ולא כמו נוהל שעובד.
+export function ackInstruction(incidentId) {
+  const mins = Math.round(ACK_TIMEOUT_MS / 60_000);
+  const base = (process.env.BASE_URL || "").replace(/\/$/, "");
+  const link = base ? `\n🔗 ${base}/incident/${incidentId}/ack` : "";
+  return `✅ *נא לאשר קבלה* — אחרת האירוע יוסלם למנהל התורן בעוד ${mins} דק׳.${link}`;
+}
+
+// `escalation.js` שולח התראות דרך `notifyStaff` שיושב כאן. רישום במקום
+// ייבוא הדדי, שהיה סוגר מעגל בין המודולים.
+setNotifier((...args) => notifyStaff(...args));
 import { getProfile, isReturningGuest, updateLastRating } from "./profiles.js";
 
 dotenv.config();
@@ -205,8 +220,13 @@ function localNow(timeZone = "Asia/Jerusalem", lang = "he") {
 // במקום מקף שקט שנראה כאילו המידע פשוט חסר.
 // `hotelId` הוא הפרמטר שהופך את זה למולטי-טננט: אנשי הקשר נשלפים
 // לפי המלון, מנקודה אחת (config.js), ולא מגלובל משותף.
-export async function notifyStaff({ dept, roomNumber, guestName, message, phone, priority = "normal", hotelId = currentHotelId(), roomNote }) {
-  const { whatsapp: to, email: toEmail } = departmentContacts(dept, hotelId);
+export async function notifyStaff({ dept, roomNumber, guestName, message, phone, priority = "normal", hotelId = currentHotelId(), roomNote, directNumber = null }) {
+  const contacts = departmentContacts(dept, hotelId);
+  // `directNumber` — יעד ישיר שאינו מספר המחלקה (מנהל תורן בסולם ההסלמה).
+  // עדיין עובר דרך `departmentContacts` למייל, כדי שגם ההסלמה מתועדת בשני
+  // הערוצים ולא תלויה בטלפון בודד.
+  const to      = directNumber || contacts.whatsapp;
+  const toEmail = contacts.email;
   const emoji = { housekeeping: "🧹", reception: "🏨", maintenance: "🔧", concierge: "⭐", security: "🚨", room_service: "🛎️" }[dept] || "🔔";
   // שם המחלקה בכותרת ההתראה — קריא לצוות (room_service → ROOM SERVICE).
   const deptLabel = dept.replace(/_/g, " ").toUpperCase();
@@ -2955,8 +2975,9 @@ async function handleEmergency(phone, text, lang, kind) {
   }
 
   // 2) תיעוד מובנה של האירוע (לא חוסם — נכשל בשקט ללוג בלבד).
+  let incident = null;
   try {
-    logIncident({
+    incident = logIncident({
       phone,
       roomNumber,
       guestName,
@@ -2964,6 +2985,10 @@ async function handleEmergency(phone, text, lang, kind) {
       description: `[${kind}] ${raw.slice(0, 300)}`,
       channel:     "whatsapp",
     });
+    // 🔴 מזרימים מועד יעד לאישור קבלה. בלי זה ההסלמה נשלחת — ואיש אינו
+    //    מאשר: טלפון כבוי או משמרת שהתחלפה, והאורח נשאר לבד בזמן
+    //    שהמערכת מדווחת "טופל". ראה escalation.js.
+    armIncident(incident.id);
   } catch (e) {
     console.error("🚨 כשל בתיעוד אירוע החירום:", e?.message || e);
   }
@@ -2990,7 +3015,13 @@ async function handleEmergency(phone, text, lang, kind) {
         (model.onSiteSecurity ? "" :
           `🏨 *מלון ללא צוות ביטחון במקום* — אין מי שיישלח פיזית אל האורח. ודאו ששירותי החירום (${emergencyDial(kind)}) בדרך, וצרו קשר עם האורח *מיד*.\n`) +
         `⏱️ נדרש טיפול אנושי *מיידי* — ${model.onSiteSecurity ? "ביטחון/מנהל תורן" : "מנהל תורן מרחוק"}.`;
-    await notifyStaff({ phone, dept: "security", roomNumber, guestName, message: staffMsg, priority: "high" });
+    // 🔴 שורת האישור אינה נימוס: בלעדיה הצוות אינו יודע שמצפים ממנו
+    //    לאשר, האירוע יוסלם למנהל התורן בעוד דקות ספורות, וההתראה החוזרת
+    //    תיראה כמו תקלה במקום כמו נוהל.
+    await notifyStaff({
+      phone, dept: "security", roomNumber, guestName, priority: "high",
+      message: staffMsg + (incident ? `\n\n${ackInstruction(incident.id)}` : ""),
+    });
   } catch (e) {
     console.error("🚨 כשל בהסלמת החירום לצוות:", e?.message || e);
   }
@@ -3006,7 +3037,8 @@ async function handleEmergency(phone, text, lang, kind) {
       message:
         `🚨 *גיבוי חירום — ${emergencyKindHe(kind)}* (הסלמה מקבילה לביטחון)\n` +
         `האורח דיווח: "${raw.slice(0, 400)}"\n` +
-        `ודאו שצוות הביטחון/המנהל התורן מטפל *עכשיו*.`,
+        `ודאו שצוות הביטחון/המנהל התורן מטפל *עכשיו*.` +
+        (incident ? `\n\n${ackInstruction(incident.id)}` : ""),
       priority: "high",
     });
   } catch (e) {
