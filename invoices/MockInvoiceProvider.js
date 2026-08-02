@@ -41,8 +41,11 @@ export class MockInvoiceProvider extends InvoiceProvider {
     const hotelId = res.hotelId || "kempinski";
     // await: במסלול Postgres זו הקצאה אטומית (UPDATE … RETURNING). בלעדיה
     // שני צ'ק אאוטים בו-זמנית יכולים לקבל אותו מספר חשבונית — בעיה חוקית.
-    const seq     = await nextInvoiceSeqSafe(hotelId);
+    // 🔴 אותה שנה בדיוק למונה ולתווית. קודם המונה השתמש בברירת המחדל שלו
+    //    והתווית חושבה בנפרד — שתי קריאות ל-`new Date()` שיכולות ליפול
+    //    משני צדי חצות ב-31.12, ואז מספר של שנה אחת מודפס עם שנה אחרת.
     const year    = new Date().getFullYear();
+    const seq     = await nextInvoiceSeqSafe(hotelId, year);
     const number  = `${year}-${String(seq).padStart(5, "0")}`;
 
     const biz = cfg.business || {};

@@ -2,7 +2,7 @@
 //  CHECKIN ROUTES — payment webhook + success/cancel pages
 // ════════════════════════════════════════════════════════
 import express from "express";
-import { reservations, completeCheckin, depositExplainer, switchOverageToAlternateCard, markPaid, formatStayShort, stayOf, shekels } from "./checkin.js";
+import { reservations, ensureReservationLoaded, completeCheckin, depositExplainer, switchOverageToAlternateCard, markPaid, formatStayShort, stayOf, shekels } from "./checkin.js";
 import { payments } from "./payments/index.js";
 import { peekSession } from "./state.js";
 import { nameFor } from "./names.js";
@@ -31,9 +31,9 @@ function pageLang(req, reservation) {
 // עמוד תשלום דמו — מציג את סכום הפיקדון וטופס כרטיס אשראי בסטנדרט
 // ישראלי. ⚠️ דמו בלבד: שום סליקה אמיתית לא מתבצעת, ושום פרט כרטיס/ת.ז
 // לא נשמר בשום מקום. שכבת התשלום המבודדת (Mock) נשארת כפי שהיא.
-router.get("/checkin/pay", (req, res) => {
+router.get("/checkin/pay", async (req, res) => {
   const { rid } = req.query;
-  const reservation = reservations[rid];
+  const reservation = await ensureReservationLoaded(rid);
 
   if (!reservation) return res.send(errorPage("no_reservation", pageLang(req, null)));
 
@@ -48,9 +48,9 @@ router.get("/checkin/pay", (req, res) => {
 // ── Demo payment submit (POST) ────────────────────────
 // מקבל את "התשלום", מתעלם לחלוטין מפרטי הכרטיס/ת.ז (לא נשמרים),
 // ומנתב לדף האישור הקיים שמשלים את הצ'ק אין. אין כאן שום חיוב אמיתי.
-router.post("/checkin/pay", express.urlencoded({ extended: false }), (req, res) => {
+router.post("/checkin/pay", express.urlencoded({ extended: false }), async (req, res) => {
   const rid = req.body?.rid || req.query?.rid;
-  const reservation = reservations[rid];
+  const reservation = await ensureReservationLoaded(rid);
 
   if (!reservation) return res.send(errorPage("no_reservation", pageLang(req, null)));
 
@@ -61,7 +61,7 @@ router.post("/checkin/pay", express.urlencoded({ extended: false }), (req, res) 
 // ── Success page (after guest pays) ──────────────────
 router.get("/checkin/success", async (req, res) => {
   const { rid } = req.query;
-  const reservation = reservations[rid];
+  const reservation = await ensureReservationLoaded(rid);
 
   if (!reservation) return res.send(errorPage("no_reservation", pageLang(req, null)));
 
@@ -91,8 +91,8 @@ router.get("/checkin/success", async (req, res) => {
 });
 
 // ── Cancel page ───────────────────────────────────────
-router.get("/checkin/cancel", (req, res) => {
-  const reservation = reservations[req.query?.rid];
+router.get("/checkin/cancel", async (req, res) => {
+  const reservation = await ensureReservationLoaded(req.query?.rid);
   res.send(cancelPage(pageLang(req, reservation), reservation?.hotelId));
 });
 
@@ -100,9 +100,9 @@ router.get("/checkin/cancel", (req, res) => {
 // כשהחיובים עלו על הפיקדון, ההפרש כבר חויב אוטומטית מכרטיס הפיקדון
 // (הגנה על המלון). כאן האורח יכול לבחור להעביר את ההפרש לכרטיס אחר.
 // GET: מציג טופס להזנת כרטיס חדש.
-router.get("/checkout/balance/pay", (req, res) => {
+router.get("/checkout/balance/pay", async (req, res) => {
   const { rid } = req.query;
-  const reservation = reservations[rid];
+  const reservation = await ensureReservationLoaded(rid);
   if (!reservation || !reservation.balanceAmount) {
     return res.send(errorPage("no_balance", pageLang(req, reservation), reservation?.hotelId));
   }
@@ -113,7 +113,7 @@ router.get("/checkout/balance/pay", (req, res) => {
 // חיוב ההפרש מכרטיס הפיקדון לכרטיס האחר דרך switchOverageToAlternateCard.
 router.post("/checkout/balance/pay", express.urlencoded({ extended: false }), async (req, res) => {
   const rid = req.body?.rid || req.query?.rid;
-  const reservation = reservations[rid];
+  const reservation = await ensureReservationLoaded(rid);
   if (!reservation) return res.send(errorPage("no_reservation", pageLang(req, null)));
 
   const lang = pageLang(req, reservation);
@@ -125,16 +125,16 @@ router.post("/checkout/balance/pay", express.urlencoded({ extended: false }), as
 });
 
 // דף אישור לאחר העברת ההפרש לכרטיס אחר
-router.get("/checkout/paid", (req, res) => {
+router.get("/checkout/paid", async (req, res) => {
   const { rid } = req.query;
-  const reservation = reservations[rid];
+  const reservation = await ensureReservationLoaded(rid);
   const amount = shekels(reservation?.balanceAmount || 0);
   res.send(balancePaidPage(amount, pageLang(req, reservation), reservation?.hotelId));
 });
 
 // דף "נשאר בכרטיס הפיקדון" (האורח ביטל את החלפת הכרטיס)
-router.get("/checkout/skip", (req, res) => {
-  const reservation = reservations[req.query?.rid];
+router.get("/checkout/skip", async (req, res) => {
+  const reservation = await ensureReservationLoaded(req.query?.rid);
   res.send(balanceSkipPage(pageLang(req, reservation), reservation?.hotelId));
 });
 
@@ -142,8 +142,8 @@ router.get("/checkout/skip", (req, res) => {
 // מרנדר את החשבונית שהופקה בצ'ק אאוט (reservation.invoice) כמסמך רשמי
 // עם כל שדות החובה. הקישור נשלח לאורח בוואטסאפ. בפרודקשן ספק אמיתי
 // יחזיר PDF; כאן המסמך הוא HTML נקי לתצוגה/הדפסה.
-router.get("/invoice/:rid", (req, res) => {
-  const reservation = reservations[req.params.rid];
+router.get("/invoice/:rid", async (req, res) => {
+  const reservation = await ensureReservationLoaded(req.params.rid);
   if (!reservation || !reservation.invoice) {
     return res.send(errorPage("no_reservation", pageLang(req, reservation), reservation?.hotelId));
   }

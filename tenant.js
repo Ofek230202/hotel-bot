@@ -21,7 +21,8 @@
 //  אין מצב משותף לאבד. ראה SCALING.md.
 // ════════════════════════════════════════════════════════
 import { AsyncLocalStorage } from "node:async_hooks";
-import { db, DEFAULT_HOTEL_ID } from "./db.js";
+import { db, DEFAULT_HOTEL_ID, isPostgres } from "./db.js";
+import { prepare } from "./store/Repo.js";
 
 export { DEFAULT_HOTEL_ID };
 
@@ -55,15 +56,19 @@ export function normalizeNumber(raw) {
 // כברירת מחדל — כך פריסת מלון בודד עובדת בלי להגדיר כלום.
 let numberMap = new Map();   // normalizedNumber → { hotelId, fromNumber }
 
-export function reloadHotelNumbers() {
+// ⚠️ **בכוונה בזיכרון המלא, ולא LRU.** זו טבלת הניתוב: כל הודעה נכנסת
+//    נפתרת דרכה, ו-`fromNumberFor()` נקרא סינכרונית מעומק `wa()`. שורה
+//    היא ~100 בייט, כלומר גם מיליון מלונות ≈ 150MB — יקר אך שפוי, ובעל
+//    ערך: זה הדבר האחד שחייב להיות חם. אם זה יהפוך לצוואר בקבוק, הפתרון
+//    הוא Redis משותף (`store/RedisStore.js`) ולא פינוי מקומי, כי פספוס
+//    כאן פירושו הודעה שמנותבת למלון הלא נכון.
+const selectNumbersStmt = prepare(`SELECT number, hotel_id, from_number FROM hotel_numbers`);
+
+function buildMap(rows) {
   const map = new Map();
-  try {
-    for (const row of db.prepare(`SELECT number, hotel_id, from_number FROM hotel_numbers`).all()) {
-      const n = normalizeNumber(row.number);
-      if (n) map.set(n, { hotelId: row.hotel_id, fromNumber: row.from_number || n });
-    }
-  } catch (e) {
-    console.error("⚠️ טעינת hotel_numbers נכשלה:", e?.message || e);
+  for (const row of rows) {
+    const n = normalizeNumber(row.number);
+    if (n) map.set(n, { hotelId: row.hotel_id, fromNumber: row.from_number || n });
   }
   // ברירת מחדל למלון בודד: המספר שב-env שייך למלון ברירת המחדל, אם לא
   // הוגדר אחרת מפורשות ב-DB.
@@ -74,10 +79,31 @@ export function reloadHotelNumbers() {
   numberMap = map;
   return map;
 }
-reloadHotelNumbers();
+
+export function reloadHotelNumbers() {
+  try { return buildMap(selectNumbersStmt.all()); }
+  catch (e) {
+    console.error("⚠️ טעינת hotel_numbers נכשלה:", e?.message || e);
+    return buildMap([]);
+  }
+}
+
+/** טעינה מחדש שעובדת גם מול Postgres. נקראת בעליית השרת. */
+export async function reloadHotelNumbersAsync() {
+  try { return buildMap(await selectNumbersStmt.allAsync()); }
+  catch (e) {
+    console.error("⚠️ טעינת hotel_numbers נכשלה:", e?.message || e);
+    return buildMap([]);
+  }
+}
+
+// 🔴 במסלול Postgres מדלגים על הטעינה הסינכרונית: המודול עלול להיטען
+//    אחרי `initPersistence`, ואז הקריאה זורקת ומפילה את הייבוא. הטעינה
+//    שם היא `reloadHotelNumbersAsync()`, שנקראת בעליית השרת.
+if (!isPostgres()) reloadHotelNumbers();
 
 // רישום/עדכון מספר של מלון (למשל בעת onboarding של מלון חדש).
-const upsertNumberStmt = db.prepare(`
+const upsertNumberStmt = prepare(`
   INSERT INTO hotel_numbers (number, hotel_id, from_number, updated_at)
   VALUES (@number, @hotel_id, @from_number, @updated_at)
   ON CONFLICT(number) DO UPDATE SET
@@ -94,7 +120,13 @@ export function registerHotelNumber(number, hotelId, fromNumber = null) {
     from_number: fromNumber ? normalizeNumber(fromNumber) : n,
     updated_at: new Date().toISOString(),
   });
-  reloadHotelNumbers();
+  // המפה מתעדכנת מיד גם בלי סיבוב ל-DB, כדי שהרישום ייכנס לתוקף במסלול
+  // Postgres (שם הכתיבה מתורת) בדיוק כמו ב-SQLite.
+  if (isPostgres()) {
+    numberMap.set(n, { hotelId, fromNumber: fromNumber ? normalizeNumber(fromNumber) : n });
+  } else {
+    reloadHotelNumbers();
+  }
   return { number: n, hotelId, fromNumber: fromNumber ? normalizeNumber(fromNumber) : n };
 }
 

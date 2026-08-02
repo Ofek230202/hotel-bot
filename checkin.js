@@ -3,13 +3,14 @@
 // ════════════════════════════════════════════════════════
 import { v4 as uuidv4 } from "uuid";
 import { wa, notifyStaff } from "./bot.js";
-import { logAlert, stats, patchSession, peekSession } from "./state.js";
+import { logAlert, stats, patchSession, peekSession, ensureSessionLoaded } from "./state.js";
 import { payments, paymentsFor, PAYMENT_CURRENCY } from "./payments/index.js";
 import { invoicesFor } from "./invoices/index.js";
 import { recordStay } from "./profiles.js";
 import { nameFor } from "./names.js";
 import { configFor, hotelModel } from "./config.js";
 import { db, DEFAULT_HOTEL_ID } from "./db.js";
+import { prepare, queryAll, queryAllAsync } from "./store/Repo.js";
 import { currentHotelId } from "./tenant.js";
 import { LruCache } from "./store/LruCache.js";
 
@@ -51,13 +52,38 @@ function rowToReservation(row) {
   } catch { return null; }
 }
 
-/** טוען הזמנה בודדת לפי id (read-through). */
+const selectResStmt = prepare(`SELECT hotel_id, data FROM reservations WHERE id = ?`);
+
+/** טוען הזמנה בודדת לפי id (read-through). SQLite בלבד — ראה `ensureReservationLoaded`. */
 export function loadReservation(id) {
   if (!id) return null;
   const hit = reservationCache.get(id);
   if (hit) return hit;
   try {
-    const r = rowToReservation(db.prepare(`SELECT hotel_id, data FROM reservations WHERE id = ?`).get(id));
+    const r = rowToReservation(selectResStmt.get(id));
+    if (r) reservationCache.set(r.id, r);
+    return r;
+  } catch (e) {
+    if (e?.name === "SyncReadUnavailable") throw e;
+    console.error("loadReservation failed:", e?.message || e);
+    return null;
+  }
+}
+
+/**
+ * מחמם הזמנה ל-cache לפני קוד סינכרוני שקורא `reservations[id]`.
+ *
+ * 🔴 ה-Proxy של `reservations` הוא סינכרוני מטבעו ואי אפשר להמתין בתוכו.
+ *    לכן במסלול Postgres **חייבים** לקרוא לזה קודם — כל מסלול HTTP שנוגע
+ *    בהזמנה (עמוד הפיקדון, הצלחה, ביטול, webhook) עושה זאת. בלי זה עמוד
+ *    הפיקדון היה מציג "הזמנה לא נמצאה" לאורח שההזמנה שלו קיימת.
+ */
+export async function ensureReservationLoaded(id) {
+  if (!id) return null;
+  const hit = reservationCache.get(id);
+  if (hit) return hit;
+  try {
+    const r = rowToReservation(await selectResStmt.getAsync(id));
     if (r) reservationCache.set(r.id, r);
     return r;
   } catch (e) { console.error("loadReservation failed:", e?.message || e); return null; }
@@ -93,7 +119,7 @@ export function reservationCacheInfo() { return reservationCache.info(); }
 // (reservations) מגובה ל-DB בכל מוטציה, ומהודרר מה-DB בעליית התהליך —
 // כך כל הקוד שקורא reservations[id] ממשיך לעבוד, אך המידע שורד ריסטארט.
 const HOTEL = DEFAULT_HOTEL_ID;
-const resUpsert = db.prepare(`
+const resUpsert = prepare(`
   INSERT INTO reservations (id, hotel_id, phone, room_number, stage, checkout_date, data)
   VALUES (@id, @hotel_id, @phone, @room_number, @stage, @checkout_date, @data)
   ON CONFLICT(id) DO UPDATE SET
@@ -122,19 +148,23 @@ function persist(res) {
 //    (טלפון/חדר/no-show) עוברים דרך שאילתות DB במקום סריקת זיכרון.
 
 // חיפוש הזמנות לפי שדה, מגובה-DB. מחזיר רשומות מנורמלות ומחמם את ה-cache.
-function queryReservations(sql, params = []) {
-  try {
-    const rows = db.prepare(sql).all(...params);
-    const out = [];
-    for (const row of rows) {
-      const r = rowToReservation(row);
-      if (r) { reservationCache.set(r.id, r); out.push(r); }
-    }
-    return out;
-  } catch (e) {
-    console.error("queryReservations failed:", e?.message || e);
-    return [];
+function absorbRows(rows) {
+  const out = [];
+  for (const row of rows) {
+    const r = rowToReservation(row);
+    if (r) { reservationCache.set(r.id, r); out.push(r); }
   }
+  return out;
+}
+
+function queryReservations(sql, params = []) {
+  try { return absorbRows(queryAll(sql, params)); }
+  catch (e) { console.error("queryReservations failed:", e?.message || e); return []; }
+}
+
+async function queryReservationsAsync(sql, params = []) {
+  try { return absorbRows(await queryAllAsync(sql, params)); }
+  catch (e) { console.error("queryReservations failed:", e?.message || e); return []; }
 }
 
 // ── סכומים — מקור אמת אחד ─────────────────────────────
@@ -421,6 +451,13 @@ export async function completeCheckin(reservationId, roomNumber) {
   // ── קישור session ↔ reservation (Bug #3) ─────────────
   // מסמן את ה-session כ-checked_in ושומר reservationId + roomNumber,
   // כדי שזרימת הצ'ק אאוט תהיה נגישה דרך הצ'אט.
+  //
+  // 🔴 חימום הסשן קודם. הפונקציה הזו נקראת מ**עמוד ההצלחה של התשלום**
+  //    (`/checkin/success`) — מסלול HTTP שאינו עובר ב-`handleIncoming`,
+  //    ולכן איש לא טען את הסשן. בלי זה, במסלול Postgres הצ'ק אאוט בצ'אט
+  //    לא היה נגיש: הסשן לא היה מסומן `checked_in`.
+  await ensureSessionLoaded(res.phone, res.hotelId);
+
   patchSession(res.phone, {
     stage:         "checked_in",
     reservationId: res.id,
@@ -1105,6 +1142,9 @@ export async function autoChargeOnNoShow(reservationId, lang = "he") {
   });
 
   // ── קישור session ↔ reservation ──────────────────────
+  // אותו נימוק כמו ב-`completeCheckin`: no-show מופעל מ-cron/API, לא
+  // מהודעת אורח, ולכן הסשן לא חומם על ידי `handleIncoming`.
+  await ensureSessionLoaded(res.phone, res.hotelId);
   patchSession(res.phone, { stage: "checked_out", checkinStage: null, checkoutStage: null }, res.hotelId);
 
   return { alreadyHandled: false, settlement: s, reservation: res };
@@ -1115,52 +1155,72 @@ export async function autoChargeOnNoShow(reservationId, lang = "he") {
 // 🔴 מגובה-DB ולא סריקת זיכרון: אחרי הפינוי, סריקה הייתה מוצאת רק את
 //    ההזמנות ה"חמות" — כלומר אורח שלא כתב לאחרונה היה נעלם מ-no-show
 //    ולא היה מחויב, ואורח קיים היה נראה כלא-מאוכלס.
+const SQL_NO_SHOW  = `SELECT hotel_id, data FROM reservations WHERE stage = 'checked_in' AND checkout_date IS NOT NULL`;
+const SQL_BY_ROOM  = `SELECT hotel_id, data FROM reservations WHERE hotel_id = ? AND room_number = ? AND stage = 'checked_in'`;
+const SQL_BY_ROOM0 = `SELECT hotel_id, data FROM reservations WHERE room_number = ? AND stage = 'checked_in'`;
+const SQL_ACTIVE   = `SELECT hotel_id, data FROM reservations WHERE hotel_id = ? AND phone = ? AND stage = 'checked_in'`;
+const SQL_PENDING  = `SELECT hotel_id, data FROM reservations WHERE hotel_id = ? AND phone = ? AND stage = 'pending_payment'`;
+
+const dueNow = (rows, now) => rows.filter(r => r.checkoutDate && new Date(r.checkoutDate) <= now);
+
 export function findNoShowReservations(now = new Date()) {
-  return queryReservations(
-    `SELECT hotel_id, data FROM reservations WHERE stage = 'checked_in' AND checkout_date IS NOT NULL`,
-  ).filter(r => r.checkoutDate && new Date(r.checkoutDate) <= now);
+  return dueNow(queryReservations(SQL_NO_SHOW), now);
+}
+export async function findNoShowReservationsAsync(now = new Date()) {
+  return dueNow(await queryReservationsAsync(SQL_NO_SHOW), now);
 }
 
 /** הזמנה פעילה לפי מספר חדר — מגובה-DB, עם בידוד מלון. */
 export function getReservationByRoom(room, hotelId = null) {
   const rows = hotelId
-    ? queryReservations(
-        `SELECT hotel_id, data FROM reservations WHERE hotel_id = ? AND room_number = ? AND stage = 'checked_in'`,
-        [hotelId, String(room)])
-    : queryReservations(
-        `SELECT hotel_id, data FROM reservations WHERE room_number = ? AND stage = 'checked_in'`,
-        [String(room)]);
+    ? queryReservations(SQL_BY_ROOM, [hotelId, String(room)])
+    : queryReservations(SQL_BY_ROOM0, [String(room)]);
+  return rows[0] || null;
+}
+export async function getReservationByRoomAsync(room, hotelId = null) {
+  const rows = hotelId
+    ? await queryReservationsAsync(SQL_BY_ROOM, [hotelId, String(room)])
+    : await queryReservationsAsync(SQL_BY_ROOM0, [String(room)]);
   return rows[0] || null;
 }
 
 /** כמה הזמנות מאוכלסות כרגע (מקור אמת: ה-DB). */
+const countActiveStmt  = prepare(`SELECT COUNT(*) AS n FROM reservations WHERE hotel_id = ? AND stage = 'checked_in'`);
+const countActive0Stmt = prepare(`SELECT COUNT(*) AS n FROM reservations WHERE stage = 'checked_in'`);
+
 export function activeReservationCount(hotelId = null) {
   try {
-    const row = hotelId
-      ? db.prepare(`SELECT COUNT(*) AS n FROM reservations WHERE hotel_id = ? AND stage = 'checked_in'`).get(hotelId)
-      : db.prepare(`SELECT COUNT(*) AS n FROM reservations WHERE stage = 'checked_in'`).get();
+    const row = hotelId ? countActiveStmt.get(hotelId) : countActive0Stmt.get();
+    return row?.n || 0;
+  } catch { return 0; }
+}
+export async function activeReservationCountAsync(hotelId = null) {
+  try {
+    const row = hotelId ? await countActiveStmt.getAsync(hotelId) : await countActive0Stmt.getAsync();
     return row?.n || 0;
   } catch { return 0; }
 }
 
 export function getActiveReservation(phone, hotelId = currentHotelId()) {
-  return queryReservations(
-    `SELECT hotel_id, data FROM reservations WHERE hotel_id = ? AND phone = ? AND stage = 'checked_in'`,
-    [hotelId, phone],
-  )[0];
+  return queryReservations(SQL_ACTIVE, [hotelId, phone])[0];
+}
+export async function getActiveReservationAsync(phone, hotelId = currentHotelId()) {
+  return (await queryReservationsAsync(SQL_ACTIVE, [hotelId, phone]))[0];
 }
 
 // ── הזמנה שממתינה לתשלום הפיקדון ──────────────────────
 // משמשת כדי *לחדש* את שלב הפיקדון בלי ליצור הזמנה חדשה: אורח שביקש
 // לעבור שפה באמצע, או שכתב "להמשיך בצ'ק אין", מקבל את אותו קישור תשלום
 // שוב — במקום להתחיל את הצ'ק אין מהתחלה. מחזירה את החדשה ביותר.
+const newestPayable = rows => rows
+  .filter(r => r.paymentUrl)
+  .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
+
 export function getPendingReservation(phone, hotelId = currentHotelId()) {
-  return queryReservations(
-    `SELECT hotel_id, data FROM reservations WHERE hotel_id = ? AND phone = ? AND stage = 'pending_payment'`,
-    [hotelId, phone],
-  )
-    .filter(r => r.paymentUrl)
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
+  return newestPayable(queryReservations(SQL_PENDING, [hotelId, phone]));
+}
+export async function getPendingReservationAsync(phone, hotelId = currentHotelId()) {
+  return newestPayable(await queryReservationsAsync(SQL_PENDING, [hotelId, phone]));
 }
 
 // ── סימון "תשלום התקבל" (webhook) — מעדכן paidAt ושומר ל-DB ──

@@ -15,7 +15,8 @@
 //    בקוד מגיע גם למלון שכבר ערך את הקונפיג — במקום להיחסם על ידי
 //    snapshot ישן מה-DB.
 // ════════════════════════════════════════════════════════
-import { db, DEFAULT_HOTEL_ID } from "./db.js";
+import { db, DEFAULT_HOTEL_ID, isPostgres } from "./db.js";
+import { prepare } from "./store/Repo.js";
 import { LruCache } from "./store/LruCache.js";
 
 const HOTEL = DEFAULT_HOTEL_ID;
@@ -1096,19 +1097,39 @@ export function deepMerge(base, patch) {
 }
 
 // ── טעינת ה-overrides מה-DB ────────────────────────────
-function loadOverrides() {
+const selectConfigStmt = prepare(`SELECT data FROM config WHERE hotel_id = ?`);
+
+function parseOverrides(row, hotelId) {
   try {
-    const row = db.prepare(`SELECT data FROM config WHERE hotel_id = ?`).get(HOTEL);
     const parsed = row?.data ? JSON.parse(row.data) : null;
     return isPlainObject(parsed) ? parsed : {};
   } catch (e) {
     // קונפיג פגום ב-DB לא יפיל את הבוט — נופלים לברירות המחדל שבקוד.
-    console.error("⚠️ טעינת overrides של הקונפיג נכשלה — ממשיכים עם ברירות המחדל:", e?.message || e);
+    console.error(`⚠️ טעינת overrides של הקונפיג (${hotelId}) נכשלה — ממשיכים עם ברירות המחדל:`, e?.message || e);
     return {};
   }
 }
 
-const persistStmt = db.prepare(`
+function loadOverridesFor(hotelId) {
+  try { return parseOverrides(selectConfigStmt.get(hotelId), hotelId); }
+  catch (e) {
+    if (e?.name === "SyncReadUnavailable") throw e;
+    console.error(`⚠️ טעינת הקונפיג של המלון "${hotelId}" נכשלה:`, e?.message || e);
+    return {};
+  }
+}
+
+async function loadOverridesForAsync(hotelId) {
+  try { return parseOverrides(await selectConfigStmt.getAsync(hotelId), hotelId); }
+  catch (e) {
+    console.error(`⚠️ טעינת הקונפיג של המלון "${hotelId}" נכשלה:`, e?.message || e);
+    return {};
+  }
+}
+
+function loadOverrides() { return loadOverridesFor(HOTEL); }
+
+const persistStmt = prepare(`
   INSERT INTO config (hotel_id, data, updated_at)
   VALUES (?, ?, ?)
   ON CONFLICT(hotel_id) DO UPDATE SET
@@ -1116,7 +1137,9 @@ const persistStmt = db.prepare(`
     updated_at = excluded.updated_at
 `);
 
-let overrides = loadOverrides();
+// 🔴 במסלול Postgres מדלגים על הטעינה הסינכרונית (המודול עלול להיטען
+//    אחרי `initPersistence`). `hydrateConfig()` בעליית השרת ממלא אותה.
+let overrides = isPostgres() ? {} : loadOverrides();
 
 // structuredClone: hotelConfig מקבל עותק עצמאי לגמרי, כך ש-DEFAULTS
 // נשאר נקי גם אם מישהו ישנה את hotelConfig במקום.
@@ -1145,22 +1168,40 @@ export function updateConfig(patch) {
 export function updateConfigFor(hotelId, patch) {
   if (!hotelId || hotelId === HOTEL) return updateConfig(patch);
   if (!isPlainObject(patch)) throw new TypeError("updateConfigFor expects a plain object");
-  let cur = {};
-  try {
-    const row = db.prepare(`SELECT data FROM config WHERE hotel_id = ?`).get(hotelId);
-    const parsed = row?.data ? JSON.parse(row.data) : null;
-    if (isPlainObject(parsed)) cur = parsed;
-  } catch { /* אין שורה עדיין */ }
-  const next = deepMerge(cur, patch);
+  const next = deepMerge(loadOverridesFor(hotelId), patch);
   persistStmt.run(hotelId, JSON.stringify(next), new Date().toISOString());
-  configCache.delete(hotelId);
-  return configFor(hotelId);
+  configCache.set(hotelId, deepMerge(structuredClone(DEFAULTS), next));
+  return configCache.get(hotelId);
+}
+
+/**
+ * גרסה שעובדת גם מול Postgres (הקריאה של ה-overrides הקיימים אסינכרונית).
+ * זו הצורה שבה onboarding של מלון חדש צריך לרוץ בפרודקשן.
+ */
+export async function updateConfigForAsync(hotelId, patch) {
+  if (!hotelId || hotelId === HOTEL) {
+    if (!isPlainObject(patch)) throw new TypeError("updateConfigForAsync expects a plain object");
+    const nextOverrides = deepMerge(await loadOverridesForAsync(HOTEL), patch);
+    await persistStmt.runAsync(HOTEL, JSON.stringify(nextOverrides), new Date().toISOString());
+    overrides   = nextOverrides;
+    hotelConfig = deepMerge(structuredClone(DEFAULTS), overrides);
+    configCache.delete(HOTEL);
+    return hotelConfig;
+  }
+  if (!isPlainObject(patch)) throw new TypeError("updateConfigForAsync expects a plain object");
+  const next = deepMerge(await loadOverridesForAsync(hotelId), patch);
+  await persistStmt.runAsync(hotelId, JSON.stringify(next), new Date().toISOString());
+  const cfg = deepMerge(structuredClone(DEFAULTS), next);
+  configCache.set(hotelId, cfg);
+  return cfg;
 }
 
 // ── איפוס לברירות המחדל שבקוד ──────────────────────────
 // מוחק את כל ה-overrides. משמש איפוס דמו/סביבת בדיקה.
+const deleteConfigStmt = prepare(`DELETE FROM config WHERE hotel_id = ?`);
+
 export function resetConfig() {
-  db.prepare(`DELETE FROM config WHERE hotel_id = ?`).run(HOTEL);
+  deleteConfigStmt.run(HOTEL);
   overrides   = {};
   hotelConfig = deepMerge(structuredClone(DEFAULTS), overrides);
   configCache.delete(HOTEL);
@@ -1179,8 +1220,19 @@ export function configOverrides() {
 export function clearConfigCache(hotelId = null) {
   if (hotelId) { configCache.delete(hotelId); return; }
   configCache.clear();
-  overrides   = loadOverrides();
-  hotelConfig = deepMerge(structuredClone(DEFAULTS), overrides);
+  // במסלול Postgres הטעינה מחדש היא אסינכרונית — `clearConfigCacheAsync`
+  // (או `hydrateConfig`). כאן רק מנקים, ולא זורקים על ניקוי cache.
+  if (!isPostgres()) {
+    overrides   = loadOverrides();
+    hotelConfig = deepMerge(structuredClone(DEFAULTS), overrides);
+  }
+}
+
+/** ניקוי + טעינה מחדש שעובדים בשני המסלולים. */
+export async function clearConfigCacheAsync(hotelId = null) {
+  if (hotelId) { configCache.delete(hotelId); return; }
+  configCache.clear();
+  await hydrateConfig();
 }
 
 // ════════════════════════════════════════════════════════
@@ -1210,17 +1262,34 @@ const configCache = new LruCache({ max: Number(process.env.CONFIG_CACHE_MAX) || 
 export function configFor(hotelId = HOTEL) {
   if (hotelId === HOTEL) return hotelConfig;
   if (!configCache.has(hotelId)) {
-    let ov = {};
-    try {
-      const row = db.prepare(`SELECT data FROM config WHERE hotel_id = ?`).get(hotelId);
-      const parsed = row?.data ? JSON.parse(row.data) : null;
-      if (isPlainObject(parsed)) ov = parsed;
-    } catch (e) {
-      console.error(`⚠️ טעינת הקונפיג של המלון "${hotelId}" נכשלה:`, e?.message || e);
-    }
-    configCache.set(hotelId, deepMerge(structuredClone(DEFAULTS), ov));
+    configCache.set(hotelId, deepMerge(structuredClone(DEFAULTS), loadOverridesFor(hotelId)));
   }
   return configCache.get(hotelId);
+}
+
+/**
+ * מחמם את הקונפיג של מלון ל-cache.
+ *
+ * 🔴 `configFor` נקרא סינכרונית מעשרות מקומות (`hcfg()`), ולכן במסלול
+ *    Postgres הוא אינו יכול לטעון בעצמו. זהות המלון ידועה כבר מה-`To`
+ *    של Twilio, ולכן `handleIncoming` מחמם כאן — לפני שהקוד הסינכרוני
+ *    רץ. בלי זה, מלון שהקונפיג שלו פונה מה-cache היה מקבל את **ברירות
+ *    המחדל שבקוד**: שם מלון אחר, מספרי מחלקות אחרים, מחירים אחרים.
+ */
+export async function ensureConfigLoaded(hotelId = HOTEL) {
+  if (hotelId === HOTEL) return hotelConfig;
+  if (configCache.has(hotelId)) return configCache.get(hotelId);
+  const cfg = deepMerge(structuredClone(DEFAULTS), await loadOverridesForAsync(hotelId));
+  configCache.set(hotelId, cfg);
+  return cfg;
+}
+
+/** טעינה מחדש של קונפיג מלון ברירת המחדל אחרי בחירת ה-DB. */
+export async function hydrateConfig() {
+  overrides   = await loadOverridesForAsync(HOTEL);
+  hotelConfig = deepMerge(structuredClone(DEFAULTS), overrides);
+  configCache.clear();
+  return hotelConfig;
 }
 
 // ════════════════════════════════════════════════════════

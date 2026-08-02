@@ -24,8 +24,12 @@
 //     אינו נוגע בכלום — כדי שלא ידרוס הגדרות אמיתיות בכל restart.
 // ════════════════════════════════════════════════════════
 import { db, DEFAULT_HOTEL_ID } from "./db.js";
+import { prepare } from "./store/Repo.js";
 import { updateConfigFor, configFor } from "./config.js";
 import { registerHotelNumber, normalizeNumber } from "./tenant.js";
+
+const allNumbersStmt   = prepare(`SELECT number FROM hotel_numbers`);
+const deleteNumberStmt = prepare(`DELETE FROM hotel_numbers WHERE number = ?`);
 
 // טוען את מלוני הדוגמה. `sample-hotels.mjs` הוא קוד ולא נטען לבד בשום
 // מקום בשרת — כאן הנקודה היחידה שבה השרת נעזר בו, ובמכוון: זה מה שמאפשר
@@ -77,9 +81,9 @@ export async function bootstrapDemoHotel() {
   //    שמצביע על אותו מלון הייתה נבחרת כמספר ה*יוצא* (`fromNumberFor`),
   //    והתשובות היו יוצאות ממספר שאינו קיים אצל ספק הוואטסאפ.
   try {
-    for (const row of db.prepare(`SELECT number FROM hotel_numbers`).all()) {
+    for (const row of allNumbersStmt.all()) {
       if (normalizeNumber(row.number) !== number) {
-        db.prepare(`DELETE FROM hotel_numbers WHERE number = ?`).run(row.number);
+        deleteNumberStmt.run(row.number);
       }
     }
   } catch (e) {

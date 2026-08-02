@@ -10,26 +10,34 @@
 //  אינו מזוהה כחוזר במלון ב'. עקבי עם שאר שכבת ה-state.
 // ════════════════════════════════════════════════════════
 import { db } from "./db.js";
+import { prepare } from "./store/Repo.js";
 import { currentHotelId } from "./tenant.js";
 
 const VIP_THRESHOLD = 3; // 3 שהיות ומעלה = אורח חוזר / VIP
 
-const upsertStmt = db.prepare(`
+const upsertStmt = prepare(`
   INSERT INTO guest_profiles (hotel_id, phone, data, updated_at)
   VALUES (?, ?, ?, ?)
   ON CONFLICT(hotel_id, phone) DO UPDATE SET
     data = excluded.data, updated_at = excluded.updated_at
 `);
 
+const selectProfileStmt = prepare(`SELECT data FROM guest_profiles WHERE hotel_id = ? AND phone = ?`);
+
+const parseProfile = row => {
+  try { return row?.data ? JSON.parse(row.data) : null; } catch { return null; }
+};
+
 // שליפת פרופיל האורח, או null אם זו הפעם הראשונה. לעולם לא זורק.
 export function getProfile(phone, hotelId = currentHotelId()) {
-  try {
-    const row = db.prepare(`SELECT data FROM guest_profiles WHERE hotel_id = ? AND phone = ?`).get(hotelId, phone);
-    return row?.data ? JSON.parse(row.data) : null;
-  } catch (e) {
-    console.error("getProfile failed:", e?.message || e);
-    return null;
-  }
+  try { return parseProfile(selectProfileStmt.get(hotelId, phone)); }
+  catch (e) { console.error("getProfile failed:", e?.message || e); return null; }
+}
+
+/** גרסה שעובדת גם מול Postgres. */
+export async function getProfileAsync(phone, hotelId = currentHotelId()) {
+  try { return parseProfile(await selectProfileStmt.getAsync(hotelId, phone)); }
+  catch (e) { console.error("getProfile failed:", e?.message || e); return null; }
 }
 
 // רישום שהייה שהסתיימה: מגדיל את מונה השהיות, שומר את ההעדפה האחרונה

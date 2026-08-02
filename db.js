@@ -172,12 +172,20 @@ db.exec(`
     PRIMARY KEY (hotel_id, phone)
   );
 
-  -- ── מונה מספרי חשבונית רץ, פר-מלון (Part ה') ──────────
+  -- ── מונה מספרי חשבונית רץ, פר-מלון ופר-שנה (Part ה') ──
   -- חשבונית מס בישראל חייבת מספר סידורי *רץ ובלתי-שביר*. שומרים מונה
-  -- לכל מלון; nextInvoiceSeq מקדם אותו אטומית (node:sqlite סינכרוני).
+  -- לכל מלון ולכל שנה; nextInvoiceSeq מקדם אותו אטומית (node:sqlite סינכרוני).
+  --
+  -- 🔴 המפתח הוא (hotel_id, year) ולא hotel_id בלבד — **בדיוק כמו
+  --    ב-store/pg-schema.sql**. קודם הם היו שונים: SQLite ספר ברצף בלי
+  --    לאפס, Postgres איפס בכל שנה. המספר מודפס בצורה 2026-00042, ולכן
+  --    אותה מערכת הייתה מנפיקה מספרי חשבונית *שונים* לפי מסד הנתונים
+  --    שבמקרה הוגדר — פער שקט במסמך שיש לו משמעות חוקית.
   CREATE TABLE IF NOT EXISTS invoice_counters (
-    hotel_id TEXT PRIMARY KEY,
-    seq      INTEGER NOT NULL DEFAULT 0
+    hotel_id TEXT    NOT NULL,
+    year     INTEGER NOT NULL,
+    seq      INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (hotel_id, year)
   );
 
   -- ── יומן גישה למסמכי זיהוי (audit trail) ──────────────
@@ -208,6 +216,33 @@ for (const alter of [
   try { db.exec(alter); } catch { /* העמודה כבר קיימת — זה תקין */ }
 }
 
+// ── מיגרציה: invoice_counters ל-(hotel_id, year) ───────
+// טבלה ישנה עם PK על hotel_id בלבד אינה יכולה להחזיק שורה לכל שנה, ו-ADD
+// COLUMN אינו משנה מפתח ראשי. לכן בונים מחדש ומעבירים את הערך הקיים אל
+// השנה הנוכחית — כך המספר הסידורי **ממשיך** ולא חוזר אחורה (מספר חשבונית
+// שחוזר על עצמו הוא בעיה חוקית, לא אי-נוחות).
+try {
+  const cols = db.prepare(`PRAGMA table_info(invoice_counters)`).all();
+  if (cols.length && !cols.some(c => c.name === "year")) {
+    const yr = new Date().getFullYear();
+    db.exec(`
+      ALTER TABLE invoice_counters RENAME TO invoice_counters_old;
+      CREATE TABLE invoice_counters (
+        hotel_id TEXT    NOT NULL,
+        year     INTEGER NOT NULL,
+        seq      INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (hotel_id, year)
+      );
+      INSERT INTO invoice_counters (hotel_id, year, seq)
+        SELECT hotel_id, ${yr}, seq FROM invoice_counters_old;
+      DROP TABLE invoice_counters_old;
+    `);
+    console.log(`🧾 invoice_counters הועבר למפתח (מלון, שנה) — הרצף נשמר לשנת ${yr}.`);
+  }
+} catch (e) {
+  console.error("⚠️ מיגרציית invoice_counters נכשלה:", e?.message || e);
+}
+
 // מוודא שקיימת שורת stats למלון (idempotent). שלבים הבאים יעדכנו אותה.
 db.prepare(
   `INSERT OR IGNORE INTO stats (hotel_id) VALUES (?)`
@@ -216,10 +251,10 @@ db.prepare(
 // ── מספר חשבונית רץ הבא, פר-מלון (Part ה') ─────────────
 // node:sqlite סינכרוני ו-JS חד-חוטי, לכן שלושת הצעדים רצים ללא הפרעה =
 // אטומי בתהליך יחיד. מחזיר מספר רץ חדש (1, 2, 3, …) לכל מלון בנפרד.
-export function nextInvoiceSeq(hotelId = DEFAULT_HOTEL_ID) {
-  db.prepare(`INSERT INTO invoice_counters (hotel_id, seq) VALUES (?, 0) ON CONFLICT(hotel_id) DO NOTHING`).run(hotelId);
-  db.prepare(`UPDATE invoice_counters SET seq = seq + 1 WHERE hotel_id = ?`).run(hotelId);
-  return db.prepare(`SELECT seq FROM invoice_counters WHERE hotel_id = ?`).get(hotelId).seq;
+export function nextInvoiceSeq(hotelId = DEFAULT_HOTEL_ID, year = new Date().getFullYear()) {
+  db.prepare(`INSERT INTO invoice_counters (hotel_id, year, seq) VALUES (?, ?, 0) ON CONFLICT(hotel_id, year) DO NOTHING`).run(hotelId, year);
+  db.prepare(`UPDATE invoice_counters SET seq = seq + 1 WHERE hotel_id = ? AND year = ?`).run(hotelId, year);
+  return db.prepare(`SELECT seq FROM invoice_counters WHERE hotel_id = ? AND year = ?`).get(hotelId, year).seq;
 }
 
 // ── מסלול Postgres (אופציונלי) ─────────────────────────
@@ -243,5 +278,5 @@ export function isPostgres() { return !!_pg; }
  */
 export async function nextInvoiceSeqSafe(hotelId = DEFAULT_HOTEL_ID, year = new Date().getFullYear()) {
   if (_pg) return _pg.nextInvoiceSeq(hotelId, year);
-  return nextInvoiceSeq(hotelId);
+  return nextInvoiceSeq(hotelId, year);
 }

@@ -18,7 +18,8 @@
 //  וה-DB ל-Postgres. ראה SCALING.md — נקודת ההחלפה מרוכזת כאן וב-db.js.
 // ════════════════════════════════════════════════════════
 import { v4 as uuidv4 } from "uuid";
-import { db, DEFAULT_HOTEL_ID } from "./db.js";
+import { db, DEFAULT_HOTEL_ID, isPostgres } from "./db.js";
+import { prepare } from "./store/Repo.js";
 import { currentHotelId, tenantKey } from "./tenant.js";
 
 import { LruCache } from "./store/LruCache.js";
@@ -45,17 +46,18 @@ export const incidents   = [];  // יומן אירועי חירום — cache ח
 // מונים per-hotel לדשבורד מולטי-טננט — עבודה עתידית (ראה SCALING.md).
 const ALERTS_CAP = 200, INCIDENTS_CAP = 500;
 const statsData = { totalMessages: 0, checkIns: 0, checkOuts: 0, serviceRequests: 0, emergencies: 0 };
-{
-  const row = db.prepare(`SELECT * FROM stats WHERE hotel_id = ?`).get(DEFAULT_HOTEL_ID);
-  if (row) {
-    statsData.totalMessages   = row.total_messages;
-    statsData.checkIns        = row.check_ins;
-    statsData.checkOuts       = row.check_outs;
-    statsData.serviceRequests = row.service_requests;
-    statsData.emergencies     = row.emergencies;
-  }
+const selectStatsStmt = prepare(`SELECT * FROM stats WHERE hotel_id = ?`);
+
+function applyStatsRow(row) {
+  if (!row) return;
+  statsData.totalMessages   = Number(row.total_messages)   || 0;
+  statsData.checkIns        = Number(row.check_ins)        || 0;
+  statsData.checkOuts       = Number(row.check_outs)       || 0;
+  statsData.serviceRequests = Number(row.service_requests) || 0;
+  statsData.emergencies     = Number(row.emergencies)      || 0;
 }
-const persistStatsStmt = db.prepare(`
+
+const persistStatsStmt = prepare(`
   INSERT INTO stats (hotel_id, total_messages, check_ins, check_outs, service_requests, emergencies)
   VALUES (@hotel_id, @total_messages, @check_ins, @check_outs, @service_requests, @emergencies)
   ON CONFLICT(hotel_id) DO UPDATE SET
@@ -80,18 +82,49 @@ export let stats = new Proxy(statsData, {
   set(target, prop, value) { target[prop] = value; persistStats(); return true; },
 });
 
-// הידרציה: ההתראות/אירועים האחרונים מה-DB (החדשים ביותר קודם).
-for (const row of db.prepare(`SELECT data FROM alerts ORDER BY at DESC LIMIT ${ALERTS_CAP}`).all()) {
-  try { staffAlerts.push(JSON.parse(row.data)); } catch { /* שורה פגומה */ }
+// ── הידרציה: ההתראות/אירועים האחרונים (החדשים ביותר קודם) ─
+// 🔴 למה זו פונקציה ולא קוד ברמת המודול: ייבוא המודול קורה **לפני**
+//    ש-`initPersistence()` מזריק את דרייבר ה-Postgres, ולכן הידרציה
+//    ברמת המודול הייתה קוראת תמיד מ-SQLite — כלומר בענן היא הייתה
+//    מחזירה רשימה ריקה, בשקט, בלי שאיש ידע שהתראות אבדו.
+const selectAlertsStmt    = prepare(`SELECT data FROM alerts ORDER BY at DESC LIMIT ${ALERTS_CAP}`);
+const selectIncidentsStmt = prepare(`SELECT data FROM incidents ORDER BY at DESC LIMIT ${INCIDENTS_CAP}`);
+
+function fill(target, rows) {
+  target.length = 0;
+  for (const row of rows) {
+    try { target.push(JSON.parse(row.data)); } catch { /* שורה פגומה */ }
+  }
 }
-for (const row of db.prepare(`SELECT data FROM incidents ORDER BY at DESC LIMIT ${INCIDENTS_CAP}`).all()) {
-  try { incidents.push(JSON.parse(row.data)); } catch { /* שורה פגומה */ }
+
+// במסלול SQLite ההידרציה קורית מיד בייבוא, בדיוק כמו קודם — כך שכל
+// קוד (ובדיקה) שקורא `stats`/`staffAlerts` מיד אחרי import לא משתנה.
+//
+// 🔴 ובמסלול Postgres — **מדלגים**. בדרך כלל המודול נטען לפני
+//    `initPersistence`, אבל לא תמיד (`await import(...)` עצל, בדיקה,
+//    סקריפט תחזוקה), ואז הקריאה הסינכרונית זורקת ומפילה את הייבוא עצמו.
+//    ההידרציה האמיתית שם היא `hydrateState()`, שנקראת אחרי בחירת ה-DB.
+if (!isPostgres()) {
+  applyStatsRow(selectStatsStmt.get(DEFAULT_HOTEL_ID));
+  fill(staffAlerts, selectAlertsStmt.all());
+  fill(incidents,   selectIncidentsStmt.all());
+}
+
+/**
+ * הידרציה מחדש **אחרי** שנבחר מסד הנתונים. `server.js` קורא לזה מיד
+ * אחרי `initPersistence()`. במסלול SQLite זו פעולה חוזרת ולא מזיקה.
+ */
+export async function hydrateState() {
+  applyStatsRow(await selectStatsStmt.getAsync(DEFAULT_HOTEL_ID));
+  fill(staffAlerts, await selectAlertsStmt.allAsync());
+  fill(incidents,   await selectIncidentsStmt.allAsync());
+  return { alerts: staffAlerts.length, incidents: incidents.length };
 }
 
 // ── גישת DB לסשנים (פנימי) ────────────────────────────
 // כל סשן נשמר כ-JSON מלא בעמודת data; hotel_id/stage/last_active_at
 // נשלפים לעמודות נפרדות לצורך סינון/מיון יעיל.
-const upsertStmt = db.prepare(`
+const upsertStmt = prepare(`
   INSERT INTO sessions (hotel_id, phone, stage, last_active_at, data)
   VALUES (@hotel_id, @phone, @stage, @last_active_at, @data)
   ON CONFLICT(hotel_id, phone) DO UPDATE SET
@@ -136,11 +169,22 @@ function rowToSession(row) {
   } catch { return null; }
 }
 
-const selectSessionStmt = db.prepare(`SELECT hotel_id, phone, data FROM sessions WHERE hotel_id = ? AND phone = ?`);
+const selectSessionStmt = prepare(`SELECT hotel_id, phone, data FROM sessions WHERE hotel_id = ? AND phone = ?`);
 
-// טעינה סינכרונית (SQLite). מחזירה את הסשן או null.
+// טעינה סינכרונית — SQLite בלבד. במסלול Postgres היא **זורקת** במכוון
+// (`SyncReadUnavailable`), ולכן `getSession` מטפל בכך: ראה ההערה שם.
 function loadSession(phone, hotelId) {
   try { return rowToSession(selectSessionStmt.get(hotelId, phone)); }
+  catch (e) {
+    if (e?.name === "SyncReadUnavailable") throw e;
+    console.error("loadSession failed:", e?.message || e);
+    return null;
+  }
+}
+
+// טעינה אסינכרונית — עובדת בשני המסלולים.
+async function loadSessionAsync(phone, hotelId) {
+  try { return rowToSession(await selectSessionStmt.getAsync(hotelId, phone)); }
   catch (e) { console.error("loadSession failed:", e?.message || e); return null; }
 }
 
@@ -155,10 +199,22 @@ function loadSession(phone, hotelId) {
 export async function ensureSessionLoaded(phone, hotelId = currentHotelId()) {
   const key = tenantKey(hotelId, phone);
   if (sessionCache.has(key)) return sessionCache.get(key);
-  const s = loadSession(phone, hotelId);
-  if (s) sessionCache.set(key, s);
+  const s = await loadSessionAsync(phone, hotelId);
+  if (s) { sessionCache.set(key, s); confirmedAbsent.delete(key); }
+  else confirmedAbsent.add(key);   // ← ראה `confirmedAbsent`
   return s;
 }
+
+// ── "נבדק ואינו קיים" ──────────────────────────────────
+// 🔴 בלי זה, אורח **חדש לגמרי** לא יכול להיווצר במסלול Postgres: החטאה
+//    ב-cache גורמת ל-`getSession` לנסות לטעון, הטעינה הסינכרונית זורקת,
+//    וההודעה הראשונה של האורח נכשלת. אבל אסור גם פשוט ליצור סשן חדש
+//    בהחטאה — זה בדיוק אובדן ההיסטוריה שממנו נזהרנו.
+//
+//    ההבחנה: `ensureSessionLoaded` **כן** בדק את ה-DB. אם לא מצא, זהו
+//    באמת אורח חדש, וסימון כאן מרשה ל-`getSession` ליצור בלי לשאול שוב.
+//    כל יצירה/מחיקה מנקה את הסימון, כדי שהוא לעולם לא יהפוך לתשובה ישנה.
+const confirmedAbsent = new Set();
 
 // ── GuestSession schema ───────────────────────────────
 // טהור (Bug #2): יוצר סשן אם לא קיים, אך אינו משנה מונים/זמנים.
@@ -170,7 +226,7 @@ export function getSession(phone, hotelId = currentHotelId()) {
   // 🔴 read-through: החטאה ב-cache אינה "אורח חדש". הסשן עשוי להיות
   //    ב-DB ורק פונה מהזיכרון — יצירת סשן חדש כאן הייתה **מוחקת לאורח
   //    את ההיסטוריה באמצע שיחה**. לכן מנסים לטעון לפני שיוצרים.
-  if (!cached) {
+  if (!cached && !confirmedAbsent.has(key)) {
     const loaded = loadSession(phone, hotelId);
     if (loaded) { sessionCache.set(key, loaded); cached = loaded; }
   }
@@ -195,6 +251,7 @@ export function getSession(phone, hotelId = currentHotelId()) {
       sentiment:     "neutral",     // positive | neutral | negative
     };
     sessionCache.set(key, s);
+    confirmedAbsent.delete(key);   // מעכשיו הוא קיים
     persist(s);
     return s;
   }
@@ -209,8 +266,20 @@ export function peekSession(phone, hotelId = currentHotelId()) {
   const key = tenantKey(hotelId, phone);
   const hit = sessionCache.get(key);
   if (hit) return hit;
+  if (confirmedAbsent.has(key)) return undefined;
   const loaded = loadSession(phone, hotelId);
   if (loaded) sessionCache.set(key, loaded);
+  return loaded || undefined;
+}
+
+/** peek שעובד גם מול Postgres. */
+export async function peekSessionAsync(phone, hotelId = currentHotelId()) {
+  const key = tenantKey(hotelId, phone);
+  const hit = sessionCache.get(key);
+  if (hit) return hit;
+  const loaded = await loadSessionAsync(phone, hotelId);
+  if (loaded) { sessionCache.set(key, loaded); confirmedAbsent.delete(key); }
+  else confirmedAbsent.add(key);
   return loaded || undefined;
 }
 
@@ -248,29 +317,56 @@ export function deleteSession(phone, hotelId = currentHotelId()) {
   const key = tenantKey(hotelId, phone);
   // "היה קיים" נקבע מול ה-DB ולא מול ה-cache: סשן שפונה מהזיכרון עדיין
   // קיים, ודיווח "לא היה" היה שקר שתלוי במצב הזיכרון.
-  const existed = sessionCache.has(key) || !!loadSession(phone, hotelId);
+  const existed = sessionCache.has(key) || (!confirmedAbsent.has(key) && !!loadSession(phone, hotelId));
   sessionCache.delete(key);
-  db.prepare(`DELETE FROM sessions WHERE hotel_id = ? AND phone = ?`).run(hotelId, phone);
+  confirmedAbsent.add(key);   // נמחק = ידוע שאינו קיים
+  deleteSessionStmt.run(hotelId, phone);
+  return existed;
+}
+
+const deleteSessionStmt = prepare(`DELETE FROM sessions WHERE hotel_id = ? AND phone = ?`);
+const deleteAllStmt     = prepare(`DELETE FROM sessions`);
+const countAllStmt      = prepare(`SELECT COUNT(*) AS n FROM sessions`);
+const countHotelStmt    = prepare(`SELECT COUNT(*) AS n FROM sessions WHERE hotel_id = ?`);
+
+/** מחיקת סשן שעובדת גם מול Postgres (מסלול אסינכרוני). */
+export async function deleteSessionAsync(phone, hotelId = currentHotelId()) {
+  const key = tenantKey(hotelId, phone);
+  const existed = sessionCache.has(key) || !!(await loadSessionAsync(phone, hotelId));
+  sessionCache.delete(key);
+  confirmedAbsent.add(key);
+  await deleteSessionStmt.runAsync(hotelId, phone);
   return existed;
 }
 
 // ── איפוס כל הסשנים (כל המלונות) — מהזיכרון וגם מה-DB ───
-export function clearAllSessions() {
+export async function clearAllSessions() {
   // נספר מול ה-DB ולא מול ה-cache: אחרי פינוי, הספירה בזיכרון קטנה
   // מהאמת, והדיווח "אופסו N סשנים" היה שגוי.
   let count = 0;
-  try { count = db.prepare(`SELECT COUNT(*) AS n FROM sessions`).get()?.n || 0; } catch { /* ignore */ }
+  try { count = (await countAllStmt.getAsync())?.n || 0; } catch { /* ignore */ }
   sessionCache.clear();
-  db.prepare(`DELETE FROM sessions`).run();
+  confirmedAbsent.clear();   // אחרי איפוס גורף אין ידע קודם על אף אחד
+  await deleteAllStmt.runAsync();
   return count;
 }
 
-/** מספר הסשנים הקיימים (מקור אמת: ה-DB, לא ה-cache). */
+/**
+ * מספר הסשנים הקיימים (מקור אמת: ה-DB, לא ה-cache).
+ *
+ * ⚠️ הגרסה הסינכרונית עובדת ב-SQLite בלבד; ב-Postgres היא נופלת ל-cache
+ * ומחזירה **פחות** מהאמת. לדשבורד ולניטור יש להשתמש ב-`sessionCountAsync`.
+ */
 export function sessionCount(hotelId = null) {
   try {
-    const row = hotelId
-      ? db.prepare(`SELECT COUNT(*) AS n FROM sessions WHERE hotel_id = ?`).get(hotelId)
-      : db.prepare(`SELECT COUNT(*) AS n FROM sessions`).get();
+    const row = hotelId ? countHotelStmt.get(hotelId) : countAllStmt.get();
+    return row?.n || 0;
+  } catch { return sessionCache.size; }
+}
+
+export async function sessionCountAsync(hotelId = null) {
+  try {
+    const row = hotelId ? await countHotelStmt.getAsync(hotelId) : await countAllStmt.getAsync();
     return row?.n || 0;
   } catch { return sessionCache.size; }
 }
@@ -278,10 +374,10 @@ export function sessionCount(hotelId = null) {
 /** מצב ה-cache — לניטור ולדשבורד. */
 export function sessionCacheInfo() { return sessionCache.info(); }
 
-const insertAlertStmt = db.prepare(
+const insertAlertStmt = prepare(
   `INSERT INTO alerts (id, hotel_id, dept, priority, at, data) VALUES (?, ?, ?, ?, ?, ?)`
 );
-const pruneAlertsStmt = db.prepare(
+const pruneAlertsStmt = prepare(
   `DELETE FROM alerts WHERE hotel_id = ? AND id NOT IN (
      SELECT id FROM alerts WHERE hotel_id = ? ORDER BY at DESC LIMIT ${ALERTS_CAP})`
 );
@@ -296,10 +392,10 @@ export function logAlert(alert) {
 }
 
 // ── Emergency incident log ────────────────────────────
-const insertIncidentStmt = db.prepare(
+const insertIncidentStmt = prepare(
   `INSERT INTO incidents (id, hotel_id, status, at, data) VALUES (?, ?, ?, ?, ?)`
 );
-const pruneIncidentsStmt = db.prepare(
+const pruneIncidentsStmt = prepare(
   `DELETE FROM incidents WHERE hotel_id = ? AND id NOT IN (
      SELECT id FROM incidents WHERE hotel_id = ? ORDER BY at DESC LIMIT ${INCIDENTS_CAP})`
 );
@@ -320,20 +416,36 @@ export function logIncident(incident) {
 //    מחזירה רק את מי שפעיל *כרגע* — כלומר הדשבורד היה מציג חלק שרירותי
 //    מהאורחים ונראה כאילו אורחים נעלמו.
 //    `limit` מגן על דשבורד של מיליוני סשנים.
+const listByHotelStmt = prepare(`SELECT hotel_id, phone, data FROM sessions WHERE hotel_id = ?
+                                  ORDER BY last_active_at DESC LIMIT ?`);
+const listAllStmt     = prepare(`SELECT hotel_id, phone, data FROM sessions
+                                  ORDER BY last_active_at DESC LIMIT ?`);
+
+// נפילה חיננית משותפת: לפחות מה שחם בזיכרון, כדי שהדשבורד לא יישבר.
+function sessionsFromCache(hotelId) {
+  let list = sessionCache.values();
+  if (hotelId) list = list.filter(s => (s.hotelId || DEFAULT_HOTEL_ID) === hotelId);
+  return list.sort((a, b) => new Date(b.lastActiveAt) - new Date(a.lastActiveAt));
+}
+
 export function allSessions(hotelId = null, { limit = 500 } = {}) {
   try {
-    const rows = hotelId
-      ? db.prepare(`SELECT hotel_id, phone, data FROM sessions WHERE hotel_id = ?
-                     ORDER BY last_active_at DESC LIMIT ?`).all(hotelId, limit)
-      : db.prepare(`SELECT hotel_id, phone, data FROM sessions
-                     ORDER BY last_active_at DESC LIMIT ?`).all(limit);
+    const rows = hotelId ? listByHotelStmt.all(hotelId, limit) : listAllStmt.all(limit);
     return rows.map(rowToSession).filter(Boolean);
   } catch (e) {
     console.error("allSessions failed:", e?.message || e);
-    // נפילה חיננית: לפחות מה שחם בזיכרון, כדי שהדשבורד לא יישבר.
-    let list = sessionCache.values();
-    if (hotelId) list = list.filter(s => (s.hotelId || DEFAULT_HOTEL_ID) === hotelId);
-    return list.sort((a, b) => new Date(b.lastActiveAt) - new Date(a.lastActiveAt));
+    return sessionsFromCache(hotelId);
+  }
+}
+
+/** גרסה שעובדת גם מול Postgres. הדשבורד משתמש בזו. */
+export async function allSessionsAsync(hotelId = null, { limit = 500 } = {}) {
+  try {
+    const rows = hotelId ? await listByHotelStmt.allAsync(hotelId, limit) : await listAllStmt.allAsync(limit);
+    return rows.map(rowToSession).filter(Boolean);
+  } catch (e) {
+    console.error("allSessions failed:", e?.message || e);
+    return sessionsFromCache(hotelId);
   }
 }
 
@@ -341,25 +453,47 @@ export function allSessions(hotelId = null, { limit = 500 } = {}) {
 // מנהל/קבלה נכנסים לשיחה של חדר מסוים: החדר → הסשן → הטלפון וההיסטוריה.
 // אם אותו חדר אוכלס יותר מפעם אחת (אורח קודם + נוכחי) — מחזירים את הפעיל
 // בפעילות האחרונה. סינון אופציונלי לפי מלון (בידוד מולטי-טננט).
+const ROOM_SCAN_LIMIT = 2000;
+
+function pickRoom(rows, key) {
+  for (const row of rows) {
+    const s = rowToSession(row);
+    if (s && String(s.roomNumber) === key) return s;
+  }
+  return null;
+}
+
+function roomFromCache(key, hotelId) {
+  return sessionCache.values()
+    .filter(s => String(s.roomNumber) === key && (!hotelId || (s.hotelId || DEFAULT_HOTEL_ID) === hotelId))
+    .sort((a, b) => new Date(b.lastActiveAt) - new Date(a.lastActiveAt))[0] || null;
+}
+
 export function sessionByRoom(room, hotelId = null) {
   const key = String(room);
   // מול ה-DB: אורח ששוהה בחדר אך לא כתב לאחרונה עשוי להיות מפונה
   // מהזיכרון — והקבלה הייתה מקבלת "לא נמצא" על אורח שקיים.
   try {
-    const rows = hotelId
-      ? db.prepare(`SELECT hotel_id, phone, data FROM sessions WHERE hotel_id = ?
-                     ORDER BY last_active_at DESC LIMIT 2000`).all(hotelId)
-      : db.prepare(`SELECT hotel_id, phone, data FROM sessions
-                     ORDER BY last_active_at DESC LIMIT 2000`).all();
-    for (const row of rows) {
-      const s = rowToSession(row);
-      if (s && String(s.roomNumber) === key) return s;
-    }
-    return null;
+    return pickRoom(
+      hotelId ? listByHotelStmt.all(hotelId, ROOM_SCAN_LIMIT) : listAllStmt.all(ROOM_SCAN_LIMIT),
+      key,
+    );
   } catch (e) {
     console.error("sessionByRoom failed:", e?.message || e);
-    return sessionCache.values()
-      .filter(s => String(s.roomNumber) === key && (!hotelId || (s.hotelId || DEFAULT_HOTEL_ID) === hotelId))
-      .sort((a, b) => new Date(b.lastActiveAt) - new Date(a.lastActiveAt))[0] || null;
+    return roomFromCache(key, hotelId);
+  }
+}
+
+export async function sessionByRoomAsync(room, hotelId = null) {
+  const key = String(room);
+  try {
+    return pickRoom(
+      hotelId ? await listByHotelStmt.allAsync(hotelId, ROOM_SCAN_LIMIT)
+              : await listAllStmt.allAsync(ROOM_SCAN_LIMIT),
+      key,
+    );
+  } catch (e) {
+    console.error("sessionByRoom failed:", e?.message || e);
+    return roomFromCache(key, hotelId);
   }
 }

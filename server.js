@@ -4,10 +4,10 @@
 import express   from "express";
 import dotenv    from "dotenv";
 import { handleIncoming, wa, notifyStaff } from "./bot.js";
-import { allSessions, sessionCount, sessionCacheInfo, staffAlerts, incidents, stats, deleteSession, clearAllSessions, sessionByRoom, peekSession } from "./state.js";
+import { allSessionsAsync, sessionCountAsync, sessionCacheInfo, staffAlerts, incidents, stats, deleteSessionAsync, clearAllSessions, sessionByRoomAsync, peekSessionAsync, hydrateState } from "./state.js";
 import { fromNumberFor, resolveHotelId, normalizeNumber } from "./tenant.js";
 import { hotelConfig, updateConfig, resetConfig, checkDepartmentContacts, checkTenantIsolation, reportTenantIsolation, clearConfigCache, printRoutingTable, routingTable, DEPARTMENTS } from "./config.js";
-import { reservations, getReservationByRoom, activeReservationCount, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES, autoChargeOnNoShow, findNoShowReservations } from "./checkin.js";
+import { reservations, ensureReservationLoaded, getReservationByRoomAsync, activeReservationCountAsync, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES, autoChargeOnNoShow, findNoShowReservationsAsync } from "./checkin.js";
 import checkinRouter from "./checkin-routes.js";
 import { smokePlaces } from "./places/index.js";
 import { listIdDocuments, retrieveIdDocument, accessLogFor, purgeExpiredIdDocuments, RETENTION_DAYS } from "./idverify/index.js";
@@ -15,8 +15,9 @@ import { DEFAULT_HOTEL_ID } from "./tenant.js";
 import { verifyMetaChallenge } from "./whatsapp/index.js";
 import { pmsHealth } from "./pms/index.js";
 import { emailIsLive } from "./email/index.js";
-import { updateConfigFor, configFor, hotelModel } from "./config.js";
-import { registerHotelNumber, reloadHotelNumbers } from "./tenant.js";
+import { updateConfigFor, configFor, hotelModel, hydrateConfig } from "./config.js";
+import { registerHotelNumber, reloadHotelNumbers, reloadHotelNumbersAsync } from "./tenant.js";
+import { prepare } from "./store/Repo.js";
 import { bootstrapDemoHotel } from "./demo-bootstrap.js";
 import { isDistributed, storeKind } from "./store/index.js";
 import { initPersistence, persistenceKind, flushPersistence, persistenceStats } from "./store/persistence.js";
@@ -162,10 +163,10 @@ app.post("/webhook/meta", express.raw({ type: "*/*" }), (req, res) => {
 app.use(checkinRouter);
 
 // ── RESET SESSION — לאיפוס סשן ────────────────────────
-app.get("/reset/:phone", auth, (req, res) => {
+app.get("/reset/:phone", auth, async (req, res) => {
   const phone = decodeURIComponent(req.params.phone);
   const full = phone.startsWith("whatsapp:") ? phone : `whatsapp:${phone}`;
-  if (deleteSession(full)) {
+  if (await deleteSessionAsync(full)) {
     console.log(`🔄 Session reset: ${full}`);
     res.json({ ok: true, message: `Session reset for ${full}` });
   } else {
@@ -174,23 +175,24 @@ app.get("/reset/:phone", auth, (req, res) => {
 });
 
 // ── RESET ALL SESSIONS ────────────────────────────────
-app.get("/reset-all", auth, (req, res) => {
-  const count = clearAllSessions();
+app.get("/reset-all", auth, async (req, res) => {
+  const count = await clearAllSessions();
   console.log(`🔄 All ${count} sessions reset`);
   res.json({ ok: true, message: `Reset ${count} sessions` });
 });
 
 // ── API: stats ────────────────────────────────────────
-app.get("/api/stats", auth, (req, res) => {
+app.get("/api/stats", auth, async (req, res) => {
+  const sessions = await allSessionsAsync();
   res.json({
     ...stats,
-    activeSessions: sessionCount(),
-    checkedIn: allSessions().filter(s => s.stage === "checked_in").length,
-    activeReservations: activeReservationCount(),
+    activeSessions: await sessionCountAsync(),
+    checkedIn: sessions.filter(s => s.stage === "checked_in").length,
+    activeReservations: await activeReservationCountAsync(),
   });
 });
 
-app.get("/api/sessions", auth, (req, res) => res.json(allSessions(req.query.hotelId || null)));
+app.get("/api/sessions", auth, async (req, res) => res.json(await allSessionsAsync(req.query.hotelId || null)));
 
 // ── מנהל/קבלה: כניסה לשיחה של חדר מסוים (Part ו') ──────
 // מנהל המלון נכנס לשיחה עם חדר דרך המספר של המלון: החדר → הטלפון של
@@ -198,14 +200,14 @@ app.get("/api/sessions", auth, (req, res) => res.json(allSessions(req.query.hote
 // יודעת בדיוק לאיזה מספר לפנות (guest phone) ומאיזה מספר לשלוח (fromNumber).
 //   GET /api/conversation?room=512[&hotelId=...]   — לפי חדר
 //   GET /api/conversation?phone=+9725...[&hotelId=] — לפי טלפון
-app.get("/api/conversation", auth, (req, res) => {
+app.get("/api/conversation", auth, async (req, res) => {
   const hotelId = req.query.hotelId || DEFAULT_HOTEL_ID;
   let s = null;
   if (req.query.room) {
-    s = sessionByRoom(req.query.room, req.query.hotelId || null);
+    s = await sessionByRoomAsync(req.query.room, req.query.hotelId || null);
   } else if (req.query.phone) {
     const full = String(req.query.phone).startsWith("whatsapp:") ? req.query.phone : `whatsapp:${req.query.phone}`;
-    s = peekSession(full, hotelId);
+    s = await peekSessionAsync(full, hotelId);
   } else {
     return res.status(400).json({ error: "room or phone query param required" });
   }
@@ -248,15 +250,15 @@ app.post("/api/alert", auth, async (req, res) => {
 // ── DEMO: add a charge to a room's folio ──────────────
 // POST /api/charge  { room | reservationId, amount (₪), category?, description? }
 // משמש לבדיקת הצ'ק אאוט — מוסיף חיוב לחשבון של חדר פעיל.
-app.post("/api/charge", auth, (req, res) => {
+app.post("/api/charge", auth, async (req, res) => {
   const { room, roomNumber, reservationId, amount, category, description } = req.body;
   const targetRoom = String(room ?? roomNumber ?? "");
 
   // מגובה-DB: סריקת הזיכרון הייתה מוצאת רק הזמנות "חמות", ולכן חדר של
   // אורח שלא כתב לאחרונה היה מוחזר כ"לא נמצא".
   const reservation = reservationId
-    ? reservations[reservationId]
-    : getReservationByRoom(targetRoom);
+    ? await ensureReservationLoaded(reservationId)
+    : await getReservationByRoomAsync(targetRoom);
 
   if (!reservation) {
     return res.status(404).json({ error: "No active (checked-in) reservation for that room/id" });
@@ -280,8 +282,8 @@ app.post("/api/charge", auth, (req, res) => {
 });
 
 // ── DEMO: view a room's folio (for verifying charges) ─
-app.get("/api/folio/:room", auth, (req, res) => {
-  const reservation = getReservationByRoom(req.params.room);
+app.get("/api/folio/:room", auth, async (req, res) => {
+  const reservation = await getReservationByRoomAsync(req.params.room);
   if (!reservation) return res.status(404).json({ error: "No active reservation for that room" });
   res.json({
     reservationId: reservation.id,
@@ -310,7 +312,7 @@ app.post("/api/no-show", auth, async (req, res) => {
 
   // מצב "all" — סימולציית ה-cron: מוצא את כל ה-no-shows ומחייב אותם.
   if (all) {
-    const due = findNoShowReservations();
+    const due = await findNoShowReservationsAsync();
     const results = [];
     for (const r of due) {
       try {
@@ -328,8 +330,8 @@ app.post("/api/no-show", auth, async (req, res) => {
   // מגובה-DB: סריקת הזיכרון הייתה מוצאת רק הזמנות "חמות", ולכן חדר של
   // אורח שלא כתב לאחרונה היה מוחזר כ"לא נמצא".
   const reservation = reservationId
-    ? reservations[reservationId]
-    : getReservationByRoom(targetRoom);
+    ? await ensureReservationLoaded(reservationId)
+    : await getReservationByRoomAsync(targetRoom);
 
   if (!reservation) {
     return res.status(404).json({ error: "No active (checked-in) reservation for that room/id" });
@@ -515,9 +517,9 @@ app.post("/api/config/reset", auth, (req, res) => {
 // ════════════════════════════════════════════════════════
 
 // רשימת מסמכים (מטא-דטא בלבד — לעולם לא התמונה).
-app.get("/api/id-documents", auth, (req, res) => {
+app.get("/api/id-documents", auth, async (req, res) => {
   const hotelId = req.query.hotelId || DEFAULT_HOTEL_ID;
-  res.json(listIdDocuments({ hotelId, reservationId: req.query.reservationId || null }));
+  res.json(await listIdDocuments({ hotelId, reservationId: req.query.reservationId || null }));
 });
 
 // שליפת התמונה עצמה — מפוענחת לפי דרישה, מבודדת למלון, ומתועדת.
@@ -541,8 +543,8 @@ app.get("/api/id-document/:id/image", auth, async (req, res) => {
 });
 
 // יומן הגישות של מסמך (audit trail).
-app.get("/api/id-document/:id/access-log", auth, (req, res) => {
-  res.json(accessLogFor(req.params.id));
+app.get("/api/id-document/:id/access-log", auth, async (req, res) => {
+  res.json(await accessLogFor(req.params.id));
 });
 
 // הרצת מדיניות המחיקה (retention). נועד ל-cron; מפעילים גם ידנית.
@@ -558,8 +560,8 @@ app.post("/api/id-documents/purge", auth, async (req, res) => {
 // משחזר בדיוק *מה* האורח אישר: איזה נוסח (version + hash של הטקסט),
 // הנוסח המילולי שכתב ("אני מאשר"), השפה שהוצגה, ומתי. זו הראיה שהופכת
 // אישור בוואטסאפ לבר-אכיפה — מענה ל"מה בדיוק אישרתי?" ולבירור משפטי.
-app.get("/api/terms-acceptance/:rid", auth, (req, res) => {
-  const r = reservations[req.params.rid];
+app.get("/api/terms-acceptance/:rid", auth, async (req, res) => {
+  const r = await ensureReservationLoaded(req.params.rid);
   if (!r) return res.status(404).json({ error: "reservation not found" });
   res.json({
     reservationId:  r.id,
@@ -607,9 +609,24 @@ try {
   process.exit(1);
 }
 
+// ── הידרציה **אחרי** בחירת ה-DB ────────────────────────
+// 🔴 המודולים נטענים לפני `initPersistence`, ולכן ההידרציה שברמת המודול
+//    קוראת תמיד מ-SQLite. במסלול Postgres בלעדי השורות האלה היו הקונפיג,
+//    ההתראות והמיפוי של המלונות **ריקים** — השרת היה עולה "בהצלחה" ועונה
+//    כמלון ברירת המחדל לכל מספר. שקט, ושגוי לגמרי.
+if (persistenceKind() === "postgres") {
+  await hydrateConfig();
+  await hydrateState();
+  await reloadHotelNumbersAsync();
+  console.log(`🗄️  הידרציה מ-Postgres הושלמה (קונפיג, התראות, מיפוי מספרים)`);
+}
+
 await bootstrapDemoHotel().catch(e => console.error("⚠️ bootstrapDemoHotel נכשל:", e?.message || e));
 
-const server = app.listen(PORT, () => {
+const numbersForLog = prepare(`SELECT number, hotel_id FROM hotel_numbers ORDER BY number`);
+const distinctHotels = prepare(`SELECT DISTINCT hotel_id FROM hotel_numbers`);
+
+const server = app.listen(PORT, async () => {
   console.log(`\n🏨  Hotel Concierge Bot v4 — :${PORT}`);
   console.log(`📊  Dashboard → http://localhost:${PORT}`);
   // 🔴 הסיסמה **לא** מודפסת. קודם היא נכתבה כאן במלואה, ולוגים של Railway
@@ -678,7 +695,7 @@ const server = app.listen(PORT, () => {
   //    של כל מלון שיש לו מספר — כלומר של המלונות שבאמת מקבלים הודעות.
   let mappedHotels = [];
   try {
-    const rows = db.prepare(`SELECT number, hotel_id FROM hotel_numbers ORDER BY number`).all();
+    const rows = await numbersForLog.allAsync();
     if (rows.length) {
       console.log(`\n📞 מספרים פעילים — מי עונה למי:`);
       for (const r of rows) {
@@ -732,7 +749,7 @@ const server = app.listen(PORT, () => {
   // בעלייה כדי שזה יתגלה לפני הדגמה, לא אחריה.
   try {
     const hotelIds = [...new Set(
-      db.prepare(`SELECT DISTINCT hotel_id FROM hotel_numbers`).all().map(r => r.hotel_id)
+      (await distinctHotels.allAsync()).map(r => r.hotel_id)
     )].filter(h => h && h !== DEFAULT_HOTEL_ID);
     let allIsolated = true;
     for (const hid of hotelIds) if (!reportTenantIsolation(hid)) allIsolated = false;

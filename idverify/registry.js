@@ -16,18 +16,19 @@
 import fs from "node:fs/promises";
 import { v4 as uuidv4 } from "uuid";
 import { db, DEFAULT_HOTEL_ID } from "../db.js";
+import { prepare, queryAllAsync } from "../store/Repo.js";
 import { decryptBuffer } from "./crypto.js";
 
 // כמה זמן נשמר מסמך זיהוי לפני מחיקה אוטומטית. ברירת מחדל: 30 יום.
 // מינימיזציית נתונים (GDPR/חוק הגנת הפרטיות): לא שומרים מעבר לנדרש.
 export const RETENTION_DAYS = Number(process.env.ID_RETENTION_DAYS) || 30;
 
-const insertDocStmt = db.prepare(`
+const insertDocStmt = prepare(`
   INSERT INTO id_documents
     (id, hotel_id, reservation_id, phone, guest_name, doc_type, stored_path, encrypted, status, created_at, purge_after, extracted_fields)
   VALUES (@id, @hotel_id, @reservation_id, @phone, @guest_name, @doc_type, @stored_path, @encrypted, @status, @created_at, @purge_after, @extracted_fields)
 `);
-const insertAccessStmt = db.prepare(`
+const insertAccessStmt = prepare(`
   INSERT INTO id_access_log (id, hotel_id, document_id, actor, action, purpose, ip, at)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `);
@@ -68,11 +69,14 @@ export function recordIdDocument({ id, hotelId, reservationId, phone, guestName,
 }
 
 // מטא-דטא בלבד — לקבלה. לעולם לא מחזיר את התמונה עצמה.
-export function listIdDocuments({ hotelId = DEFAULT_HOTEL_ID, reservationId = null } = {}) {
-  const cols = `id, hotel_id, reservation_id, phone, guest_name, doc_type, status, created_at, purge_after, deleted_at, extracted_fields`;
+const DOC_COLS = `id, hotel_id, reservation_id, phone, guest_name, doc_type, status, created_at, purge_after, deleted_at, extracted_fields`;
+const SQL_DOCS_BY_RES = `SELECT ${DOC_COLS} FROM id_documents WHERE hotel_id = ? AND reservation_id = ? ORDER BY created_at DESC`;
+const SQL_DOCS_ALL    = `SELECT ${DOC_COLS} FROM id_documents WHERE hotel_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 500`;
+
+export async function listIdDocuments({ hotelId = DEFAULT_HOTEL_ID, reservationId = null } = {}) {
   const rows = reservationId
-    ? db.prepare(`SELECT ${cols} FROM id_documents WHERE hotel_id = ? AND reservation_id = ? ORDER BY created_at DESC`).all(hotelId, reservationId)
-    : db.prepare(`SELECT ${cols} FROM id_documents WHERE hotel_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 500`).all(hotelId);
+    ? await queryAllAsync(SQL_DOCS_BY_RES, [hotelId, reservationId])
+    : await queryAllAsync(SQL_DOCS_ALL, [hotelId]);
   // extracted_fields נשמר כ-JSON — מפענחים לאובייקט נוח לקבלה (מטא-דטא בלבד, לא תמונה).
   for (const r of rows) {
     if (r.extracted_fields) { try { r.extracted_fields = JSON.parse(r.extracted_fields); } catch { /* משאירים כמחרוזת */ } }
@@ -83,8 +87,10 @@ export function listIdDocuments({ hotelId = DEFAULT_HOTEL_ID, reservationId = nu
 // ── שליפה מבוקרת + מתועדת של התמונה ─────────────────────
 // זו הדרך היחידה שהקבלה מקבלת גישה לתמונה: פענוח לפי דרישה, בידוד מלון,
 // ורישום גישה. מחזיר { buffer, meta } בהצלחה, או אובייקט מצב אחרת.
+const selectDocStmt = prepare(`SELECT * FROM id_documents WHERE id = ?`);
+
 export async function retrieveIdDocument(documentId, { hotelId, actor, purpose, ip } = {}) {
-  const row = db.prepare(`SELECT * FROM id_documents WHERE id = ?`).get(documentId);
+  const row = await selectDocStmt.getAsync(documentId);
   if (!row) return { notFound: true };
 
   // בידוד מלון: מלון א' לא רשאי לפתוח מסמך של מלון ב'. ניסיון כזה נחסם *ונרשם*.
@@ -114,17 +120,22 @@ export async function retrieveIdDocument(documentId, { hotelId, actor, purpose, 
 }
 
 // יומן הגישות של מסמך (לביקורת/חקירה).
-export function accessLogFor(documentId) {
-  return db.prepare(`SELECT actor, action, purpose, ip, at FROM id_access_log WHERE document_id = ? ORDER BY at DESC`).all(documentId);
+const accessLogStmt = prepare(`SELECT actor, action, purpose, ip, at FROM id_access_log WHERE document_id = ? ORDER BY at DESC`);
+
+export async function accessLogFor(documentId) {
+  return accessLogStmt.allAsync(documentId);
 }
 
 // ── מחיקה אוטומטית (retention job) ──────────────────────
 // מוחק את הקבצים (כולל ה-metadata לצדם), מסמן deleted_at, ומתעד. נועד
 // לרוץ מחזורית (cron). לא זורק — מדלג על מסמך בעייתי וממשיך.
+const expiredDocsStmt = prepare(
+  `SELECT * FROM id_documents WHERE deleted_at IS NULL AND purge_after IS NOT NULL AND purge_after <= ?`
+);
+const markDeletedStmt = prepare(`UPDATE id_documents SET deleted_at = ?, stored_path = NULL WHERE id = ?`);
+
 export async function purgeExpiredIdDocuments(now = new Date()) {
-  const rows = db.prepare(
-    `SELECT * FROM id_documents WHERE deleted_at IS NULL AND purge_after IS NOT NULL AND purge_after <= ?`
-  ).all(now.toISOString());
+  const rows = await expiredDocsStmt.allAsync(now.toISOString());
   let purged = 0;
   for (const row of rows) {
     try {
@@ -132,7 +143,7 @@ export async function purgeExpiredIdDocuments(now = new Date()) {
         await fs.unlink(row.stored_path).catch(() => {});
         await fs.unlink(row.stored_path.replace(/\.enc$/, ".json")).catch(() => {});
       }
-      db.prepare(`UPDATE id_documents SET deleted_at = ?, stored_path = NULL WHERE id = ?`).run(now.toISOString(), row.id);
+      await markDeletedStmt.runAsync(now.toISOString(), row.id);
       logIdAccess({ hotelId: row.hotel_id, documentId: row.id, actor: "system", action: "purge", purpose: "retention" });
       purged++;
     } catch (e) {

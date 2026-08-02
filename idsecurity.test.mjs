@@ -57,7 +57,7 @@ test("קובץ בדיסק מוצפן — לא קריא כטקסט גולמי", a
 
 test("רשימה מחזירה מטא-דטא בלבד — בלי התמונה", async () => {
   await makeDoc({ hotelId: "kempinski", reservationId: "resL" });
-  const rows = reg.listIdDocuments({ hotelId: "kempinski", reservationId: "resL" });
+  const rows = await reg.listIdDocuments({ hotelId: "kempinski", reservationId: "resL" });
   assert.ok(rows.length >= 1);
   for (const r of rows) {
     assert.ok(!("buffer" in r) && !("data" in r), "אין תוכן תמונה ברשימה");
@@ -68,7 +68,7 @@ test("רשימה מחזירה מטא-דטא בלבד — בלי התמונה", a
 test("audit: כל גישה נרשמת (create + view)", async () => {
   const { docId } = await makeDoc({ hotelId: "kempinski" });
   await reg.retrieveIdDocument(docId, { hotelId: "kempinski", actor: "reception7", purpose: "ביקורת" });
-  const log = reg.accessLogFor(docId);
+  const log = await reg.accessLogFor(docId);
   const actions = log.map(l => l.action);
   assert.ok(actions.includes("create"), "רישום יצירה");
   assert.ok(actions.includes("view"),   "רישום צפייה");
@@ -80,7 +80,7 @@ test("בידוד: מלון א' לא יכול לפתוח מסמך של מלון �
   const out = await reg.retrieveIdDocument(docId, { hotelId: "kempinski", actor: "attacker", purpose: "x" });
   assert.ok(out.denied, "גישה חוצת-מלונות נחסמה");
   assert.ok(!out.buffer, "לא הוחזרה תמונה");
-  const log = reg.accessLogFor(docId);
+  const log = await reg.accessLogFor(docId);
   assert.ok(log.some(l => l.action === "view_denied"), "ניסיון הגישה החסום נרשם ל-audit");
 });
 
@@ -94,7 +94,7 @@ test("verify-then-discard: מסמך שאומת בלי תמונה — יש proof,
   assert.ok(out.noImage, "אין תמונה שמורה");
   assert.ok(!out.buffer, "לא הוחזרה תמונה");
   assert.equal(out.meta.status, "verified_discarded", "אבל רישום האימות (proof) קיים");
-  const log = reg.accessLogFor(docId);
+  const log = await reg.accessLogFor(docId);
   assert.ok(log.some(l => l.action === "view_no_image"), "הגישה נרשמה גם כשאין תמונה");
 });
 
@@ -156,7 +156,7 @@ test("שדות שחולצו: נשמרים כ-JSON ומוחזרים לרשימה 
     guestName: "Jane", docType: "passport", storedPath: null, encrypted: false,
     status: "verified_discarded", fields, retentionDays: 5,
   });
-  const rows = reg.listIdDocuments({ hotelId: "kempinski", reservationId: "resFields" });
+  const rows = await reg.listIdDocuments({ hotelId: "kempinski", reservationId: "resFields" });
   const row = rows.find(r => r.id === docId);
   assert.ok(row, "הרישום נמצא");
   assert.deepEqual(row.extracted_fields, fields, "השדות שחולצו הוחזרו כאובייקט");
@@ -198,6 +198,6 @@ test("retention: מסמך שפג תוקפו נמחק — הקובץ נעלם ו�
   const out = await reg.retrieveIdDocument(docId, { hotelId: "kempinski", actor: "reception1", purpose: "x" });
   assert.ok(out.deleted, "קריאה אחרי מחיקה מחזירה 'נמחק'");
 
-  const log = reg.accessLogFor(docId);
+  const log = await reg.accessLogFor(docId);
   assert.ok(log.some(l => l.action === "purge"), "המחיקה נרשמה ל-audit");
 });

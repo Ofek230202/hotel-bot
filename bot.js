@@ -5,15 +5,15 @@ import Anthropic from "@anthropic-ai/sdk";
 import dotenv    from "dotenv";
 import { createHash } from "node:crypto";
 import { whatsappFor } from "./whatsapp/index.js";
-import { departmentContacts, TAG_DEPARTMENTS, configFor, hotelModel, welcomeFor } from "./config.js";
-import { getSession, peekSession, recordActivity, pushHistory, patchSession, logAlert, logIncident, stats } from "./state.js";
+import { departmentContacts, TAG_DEPARTMENTS, configFor, hotelModel, welcomeFor, ensureConfigLoaded } from "./config.js";
+import { getSession, peekSession, recordActivity, pushHistory, patchSession, logAlert, logIncident, stats, ensureSessionLoaded } from "./state.js";
 import { runInTenant, resolveHotelId, currentHotelId, fromNumberFor, tenantKey } from "./tenant.js";
 import { withLock, createSemaphore, createRateLimiter, withTimeout, retryWithBackoff } from "./concurrency.js";
 import { withGuestLock } from "./store/index.js";
 import { detectLangSignal, detectLanguageRequest, stripLanguageRequest } from "./i18n.js";
 import { stripInternalTags, hasInternalTag, validateFullName, validateReservationNumber, validateIdMedia, validateStayDates, validateTermsConfirmation, parseCheckinDetails, isSkipWord } from "./validate.js";
 import { resolveNameForms, nameFor }                      from "./names.js";
-import { startCheckin, processCheckout, getActiveReservation, getPendingReservation, formatFolio, depositExplainer, formatStayDates, saveFeedback, switchDepositToCash, completeCheckin, reservations } from "./checkin.js";
+import { startCheckin, processCheckout, getActiveReservation, getActiveReservationAsync, getPendingReservation, getPendingReservationAsync, ensureReservationLoaded, formatFolio, depositExplainer, formatStayDates, saveFeedback, switchDepositToCash, completeCheckin, reservations } from "./checkin.js";
 import { email }                                          from "./email/index.js";
 import { idVerify }                                       from "./idverify/index.js";
 import { resolveIdPolicy, idCollectionNotice }            from "./idverify/policy.js";
@@ -2218,7 +2218,7 @@ async function promptStage(phone, stage, lang, { prefix = "", brief = false, wit
 // כך "להמשיך בצ'ק אין" / מעבר שפה לא יוצרים הזמנה כפולה, ותקלה חולפת
 // ביצירת הקישור ניתנת לתיקון בניסיון הבא — בלי לאבד את השלב.
 async function ensureDepositLink(phone, lang) {
-  const existing = getPendingReservation(phone);
+  const existing = await getPendingReservationAsync(phone);
   if (existing?.paymentUrl) return existing.paymentUrl;
 
   const s = getSession(phone);
@@ -2273,7 +2273,7 @@ async function ensureDepositLink(phone, lang) {
 // מיד. הקבלה מקבלת התראה לגבות את הפיקדון במזומן ולהכין כרטיס/למסור קוד.
 async function completeCashCheckin(phone, lang) {
   const s = getSession(phone);
-  let pending = getPendingReservation(phone);
+  let pending = await getPendingReservationAsync(phone);
   if (pending) {
     await switchDepositToCash(pending.id);
   } else {
@@ -2300,7 +2300,7 @@ async function completeCashCheckin(phone, lang) {
         depositMethod: "cash",
       },
     );
-    pending = reservations[reservationId];
+    pending = await ensureReservationLoaded(reservationId);
   }
   if (!pending) {
     await wa(phone, lang === "he"
@@ -2798,7 +2798,7 @@ function isNegative(text) {
 
 // שלב 1 — מציג לאורח את כל החיובים ומבקש אישור
 async function startCheckout(phone, lang) {
-  const res = getActiveReservation(phone);
+  const res = await getActiveReservationAsync(phone);
   if (!res) {
     await wa(phone, lang === "he"
       ? "לא מצאתי הזמנה פעילה על שמך. אפשר לפנות לקבלה בשלוחה 0 ונשמח לסייע."
@@ -2922,13 +2922,14 @@ async function handleEmergency(phone, text, lang, kind) {
   // מיקום האורח — הדבר הקריטי ביותר בהתראת חירום. הסשן הוא המקור הראשון,
   // אבל סשן שאופס/אורח שעשה צ'ק אין בקבלה עדיין יכול להיות מקושר להזמנה
   // פעילה — ולכן נופלים אליה לפני שמוותרים.
-  let roomNumber = s.roomNumber;
-  if (!roomNumber) {
-    try { roomNumber = getActiveReservation(phone)?.roomNumber || null; } catch { /* לא חוסם */ }
+  // שליפה **אחת** להזמנה הפעילה, ולא שתיים: בחירום זו הנתיב הקריטי, ושתי
+  // שאילתות נפרדות רק כדי למלא חדר ושם הן זמן מבוזבז בדיוק ברגע הלא נכון.
+  let activeRes = null;
+  if (!s.roomNumber || !s.guestName) {
+    try { activeRes = await getActiveReservationAsync(phone); } catch { /* לא חוסם */ }
   }
-  const guestName = s.guestName || (() => {
-    try { return getActiveReservation(phone)?.guestName || null; } catch { return null; }
-  })();
+  const roomNumber = s.roomNumber || activeRes?.roomNumber || null;
+  const guestName  = s.guestName  || activeRes?.guestName  || null;
 
   // סוג המלון (Part א'): קובע אם יש צוות ביטחון *במקום* להסלים אליו.
   // מלון בוטיק לא-מאויש → אין צוות בדרך, מדגישים את שירותי החירום
@@ -3070,10 +3071,22 @@ export async function handleIncoming(phone, text, media = null, meta = {}) {
   //    מצב הצ'ק אין נדרס או שההזמנה נשלחת פעמיים. עם `REDIS_URL` מוגדר
   //    הנעילה הופכת למבוזרת; בלעדיו ההתנהגות זהה לחלוטין להיום.
   return runInTenant(hotelId, () =>
-    withGuestLock(tenantKey(hotelId, phone), () => guardedHandle(phone, text, media)));
+    withGuestLock(tenantKey(hotelId, phone), () => guardedHandle(phone, text, media, hotelId)));
 }
 
-async function guardedHandle(phone, text, media = null) {
+async function guardedHandle(phone, text, media = null, hotelId = currentHotelId()) {
+  // ── חימום ה-cache לפני כל הקוד הסינכרוני ──────────────
+  // 🔴 זו הנקודה שמחזיקה את כל הארכיטקטורה. `getSession`/`configFor`
+  //    נקראים סינכרונית מעשרות מקומות, ומול Postgres הם אינם יכולים
+  //    לטעון בעצמם (אין `await` באמצע פונקציה סינכרונית). כאן, ורק כאן,
+  //    יש הקשר אסינכרוני **וגם** ידיעה מי האורח ומאיזה מלון — ולכן זה
+  //    המקום היחיד שבו הטעינה יכולה לקרות.
+  //
+  //    ב-SQLite זו רשת ביטחון בלבד (הטעינה הסינכרונית עובדת ממילא);
+  //    ב-Postgres בלעדיה האורח היה נראה כאורח חדש בכל הודעה.
+  await ensureConfigLoaded(hotelId);
+  await ensureSessionLoaded(phone, hotelId);
+
   // בלימת קצב per-guest — לפני כל עיבוד יקר. חורגים מהקצב → הודעה קצרה
   // ויוצאים; לא מפילים ולא מעמיסים. (חירום עדיין נבדק קודם בתוך processIncoming
   // רק אם עברנו; לכן נותנים לחירום לעקוף את הבלימה.)
@@ -3282,7 +3295,7 @@ async function processIncoming(phone, text, media = null) {
     return;
   }
 
-  if (isCheckoutIntent(body) && (session.stage === "checked_in" || getActiveReservation(phone))) {
+  if (isCheckoutIntent(body) && (session.stage === "checked_in" || await getActiveReservationAsync(phone))) {
     await startCheckout(phone, lang);
     return;
   }
@@ -3352,7 +3365,7 @@ async function processIncoming(phone, text, media = null) {
     return;
   }
   if (/\[CHECKOUT(?:\]|\s|$)/i.test(raw)) {
-    if (session.stage === "checked_in" || getActiveReservation(phone)) {
+    if (session.stage === "checked_in" || await getActiveReservationAsync(phone)) {
       await startCheckout(phone, lang);
     } else {
       await wa(phone, lang === "he"
