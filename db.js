@@ -40,6 +40,28 @@ export const db = new DatabaseSync(DB_PATH);
 db.exec("PRAGMA journal_mode = WAL");
 db.exec("PRAGMA foreign_keys = ON");
 
+// ── synchronous — צוואר הבקבוק שנמדד בעומס ──────────────
+// 🔴 ברירת המחדל של SQLite היא `FULL`: **fsync לדיסק בכל כתיבה**. נמדד
+//    בבדיקת העומס: 917 כתיבות/שנייה מול 15,625 עם `NORMAL` — פי 17.
+//    כל הודעת אורח מבצעת כמה כתיבות (מונה פעילות, היסטוריה, שלב צ'ק אין),
+//    ולכן זה היה **החסם היחיד** על קצב המערכת כולה.
+//
+//    `NORMAL` הוא ההמלצה הרשמית של SQLite ביחד עם WAL. מה הוא מוותר עליו,
+//    בכנות: קריסת *אפליקציה* בטוחה לחלוטין (מערכת ההפעלה עדיין כותבת),
+//    ורק **נפילת חשמל/קריסת מערכת הפעלה** עלולה לאבד את העסקאות
+//    האחרונות. מסד הנתונים לעולם לא נפגם.
+//
+//    מי שצריך עמידות מקסימלית (למשל SQLite על דיסק קבוע כמסד ייצור
+//    יחיד) יכול להחזיר: `SQLITE_SYNCHRONOUS=FULL`. בפרודקשן אמיתית
+//    היעד הוא Postgres ממילא, ושם הסוגיה אינה קיימת.
+const SQLITE_SYNC = (process.env.SQLITE_SYNCHRONOUS || "NORMAL").toUpperCase();
+if (["OFF", "NORMAL", "FULL", "EXTRA"].includes(SQLITE_SYNC)) {
+  db.exec(`PRAGMA synchronous = ${SQLITE_SYNC}`);
+} else {
+  console.warn(`⚠️ SQLITE_SYNCHRONOUS="${SQLITE_SYNC}" אינו ערך מוכר — נשארים על NORMAL.`);
+  db.exec("PRAGMA synchronous = NORMAL");
+}
+
 // ── סכימה ──────────────────────────────────────────────
 // גישה: לכל ישות עמודות "שאילתה" מפורשות (מה שמסננים/ממיינים לפיו)
 // + עמודת data JSON שמחזיקה את האובייקט המלא. כך patchSession יכול

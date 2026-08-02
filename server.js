@@ -10,6 +10,7 @@ import { hotelConfig, updateConfig, resetConfig, checkDepartmentContacts, checkT
 import { reservations, ensureReservationLoaded, getReservationByRoomAsync, activeReservationCountAsync, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES, autoChargeOnNoShow, findNoShowReservationsAsync } from "./checkin.js";
 import checkinRouter from "./checkin-routes.js";
 import { incidentAckPage } from "./server-pages.js";
+import { catchAsyncRoutes, errorHandler } from "./http-async.js";
 import { acknowledgeIncident, closeIncident, sweepUnacknowledged, startEscalationSweeper, ACK_TIMEOUT_MS } from "./escalation.js";
 import { smokePlaces } from "./places/index.js";
 import { listIdDocuments, retrieveIdDocument, accessLogFor, purgeExpiredIdDocuments, RETENTION_DAYS } from "./idverify/index.js";
@@ -44,7 +45,9 @@ process.on("uncaughtException", (err) => {
   console.error("🚨 uncaughtException (נתפס — התהליך ממשיך):", err?.stack || err?.message || err);
 });
 
-const app  = express();
+// 🔴 עטיפה מרכזית: ב-Express 4 דחיית promise בהאנדלר אינה נתפסת, והבקשה
+//    נשארת תלויה בלי תשובה — האורח רואה עמוד שנטען לנצח. ראה http-async.js.
+const app  = catchAsyncRoutes(express());
 const PORT = process.env.PORT || 3000;
 const PASS = process.env.DASHBOARD_PASSWORD || "hotel2024";
 
@@ -635,6 +638,11 @@ app.get("/ready", (req, res) => {
   }
 });
 app.use(express.static("dashboard/public"));
+
+// ── תופס-שגיאות סופי — חייב להיות **אחרי** כל הנתיבים ───
+// כל דחייה שנתפסה ב-catchAsyncRoutes מגיעה לכאן ומקבלת תשובה: JSON
+// לנתיבי API, ועמוד קצר ודו-לשוני לאורח. בלי זה הבקשה נשארת תלויה.
+app.use(errorHandler());
 
 // ── מלון ההדגמה מ-DEMO_HOTEL (קריטי לפריסה בענן) ────────
 // חייב לרוץ **לפני** ה-listen: כך המיפוי קיים עוד לפני שההודעה הראשונה

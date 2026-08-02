@@ -149,3 +149,24 @@ test("🔴 חיוב הפרש שנכשל אינו נרשם כאילו הצליח"
   assert.notEqual(res.overageChargedTo, "deposit_card",
     "🔴 הרשומה הצהירה 'ההפרש חויב מכרטיס הפיקדון' בזמן שהחיוב נדחה");
 });
+
+// ════════════════════════════════════════════════════════
+//  קשיחות קלט — הודעה ענקית מבחוץ
+// ════════════════════════════════════════════════════════
+test("🔴 הודעה ענקית נחתכת בכניסה ולא מתנפחת בסשן ובעלות ה-AI", async () => {
+  const bot = await import("./bot.js");
+  const state = await import("./state.js");
+  const phone = "whatsapp:+972501239999";
+
+  // `/webhook` פתוח, ואימות חתימת Twilio כבוי כברירת מחדל — כלומר אפשר
+  // לשלוח "הודעה" בגודל שרירותי מבחוץ. בלי חסם היא נכנסת להיסטוריה,
+  // נשמרת ל-DB, ונשלחת ל-Claude על חשבון המלון.
+  const huge = "א".repeat(50_000);
+  await bot.handleIncoming(phone, huge, null, {}).catch(() => {});
+
+  const s = state.peekSession(phone, HID);
+  assert.ok(s, "הסשן נוצר");
+  const longest = Math.max(0, ...(s.history || []).map(h => String(h.content || "").length));
+  assert.ok(longest <= bot.MAX_INBOUND_CHARS,
+    `🔴 להיסטוריה נכנסה הודעה באורך ${longest} (מותר ${bot.MAX_INBOUND_CHARS})`);
+});

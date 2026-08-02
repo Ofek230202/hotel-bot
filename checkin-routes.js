@@ -9,7 +9,11 @@ import { nameFor } from "./names.js";
 import { hotelConfig, configFor, ensureConfigLoaded } from "./config.js";
 import { runInTenant, fromNumberFor } from "./tenant.js";
 
-const router = express.Router();
+import { catchAsyncRoutes } from "./http-async.js";
+
+// 🔴 עוטף את כל נתיבי הראוטר: דחיית promise תגיע ל-error handler במקום
+//    להשאיר את האורח מול עמוד שנטען לנצח. ראה http-async.js.
+const router = catchAsyncRoutes(express.Router());
 
 // ── טעינה מלאה לפני רינדור עמוד ────────────────────────
 // 🔴 עמוד HTML קורא **שלושה** דברים סינכרונית: ההזמנה (`reservations[id]`),

@@ -1678,6 +1678,26 @@ function menuDishNames(lang) {
   return Object.values(menu).flat().map(i => i?.name).filter(Boolean);
 }
 
+// ── התאמת אסימון עם גבולות מילה — בלי `\b` ──────────────
+// 🔴 `t.includes(tok)` הוא התאמת **תת-מחרוזת**, ולכן אסימון מנה בלע מילים
+//    שלמות אחרות: "rice" בתוך "price", "lamb" בתוך מילה שמכילה אותה.
+//    אורח ששואל "what is the price?" היה נרשם כמי שהזמין מנת אורז.
+//    נצפה בעומס: טקסט שהכיל "LAMB" סווג כהזמנת "Hummus & lamb kebab".
+//
+// 🔴 ו**לא** `\b`: `\w` הוא ASCII, ולכן `\b` אינו עובד על עברית — זו
+//    המלכודת שכבר תועדה פעמיים בפרויקט. במקום זה דורשים שמשני צדי
+//    האסימון יהיה תו שאינו אות/ספרה (בכל שפה), או קצה המחרוזת.
+const TOKEN_RX_CACHE = new Map();
+function containsToken(text, token) {
+  let rx = TOKEN_RX_CACHE.get(token);
+  if (!rx) {
+    const esc = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    rx = new RegExp(`(^|[^\\p{L}\\p{N}])${esc}($|[^\\p{L}\\p{N}])`, "u");
+    if (TOKEN_RX_CACHE.size < 2000) TOKEN_RX_CACHE.set(token, rx);
+  }
+  return rx.test(text);
+}
+
 // שם המנה שהאורח נקב בה, אם בכלל. מזהה גם שם חלקי ("לינגוויני" מתוך
 // "לינגוויני טרי") דרך אסימון מזהה מספיק ארוך — אורח לא מקליד שם מלא.
 export function namedDish(text, lang = "he") {
@@ -1685,9 +1705,9 @@ export function namedDish(text, lang = "he") {
   if (!t) return null;
   for (const name of menuDishNames(lang)) {
     const n = String(name).toLowerCase();
-    if (t.includes(n)) return name;
+    if (t.includes(n)) return name;                    // שם מלא — מספיק ייחודי
     for (const tok of n.split(/[^\p{L}\p{N}]+/u)) {
-      if (tok.length >= 4 && t.includes(tok)) return name;
+      if (tok.length >= 4 && containsToken(t, tok)) return name;
     }
   }
   return null;
@@ -1699,7 +1719,9 @@ function dishesIn(text, lang = "he") {
   return menuDishNames(lang).filter((name) => {
     const n = String(name).toLowerCase();
     if (t.includes(n)) return true;
-    return n.split(/[^\p{L}\p{N}]+/u).some(tok => tok.length >= 4 && t.includes(tok));
+    // אותה התאמת-גבולות כמו ב-`namedDish` — אחרת זיהוי הכפילות היה
+    // מדווח "אותה מנה הוזמנה פעמיים" על מילים שאינן מנות כלל.
+    return n.split(/[^\p{L}\p{N}]+/u).some(tok => tok.length >= 4 && containsToken(t, tok));
   });
 }
 
@@ -3100,8 +3122,27 @@ setInterval(() => { try { guestRateLimiter.sweep(); } catch { /* ignore */ } }, 
 //
 // meta.to = המספר של המלון (To של Twilio) → ממנו נגזר hotelId. נשמר
 // תואם-לאחור: קריאה בלי meta (בדיקות/סימולציה) → מלון ברירת המחדל.
+// ── חסם אורך על הודעה נכנסת ─────────────────────────────
+// 🔴 לא היה חסם בכלל. וואטסאפ עצמו מגביל הודעה נכנסת (~1600 תווים), אבל
+//    `/webhook` הוא נתיב HTTP פתוח, ואימות חתימת Twilio **כבוי כברירת
+//    מחדל** — כלומר כל אחד יכול לשלוח POST עם "הודעה" של 100KB. מה
+//    שהיה קורה: הטקסט נכנס להיסטוריית הסשן (30 הודעות × 100KB לכל אורח),
+//    נשלח ל-Claude על חשבון המלון, ומתקיים בזיכרון ובמסד הנתונים.
+//    זו הגדלה שקטה של עלות ושל זיכרון, שמופעלת מבחוץ.
+//
+//    חותכים בכניסה, בנקודה אחת שכל הערוצים עוברים דרכה. 4000 תווים הם
+//    יותר מפי שניים מהמקסימום של וואטסאפ — אורח אמיתי לעולם לא ייגע בזה.
+export const MAX_INBOUND_CHARS = Number(process.env.MAX_INBOUND_CHARS) || 4000;
+
 export async function handleIncoming(phone, text, media = null, meta = {}) {
   const hotelId = meta.hotelId || resolveHotelId(meta.to);
+
+  const raw = String(text ?? "");
+  if (raw.length > MAX_INBOUND_CHARS) {
+    console.warn(`✂️ הודעה נכנסת נחתכה: ${raw.length} → ${MAX_INBOUND_CHARS} תווים (${String(phone).slice(-8)})`);
+    text = raw.slice(0, MAX_INBOUND_CHARS);
+  }
+
   // 🔴 `withGuestLock` ולא `withLock`: הנעילה המקומית מגנה על תהליך אחד
   //    בלבד. עם יותר מעותק אחד (וזה קורה ברגע שמוסיפים instance ב-Railway),
   //    שתי הודעות של אותו אורח יכולות לרוץ בו-זמנית בשני תהליכים — ואז
