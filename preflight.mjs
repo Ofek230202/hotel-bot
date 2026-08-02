@@ -589,10 +589,12 @@ function sectionD() {
     [...errorRules.values()].filter(v => v.severity === "error")
       .map(v => `${v.rule} ×${v.count}: ${v.sample}`).join(" | "));
 
+  // 🔴 מדפיסים גם את **ההודעה עצמה**. קודם הודפס רק תיאור הכלל, ולכן
+  //    כישלון כאן לא היה ניתן לתיקון: ידעת שיש אזהרה, לא מה גרם לה.
   check("D", "כללי הניסוח — אין אזהרות טון",
     res.bySeverity.warn === 0,
     [...errorRules.values()].filter(v => v.severity === "warn")
-      .map(v => `${v.rule} ×${v.count}: ${v.why}`).join(" | "));
+      .map(v => `${v.rule} ×${v.count} (${v.why}) → «${String(v.sample || "").slice(0, 220)}»`).join(" | "));
 
   // עקביות שפה: אורח אנגלי לא מקבל בלוקים בעברית.
   const enGuest = "whatsapp:+972557000003";

@@ -142,6 +142,12 @@ export const VOICE_RULES = [
       const cleaned = t
         .replace(/\b[A-Z0-9]*\d[A-Z0-9-]*\b/g, " ")          // מזהים עם ספרות
         .replace(/\b[A-Z]+(?:-[A-Z]+)+\b/g, " ")              // מזהים מקופים
+        // 🔴 **שמות עסקים אמיתיים אינם צעקה.** שם מקום מוצג תמיד בהדגשה
+        //    (`*BELLBOY*`), ובתל אביב שמות באותיות גדולות הם הכלל ולא
+        //    היוצא מן הכלל. בלי החרגה כאן, המבקר העניש את הבוט על כך
+        //    שציטט נכון את שמו של בר — נצפה ב-preflight. צעקה בתוך משפט
+        //    רגיל עדיין נתפסת.
+        .replace(/\*[^*\n]+\*/g, " ")
         // ORIGINAL הוא סימון חובה על חשבונית מס ("מקור") ולא צעקה.
         .replace(/\b(WIFI|WI-FI|VAT|ID|PDF|SMS|OK|VIP|USD|ILS|EUR|GBP|PMS|ORIGINAL)\b/g, " ");
       return /\b[A-Z]{5,}\b/.test(cleaned);
