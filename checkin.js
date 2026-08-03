@@ -11,7 +11,7 @@ import { nameFor } from "./names.js";
 import { configFor, hotelModel, ensureConfigLoaded } from "./config.js";
 import { db, DEFAULT_HOTEL_ID } from "./db.js";
 import { prepare, queryAll, queryAllAsync } from "./store/Repo.js";
-import { currentHotelId } from "./tenant.js";
+import { currentHotelId, runInTenant } from "./tenant.js";
 import { LruCache } from "./store/LruCache.js";
 import { withGuestLock } from "./store/index.js";
 
@@ -1105,12 +1105,23 @@ export async function switchOverageToAlternateCard(reservationId, lang = "he") {
 // אוטומטית את הפיקדון (ואם יש חוב מעל הפיקדון — גם את ההפרש מאותו כרטיס),
 // כדי להגן מפני "בריחה". משתמש באותה סליקה (settleFolio) של הצ'ק אאוט הרגיל.
 //
-// ⚠️ דמו: כאן מפעילים ידנית (endpoint /api/no-show, או findNoShowReservations
-// בלולאה). בפרודקשן זה ייקרא אוטומטית ע"י cron/מנוע זמן שירוץ בשעת הצ'ק אאוט
-// לכל הזמנה שעברה את checkoutDate ועדיין במצב checked_in.
+// רץ אוטומטית מסורק ה-no-show (`startNoShowSweeper` ב-server.js), וגם
+// ידנית דרך `POST /api/no-show`.
+//
+// 🔴 **עוטף את עצמו ב-`runInTenant`.** הפונקציה שולחת שלוש הודעות לאורח
+//    דרך `wa()`, ו-`wa()` גוזר את המספר היוצא מ-`currentHotelId()`. היא
+//    מופעלת מ-cron ומ-API — שניהם **מחוץ** להקשר טננט. בלי העטיפה, אורח
+//    של מלון א' היה מקבל את הודעת החיוב **מהמספר של מלון ב'** (או שהספק
+//    היה דוחה אותה). זו בדיוק התקלה שכבר תועדה ב-`checkin-routes.js`,
+//    והיא חזרה כאן. עוטפים **בפנים** ולא בכל קורא — כדי שקורא עתידי
+//    (סורק חדש, כלי תחזוקה) יהיה מוגן בלי לדעת על הכלל.
 export async function autoChargeOnNoShow(reservationId, lang = "he") {
-  const res = await ensureReservationLoaded(reservationId);
-  if (!res) throw new Error("Reservation not found");
+  const pre = await ensureReservationLoaded(reservationId);
+  if (!pre) throw new Error("Reservation not found");
+  return runInTenant(pre.hotelId, () => autoChargeOnNoShowInTenant(pre, lang));
+}
+
+async function autoChargeOnNoShowInTenant(res, lang = "he") {
   if (res.stage !== "checked_in") {
     // כבר עשה צ'ק אאוט / כבר טופל — לא מחייבים פעמיים.
     return { alreadyHandled: true, reservation: res };

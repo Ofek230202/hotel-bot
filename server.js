@@ -11,7 +11,12 @@ import { reservations, ensureReservationLoaded, getReservationByRoomAsync, activ
 import checkinRouter from "./checkin-routes.js";
 import { incidentAckPage } from "./server-pages.js";
 import { catchAsyncRoutes, errorHandler } from "./http-async.js";
-import { acknowledgeIncident, closeIncident, sweepUnacknowledged, startEscalationSweeper, ACK_TIMEOUT_MS } from "./escalation.js";
+import { acknowledgeIncident, closeIncident, sweepUnacknowledged, ACK_TIMEOUT_MS, SWEEP_INTERVAL_MS } from "./escalation.js";
+import { startJob, jobsStatus, stopAllJobs } from "./jobs.js";
+
+// כל כמה זמן נסרקות הזמנות no-show. 10 דק׳ — מספיק תכוף כדי לחייב בזמן,
+// ומספיק נדיר כדי לא להעמיס על ה-DB.
+const NO_SHOW_INTERVAL_MS = Number(process.env.NO_SHOW_INTERVAL_MS) || 10 * 60_000;
 import { smokePlaces } from "./places/index.js";
 import { listIdDocuments, retrieveIdDocument, accessLogFor, purgeExpiredIdDocuments, RETENTION_DAYS } from "./idverify/index.js";
 import { DEFAULT_HOTEL_ID } from "./tenant.js";
@@ -292,6 +297,17 @@ app.post("/api/incident/:id/close", auth, async (req, res) => {
 app.post("/api/incidents/sweep", auth, async (req, res) => {
   try { res.json({ ok: true, ...(await sweepUnacknowledged()) }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── מצב העבודות המחזוריות ──────────────────────────────
+// 🔴 בלי זה אי אפשר לדעת שעבודה מתה. חיוב ה-no-show "רץ" בתיעוד במשך
+//    כל הפיתוח — ולא רץ באמת. מצב גלוי הוא ההבדל בין להניח ולדעת.
+app.get("/api/jobs", auth, (req, res) => {
+  const jobs = jobsStatus();
+  res.json({
+    jobs,
+    healthy: jobs.every(j => j.errors === 0 || j.runs > j.errors),
+  });
 });
 
 // ── DEMO: add a charge to a room's folio ──────────────
@@ -733,18 +749,46 @@ const server = app.listen(PORT, async () => {
     );
   }
 
-  // ── מדיניות שמירה (retention) של מסמכי זיהוי ──────────
-  // מוחק אוטומטית מסמכים שעבר זמנם (ברירת מחדל 30 יום). רץ בעלייה
-  // ואז כל 6 שעות. unref כדי שלא יעכב יציאה תקינה של התהליך.
-  purgeExpiredIdDocuments().catch(() => {});
-  setInterval(() => purgeExpiredIdDocuments().catch(() => {}), 6 * 3600_000).unref();
+  // ════════════════════════════════════════════════════
+  //  עבודות מחזוריות — כולן דרך משגיח אחד (`jobs.js`)
+  //  ----------------------------------------------------
+  //  🔴 קודם כל אחת ניהלה `setInterval` משלה, ואחת מהן — **חיוב
+  //     ה-no-show — פשוט לא נרשמה בכלל**. הקוד היה קיים ומתועד
+  //     כ"cron יריץ", ואיש לא הריץ: אורח שעזב בלי צ'ק אאוט לא חויב,
+  //     בשקט. משגיח אחד מבטיח שכל עבודה מוצהרת במקום אחד, נראית
+  //     ב-`/api/jobs`, ולא יכולה "להישכח".
+  // ════════════════════════════════════════════════════
 
-  // ── סולם ההסלמה של אירועי חירום ──────────────────────
-  // 🔴 חייב לרוץ, אחרת אירוע שלא אושר פשוט נשכח. הסורק מגובה-DB, ולכן
-  //    ריסטארט (deploy קורה בדיוק כשמשהו נשבר) לא מאבד אירועים פתוחים.
-  startEscalationSweeper();
-  sweepUnacknowledged().catch(() => {});   // אירועים שנשארו פתוחים מלפני העלייה
-  console.log(`🚨 סולם הסלמת חירום פעיל — אירוע ללא אישור קבלה מוסלם תוך ${Math.round(ACK_TIMEOUT_MS / 60_000)} דק׳`);
+  // מסמכי זיהוי שעבר זמנם (retention) — כל 6 שעות.
+  startJob("id-retention", () => purgeExpiredIdDocuments(), { everyMs: 6 * 3600_000 });
+
+  // סולם ההסלמה של אירועי חירום — אירוע שלא אושר לא נשכח.
+  startJob("emergency-escalation", () => sweepUnacknowledged(), { everyMs: SWEEP_INTERVAL_MS });
+
+  // 🔴 חיוב no-show — העבודה שלא רצה. אורח שעבר את תאריך הצ'ק אאוט
+  //    ועדיין מאוכלס מחויב אוטומטית. `autoChargeOnNoShow` עוטף את עצמו
+  //    ב-`runInTenant` ומוגן בנעילה פר-הזמנה, ולכן בטוח שכל עותק ירוץ.
+  startJob("no-show-charge", async () => {
+    const due = await findNoShowReservationsAsync();
+    let charged = 0, failed = 0;
+    for (const r of due) {
+      try {
+        const out = await autoChargeOnNoShow(r.id);
+        if (!out.alreadyHandled) charged++;
+      } catch (e) {
+        failed++;
+        console.error(`🚨 חיוב no-show נכשל להזמנה ${r.id}:`, e?.message || e);
+      }
+    }
+    if (charged || failed) console.log(`🏃 no-show: נסרקו ${due.length}, חויבו ${charged}, נכשלו ${failed}`);
+    return { scanned: due.length, charged, failed };
+  }, { everyMs: NO_SHOW_INTERVAL_MS });
+
+  console.log(
+    `⏱️  עבודות מחזוריות פעילות: ${jobsStatus().map(j => j.name).join(" · ")}\n` +
+    `    🚨 חירום ללא אישור קבלה מוסלם תוך ${Math.round(ACK_TIMEOUT_MS / 60_000)} דק׳ · ` +
+    `🏃 no-show נסרק כל ${Math.round(NO_SHOW_INTERVAL_MS / 60_000)} דק׳`
+  );
 
   // ── מי עונה לכל מספר — הדבר הראשון שרוצים לראות בעלייה ──
   // 🔴 קודם הודפסה כאן טבלת הניתוב של *מלון ברירת המחדל* בלבד. כשהמספר
@@ -832,6 +876,9 @@ function gracefulShutdown(signal) {
   shutdownStarted = true;
   shuttingDown = true; // /ready מדווח draining → ה-LB מסיט תעבורה מהעותק הזה
   console.log(`\n🛑 ${signal} — כיבוי חינני: מפסיקים לקבל חדשים, מסיימים מה שרץ…`);
+  // עבודות מחזוריות נעצרות מיד: אין טעם להתחיל סבב חדש בזמן כיבוי,
+  // ועותק אחר ממילא יטפל (הן מוגנות בנעילה פר-רשומה).
+  stopAllJobs();
   const force = setTimeout(() => {
     console.error("⏱️ חלון החסד הסתיים — יציאה כפויה.");
     process.exit(0);
