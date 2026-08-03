@@ -278,6 +278,28 @@ html,body{height:100%;font-family:'Heebo',sans-serif;background:var(--ink);color
 }
 .bubble-meta{font-size:10px;color:var(--text3);margin-top:3px}
 
+/* ── סרגל ההשתלטות ─────────────────────────────────────
+   מצב השיחה חייב להיות מובחן במבט אחד: כשהבוט עונה זה שקט וניטרלי,
+   וכשאיש צוות מטפל — הסרגל נצבע, כדי שאיש לא ישלח הודעה מתוך הנחה
+   שגויה לגבי מי מדבר עם האורח כרגע. */
+.takeover-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:10px 16px;border-bottom:1px solid rgba(255,255,255,.07);font-size:13px}
+.takeover-bar.off{background:rgba(255,255,255,.02)}
+.takeover-bar.on{background:linear-gradient(90deg,rgba(201,168,76,.16),rgba(201,168,76,.04));
+  border-bottom-color:rgba(201,168,76,.35)}
+.takeover-bar .tb-state b{display:block;font-size:13px}
+.takeover-bar .tb-left{opacity:.62;font-size:11.5px}
+.takeover-bar .tb-actions{display:flex;gap:8px;flex-shrink:0}
+.btn-sm{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);color:inherit;
+  border-radius:8px;padding:6px 11px;font-size:12px;cursor:pointer;font-family:inherit}
+.btn-sm:hover{background:rgba(255,255,255,.13)}
+.btn-sm.primary{background:rgba(201,168,76,.9);border-color:transparent;color:#14110c;font-weight:600}
+.btn-sm.primary:hover{background:rgba(201,168,76,1)}
+#toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(70px);
+  background:rgba(20,17,12,.97);border:1px solid rgba(201,168,76,.4);color:#f5f2ea;
+  padding:11px 20px;border-radius:10px;font-size:13px;opacity:0;transition:.28s;z-index:99;pointer-events:none}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#toast.err{border-color:rgba(220,80,80,.6)}
 .cv-input{
   padding:14px 16px;border-top:1px solid var(--border);
   display:flex;gap:10px;flex-shrink:0;
@@ -568,12 +590,17 @@ textarea.finput{resize:vertical;min-height:90px;line-height:1.5}
               <div class="cv-avatar">🏨</div>
               <div><div class="cv-name">בחר שיחה</div><div class="cv-meta">מהרשימה</div></div>
             </div>
+            <div class="takeover-bar off" id="cv-takeover"></div>
             <div class="cv-msgs" id="cv-msgs">
               <div class="empty-state" style="margin:auto"><div class="ei">💬</div><div class="et">בחר שיחה לצפייה</div></div>
             </div>
-            <div class="cv-input">
-              <input id="manual-input" placeholder="הקלד הודעה ידנית לאורח…" onkeydown="if(event.key==='Enter')sendManual()">
-              <button class="send-btn" onclick="sendManual()">שלח</button>
+            <!-- 🔴 מוצג רק בזמן השתלטות. שליחה ידנית בזמן שהבוט עונה
+                 פירושה שני קולות שונים באותה שיחה — האורח מקבל תשובה
+                 מהצוות ומיד אחריה תשובה אוטומטית שסותרת אותה. -->
+            <div class="cv-input" id="cv-reply" style="display:none">
+              <input id="cv-reply-input" placeholder="הודעה לאורח בשם המלון…"
+                     onkeydown="if(event.key==='Enter')sendReply()">
+              <button class="send-btn" onclick="sendReply()">שלח</button>
             </div>
           </div>
         </div>
@@ -854,6 +881,7 @@ function openChat(phone){
       <button class="icon-btn" onclick="openAlertModal('housekeeping')">🧹 ניקיון</button>
       <button class="icon-btn" onclick="openAlertModal('reception')">🏨 קבלה</button>
     </div>`;
+  renderTakeoverBar(phone, s);
   const msgs=document.getElementById('cv-msgs');
   const hist=s.history||[];
   if(!hist.length){
@@ -867,6 +895,92 @@ function openChat(phone){
     </div>`).join('');
   msgs.scrollTop=msgs.scrollHeight;
   goto('conversations',document.querySelector('[onclick*=conversations]'));
+}
+
+// ════════════════════════════════════════════════════════
+//  השתלטות אנושית — הבוט מפנה מקום לאיש צוות
+//  ----------------------------------------------------------
+//  🔴 שני דברים שהמסך חייב להראות בכל רגע, אחרת הוא מסוכן:
+//     (1) **מי** מטפל — "מישהו השתלט" בלי שם אינו שרשרת אחריות.
+//     (2) **כמה זמן נשאר** — ההשתלטות פגה מעצמה, ומנהל שאינו יודע זאת
+//         בטוח שהוא מטפל בזמן שהבוט כבר חזר לענות במקומו.
+// ════════════════════════════════════════════════════════
+let takeoverTimer=null;
+
+async function renderTakeoverBar(phone,s){
+  const bar=document.getElementById('cv-takeover');
+  if(!bar)return;
+  let st={active:false};
+  try{ st=await (await fetch(`/api/conversation/takeover?phone=${encodeURIComponent(phone)}&hotelId=${encodeURIComponent(s.hotelId||'')}`,API())).json(); }catch{}
+
+  const mins=st.msLeft?Math.max(1,Math.round(st.msLeft/60000)):null;
+  bar.className='takeover-bar '+(st.active?'on':'off');
+  bar.innerHTML=st.active
+    ? `<div class="tb-state"><b>🙋 בטיפול ${esc(st.by||'צוות')}</b>
+         <span class="tb-left">הבוט אינו עונה · חוזר אוטומטית בעוד ${mins} דק׳</span></div>
+       <div class="tb-actions">
+         <button class="btn-sm" onclick="doTakeover('extend','${phone}')">⏳ הארכה</button>
+         <button class="btn-sm primary" onclick="doTakeover('release','${phone}')">🤖 החזרה לבוט</button>
+       </div>`
+    : `<div class="tb-state"><b>🤖 הבוט עונה לשיחה</b>
+         <span class="tb-left">להתערבות אישית — יש להשתלט תחילה</span></div>
+       <div class="tb-actions">
+         <button class="btn-sm primary" onclick="doTakeover('takeover','${phone}')">🙋 השתלטות</button>
+       </div>`;
+
+  const box=document.getElementById('cv-reply');
+  if(box) box.style.display = st.active ? 'flex' : 'none';
+
+  // רענון חי של הזמן שנותר — כדי שהמספר על המסך לא ישקר.
+  clearInterval(takeoverTimer);
+  if(st.active) takeoverTimer=setInterval(()=>{ if(currentPhone===phone) renderTakeoverBar(phone,s); },30000);
+}
+
+async function doTakeover(action,phone){
+  const s=sessions.find(x=>x.phone===phone)||{};
+  const by=localStorage.getItem('staffName')||prompt('שם איש הצוות (נרשם ביומן):')||'צוות';
+  localStorage.setItem('staffName',by);
+  try{
+    await fetch(`/api/conversation/${action}`,{
+      method:'POST',headers:{'Content-Type':'application/json',...API().headers},
+      body:JSON.stringify({phone,hotelId:s.hotelId,by}),
+    });
+    await renderTakeoverBar(phone,s);
+    toast(action==='takeover'?'השיחה בטיפולך — הבוט אינו עונה'
+        : action==='release'?'הבוט חזר לענות':'ההשתלטות הוארכה');
+  }catch(e){ toast('הפעולה נכשלה','err'); }
+}
+
+async function sendReply(){
+  const input=document.getElementById('cv-reply-input');
+  const text=(input.value||'').trim();
+  if(!text||!currentPhone)return;
+  const s=sessions.find(x=>x.phone===currentPhone)||{};
+  input.disabled=true;
+  try{
+    const r=await fetch('/api/conversation/reply',{
+      method:'POST',headers:{'Content-Type':'application/json',...API().headers},
+      body:JSON.stringify({phone:currentPhone,hotelId:s.hotelId,message:text,
+                           by:localStorage.getItem('staffName')||'צוות'}),
+    });
+    if(!r.ok)throw new Error();
+    input.value='';
+    // מוסיפים מיד לתצוגה — המסך לא ממתין לסבב הרענון הבא.
+    const msgs=document.getElementById('cv-msgs');
+    msgs.insertAdjacentHTML('beforeend',
+      `<div><div class="bubble bot">${esc(text).replace(/\n/g,'<br>')}</div>
+       <div class="bubble-meta" style="text-align:right">🙋 ${esc(localStorage.getItem('staffName')||'צוות')}</div></div>`);
+    msgs.scrollTop=msgs.scrollHeight;
+  }catch{ toast('השליחה נכשלה','err'); }
+  finally{ input.disabled=false; input.focus(); }
+}
+
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function toast(msg,kind){
+  let t=document.getElementById('toast');
+  if(!t){t=document.createElement('div');t.id='toast';document.body.appendChild(t);}
+  t.textContent=msg;t.className='show '+(kind||'');
+  setTimeout(()=>{t.className='';},2600);
 }
 
 async function sendManual(){

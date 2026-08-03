@@ -4,8 +4,8 @@
 import express   from "express";
 import dotenv    from "dotenv";
 import { handleIncoming, wa, notifyStaff } from "./bot.js";
-import { allSessionsAsync, sessionCountAsync, sessionCacheInfo, staffAlerts, incidents, stats, deleteSessionAsync, clearAllSessions, sessionByRoomAsync, peekSessionAsync, hydrateState } from "./state.js";
-import { fromNumberFor, resolveHotelId, normalizeNumber } from "./tenant.js";
+import { pushHistory, ensureSessionLoaded, peekSession, allSessionsAsync, sessionCountAsync, sessionCacheInfo, staffAlerts, incidents, stats, deleteSessionAsync, clearAllSessions, sessionByRoomAsync, peekSessionAsync, hydrateState } from "./state.js";
+import { fromNumberFor, resolveHotelId, normalizeNumber, runInTenant } from "./tenant.js";
 import { hotelConfig, updateConfig, resetConfig, checkDepartmentContacts, checkTenantIsolation, reportTenantIsolation, clearConfigCache, printRoutingTable, routingTable, DEPARTMENTS } from "./config.js";
 import { reservations, ensureReservationLoaded, getReservationByRoomAsync, activeReservationCountAsync, addFolioItem, getFolioTotal, formatFolio, FOLIO_CATEGORIES, autoChargeOnNoShow, findNoShowReservationsAsync } from "./checkin.js";
 import checkinRouter from "./checkin-routes.js";
@@ -14,6 +14,7 @@ import { catchAsyncRoutes, errorHandler } from "./http-async.js";
 import { acknowledgeIncident, closeIncident, sweepUnacknowledged, ACK_TIMEOUT_MS, SWEEP_INTERVAL_MS } from "./escalation.js";
 import { startJob, jobsStatus, stopAllJobs } from "./jobs.js";
 import { deliverDue, scheduleStats, scheduleForReservation } from "./schedule.js";
+import { takeOver, releaseTakeover, extendTakeover, takeoverState, sweepTakeovers, setSessionSource as setTakeoverSessions } from "./takeover.js";
 
 // כל כמה זמן נסרקות הזמנות no-show. 10 דק׳ — מספיק תכוף כדי לחייב בזמן,
 // ומספיק נדיר כדי לא להעמיס על ה-DB.
@@ -306,6 +307,61 @@ app.post("/api/incidents/sweep", auth, async (req, res) => {
 // ── מצב העבודות המחזוריות ──────────────────────────────
 // 🔴 בלי זה אי אפשר לדעת שעבודה מתה. חיוב ה-no-show "רץ" בתיעוד במשך
 //    כל הפיתוח — ולא רץ באמת. מצב גלוי הוא ההבדל בין להניח ולדעת.
+// ════════════════════════════════════════════════════════
+//  השתלטות אנושית — איש צוות נכנס לשיחה
+//  ----------------------------------------------------------
+//  🔴 להשתלטות יש **מועד פקיעה** בכוונה. מנהל שעוצר את הבוט ושוכח
+//     משאיר אורח מול שקט מוחלט — וזה גרוע בהרבה מבוט שעונה בסדר.
+//     ראה takeover.js.
+// ════════════════════════════════════════════════════════
+const asWhatsApp = p => (String(p).startsWith("whatsapp:") ? String(p) : `whatsapp:${p}`);
+
+app.post("/api/conversation/takeover", auth, async (req, res) => {
+  const { phone, hotelId = DEFAULT_HOTEL_ID, by, reason } = req.body || {};
+  if (!phone) return res.status(400).json({ error: "phone required" });
+  const actor = by || req.headers["x-actor"] || "staff";
+  const t = await takeOver(asWhatsApp(phone), { by: actor, reason, hotelId });
+  res.json({ ok: true, takeover: t });
+});
+
+app.post("/api/conversation/release", auth, async (req, res) => {
+  const { phone, hotelId = DEFAULT_HOTEL_ID, by } = req.body || {};
+  if (!phone) return res.status(400).json({ error: "phone required" });
+  await releaseTakeover(asWhatsApp(phone), { by: by || req.headers["x-actor"] || "staff", hotelId });
+  res.json({ ok: true });
+});
+
+app.post("/api/conversation/extend", auth, async (req, res) => {
+  const { phone, hotelId = DEFAULT_HOTEL_ID } = req.body || {};
+  if (!phone) return res.status(400).json({ error: "phone required" });
+  res.json({ ok: true, takeover: await extendTakeover(asWhatsApp(phone), { hotelId }) });
+});
+
+// שליחת הודעה **בשם המלון** מתוך המסך. עוטף ב-runInTenant כדי שההודעה
+// תצא מהמספר של המלון הנכון, ורושמת בהיסטוריה כדי שהשיחה תישאר שלמה.
+app.post("/api/conversation/reply", auth, async (req, res) => {
+  const { phone, message, hotelId = DEFAULT_HOTEL_ID, by } = req.body || {};
+  if (!phone || !message?.trim()) return res.status(400).json({ error: "phone + message required" });
+  const to = asWhatsApp(phone);
+  try {
+    await ensureSessionLoaded(to, hotelId);
+    const st = takeoverState(to, hotelId);
+    await runInTenant(hotelId, () => wa(to, message.trim(), { lang: peekSession(to, hotelId)?.lang || "he" }));
+    // 🔴 נרשם כ-assistant: אחרת ה-AI, כשיחזור לענות, לא יידע מה הצוות
+    //    כבר אמר — והאורח יקבל תשובה שסותרת את מה שהמנהל הבטיח לו.
+    pushHistory(to, "assistant", message.trim(), hotelId);
+    res.json({ ok: true, humanHandling: st.active, by: st.by || by || null });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get("/api/conversation/takeover", auth, (req, res) => {
+  const { phone, hotelId = DEFAULT_HOTEL_ID } = req.query;
+  if (!phone) return res.status(400).json({ error: "phone required" });
+  res.json(takeoverState(asWhatsApp(phone), hotelId));
+});
+
 // ── הודעות יזומות — ניראות ושליטה ──────────────────────
 // לוח הזמנים של הזמנה: מה נשלח, מה ממתין, ומתי. זו התשובה לשאלה
 // "למה האורח לא קיבל את הוראות ההגעה?" בלי לחפור בלוגים.
@@ -808,6 +864,12 @@ const server = app.listen(PORT, async () => {
   //    כל דקה: מה שהגיע זמנו נשלח. אידמפוטנטי, מוגן בנעילה, ומכבד
   //    שעות שקטות — ראה schedule.js.
   startJob("scheduled-messages", () => deliverDue(), { everyMs: SCHEDULE_INTERVAL_MS });
+
+  // 🔴 סורק ההשתלטויות — מחזיר את הבוט לענות כשההשתלטות פגה, ומודיע
+  //    לצוות. בלעדיו מנהל ששכח משאיר אורח מול שקט מוחלט, וזה הכישלון
+  //    החמור ביותר של מערכת שירות. ראה takeover.js.
+  setTakeoverSessions(() => allSessionsAsync(null, { limit: 2000 }));
+  startJob("takeover-expiry", () => sweepTakeovers(), { everyMs: 60_000 });
 
   console.log(
     `⏱️  עבודות מחזוריות פעילות: ${jobsStatus().map(j => j.name).join(" · ")}\n` +

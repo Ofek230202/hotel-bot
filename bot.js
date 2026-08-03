@@ -23,6 +23,7 @@ import { detectEmergency, emergencyGuestMessage, emergencyKindHe, emergencyDial 
 import { armIncident, setNotifier, ACK_TIMEOUT_MS } from "./escalation.js";
 import { setSender as setScheduleSender, setComposer as setScheduleComposer, setGuard as setScheduleGuard, MESSAGE_KINDS } from "./schedule.js";
 import { composeScheduled } from "./messages.js";
+import { takeoverState, setNotifier as setTakeoverNotifier, setSessionSource } from "./takeover.js";
 
 // ── שורת "אשרו קבלה" בהתראת החירום ─────────────────────
 // הצוות חייב לדעת *שמצפים* ממנו לאשר, ו*מה קורה* אם לא — אחרת ההסלמה
@@ -37,6 +38,7 @@ export function ackInstruction(incidentId) {
 // `escalation.js` שולח התראות דרך `notifyStaff` שיושב כאן. רישום במקום
 // ייבוא הדדי, שהיה סוגר מעגל בין המודולים.
 setNotifier((...args) => notifyStaff(...args));
+setTakeoverNotifier((...args) => notifyStaff(...args));
 
 // ── חיווט מנוע ההודעות היזומות ──────────────────────────
 // `schedule.js` הוא מנוע זמן טהור — הוא אינו יודע מה זו הזמנה ואינו יודע
@@ -3261,6 +3263,29 @@ async function processIncoming(phone, text, media = null) {
   const emergency = detectEmergency(text);
   if (emergency) {
     await handleEmergency(phone, text, lang, emergency.kind);
+    return;
+  }
+
+  // ── 🙋 השתלטות אנושית — הבוט מפנה מקום ────────────────
+  // 🔴 **אחרי החירום, ולא לפניו.** אם אורח כותב "נפלתי" בזמן שמנהל
+  //    "מחזיק" את השיחה ואינו מסתכל בטלפון — הנחיית 101 חייבת לצאת.
+  //    אין שיקול תפעולי שדוחה בטיחות.
+  //
+  //    בזמן השתלטות הבוט **אינו עונה**, אבל ההודעה נשמרת בהיסטוריה
+  //    (כדי שאיש הצוות יראה הכול) והצוות מקבל התראה שהאורח כתב —
+  //    אחרת "השתלטות" פירושה אורח שכותב לחלל ריק.
+  const human = takeoverState(phone);
+  if (human.active) {
+    pushHistory(phone, "user", body);
+    try {
+      await notifyStaff({
+        phone, dept: "reception", hotelId: session.hotelId,
+        roomNumber: session.roomNumber, guestName: session.guestName,
+        priority: "high",
+        message: `💬 *הודעה מאורח בשיחה שבטיפולך* (${human.by})\n"${body.slice(0, 400)}"\n` +
+                 `הבוט אינו עונה לשיחה הזו — נא להשיב מהמסך.`,
+      });
+    } catch (e) { console.error("התראת השתלטות נכשלה:", e?.message || e); }
     return;
   }
 
