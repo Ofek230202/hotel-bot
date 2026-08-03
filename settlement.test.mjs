@@ -170,3 +170,46 @@ test("🔴 הודעה ענקית נחתכת בכניסה ולא מתנפחת ב�
   assert.ok(longest <= bot.MAX_INBOUND_CHARS,
     `🔴 להיסטוריה נכנסה הודעה באורך ${longest} (מותר ${bot.MAX_INBOUND_CHARS})`);
 });
+
+// ════════════════════════════════════════════════════════
+//  fail-closed — מסלול כסף לא רץ בלי נעילה
+// ════════════════════════════════════════════════════════
+test("🔴 בלי נעילה מבוזרת — לא מסלקים בכלל, במקום לסלוק פעמיים", async () => {
+  const storeMod = await import("./store/index.js");
+
+  installCountingProvider();
+  const phone = "whatsapp:+972501231111";
+  const rid   = await newStay(phone, 40_000);
+
+  // store שמתנהג כמו Redis אך **לעולם לא נותן נעילה** (עומס/תקלה).
+  // זה בדיוק המצב שבו fail-open היה מחזיר את החיוב הכפול.
+  const prev = storeMod.setStore({
+    kind: "redis",
+    setIfAbsent: async () => false,          // אף פעם לא נתפסת
+    deleteIfEquals: async () => false,
+    increment: async () => 1,
+    get: async () => null, set: async () => {}, del: async () => {},
+  });
+
+  try {
+    let threw = false;
+    await tenant.runInTenant(HID, () => checkin.autoChargeOnNoShow(rid, "he"))
+      .catch(e => { threw = e?.name === "LockUnavailableError" || /נעילה/.test(e?.message || ""); });
+
+    assert.ok(threw, "🔴 הסליקה רצה בלי נעילה — זה בדיוק החיוב הכפול");
+    assert.equal(counts.capture, 0, "🔴 חויב כסף בלי נעילה בלעדית");
+
+    const res = await checkin.ensureReservationLoaded(rid);
+    assert.notEqual(res.captured, true, "ההזמנה לא סומנה כמסולקת — ניסיון חוזר יעבוד");
+  } finally {
+    storeMod.setStore(prev);
+  }
+});
+
+test("אחרי שהנעילה שוב זמינה — הסליקה מתבצעת כרגיל", async () => {
+  installCountingProvider();
+  const phone = "whatsapp:+972501232222";
+  const rid   = await newStay(phone, 40_000);
+  await tenant.runInTenant(HID, () => checkin.autoChargeOnNoShow(rid, "he"));
+  assert.equal(counts.capture, 1, "🔴 המסלול התקין נשבר");
+});

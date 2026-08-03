@@ -61,17 +61,37 @@ export async function releaseLock(key, token) {
   catch { return false; }
 }
 
+/** נזרקת כשנעילת מסלול-כסף לא נתפסה. הקורא חייב לא להמשיך. */
+export class LockUnavailableError extends Error {
+  constructor(key, waitMs) {
+    super(`לא נתפסה נעילה מבוזרת ל-"${key}" תוך ${waitMs}ms — פעולה קריטית לא תבוצע ללא נעילה.`);
+    this.name = "LockUnavailableError";
+    this.key  = key;
+  }
+}
+
 /**
  * ההגנה שהקוד העסקי משתמש בה: נעילה מקומית תמיד, ומבוזרת כשיש Redis.
  *
  * חשוב: הנעילה המבוזרת נתפסת **בתוך** המקומית. כך תהליך אחד לא שולח
  * עשרות בקשות מקבילות ל-Redis על אותו מפתח — הוא כבר סדר אותן בתור.
+ *
+ * `failClosed` — 🔴 להבחנה הזו יש משמעות כספית:
+ *   • ברירת המחדל (**fail-open**) נכונה לטיפול בהודעת אורח. אורח שנשאר
+ *     בלי מענה כי Redis איטי הוא נזק ודאי; כפילות היא סיכון נדיר.
+ *   • **fail-closed** נכון למסלולי כסף. שם ההיגיון הפוך: אם אי אפשר
+ *     להבטיח בלעדיות, עדיף לא לסלוק כלל מאשר לחייב את האורח פעמיים.
+ *     הסליקה תתבצע בניסיון הבא (ה-cron של no-show רץ שוב ממילא).
  */
-export async function withGuestLock(key, fn, { ttlMs = 30_000, waitMs = 10_000 } = {}) {
+export async function withGuestLock(key, fn, { ttlMs = 30_000, waitMs = 10_000, failClosed = false } = {}) {
   return withLock(key, async () => {
     if (!isDistributed()) return fn();
     const token = await acquireLock(key, { ttlMs, waitMs });
     if (!token) {
+      if (failClosed) {
+        console.error(`🚨 מסלול קריטי ללא נעילה — "${key}". הפעולה לא בוצעה, ותתבצע בניסיון הבא.`);
+        throw new LockUnavailableError(key, waitMs);
+      }
       // לא הצלחנו לתפוס (עומס/תקלה) — ממשיכים בכל זאת. עדיף סיכון
       // נדיר לכפילות מאשר אורח שנשאר בלי מענה.
       console.warn(`⚠️ לא נתפסה נעילה מבוזרת ל-"${key}" תוך ${waitMs}ms — ממשיכים עם הנעילה המקומית.`);

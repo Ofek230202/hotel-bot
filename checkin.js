@@ -816,7 +816,16 @@ export function formatInvoiceSummary(inv, lang = "he") {
 //    `withGuestLock` על מזהה ההזמנה מסדר את שתי הריצות בזו אחר זו, וגם
 //    בין תהליכים (עם `REDIS_URL`). השנייה תמצא את הדגלים כבר דלוקים.
 async function settleFolio(res, opts = {}) {
-  return withGuestLock(`reservation:${res.id}`, () => settleFolioLocked(res, opts));
+  return withGuestLock(`reservation:${res.id}`, () => settleFolioLocked(res, opts), {
+    // 🔴 `failClosed` — כאן ההיגיון הפוך מטיפול בהודעת אורח. אם אי אפשר
+    //    להבטיח בלעדיות, **לא סולקים**: עדיף לא לחייב עכשיו מאשר לחייב
+    //    פעמיים. ה-cron של no-show ינסה שוב, והדגלים כבר מונעים כפילות
+    //    בריצה חוזרת. fail-open כאן היה מחזיר בדיוק את החיוב הכפול
+    //    שהנעילה נועדה למנוע.
+    failClosed: true,
+    // חלון ארוך יותר מברירת המחדל: הסליקה כוללת עד שתי קריאות רשת לספק.
+    ttlMs: 60_000,
+  });
 }
 
 async function settleFolioLocked(res, { overageDescription } = {}) {
