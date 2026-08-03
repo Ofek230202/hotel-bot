@@ -21,6 +21,8 @@ import { concierge, REQUEST_TYPES }                       from "./concierge/inde
 import { places, PLACE_CATEGORIES, placesLive }           from "./places/index.js";
 import { detectEmergency, emergencyGuestMessage, emergencyKindHe, emergencyDial } from "./emergency.js";
 import { armIncident, setNotifier, ACK_TIMEOUT_MS } from "./escalation.js";
+import { setSender as setScheduleSender, setComposer as setScheduleComposer, setGuard as setScheduleGuard, MESSAGE_KINDS } from "./schedule.js";
+import { composeScheduled } from "./messages.js";
 
 // ── שורת "אשרו קבלה" בהתראת החירום ─────────────────────
 // הצוות חייב לדעת *שמצפים* ממנו לאשר, ו*מה קורה* אם לא — אחרת ההסלמה
@@ -35,6 +37,31 @@ export function ackInstruction(incidentId) {
 // `escalation.js` שולח התראות דרך `notifyStaff` שיושב כאן. רישום במקום
 // ייבוא הדדי, שהיה סוגר מעגל בין המודולים.
 setNotifier((...args) => notifyStaff(...args));
+
+// ── חיווט מנוע ההודעות היזומות ──────────────────────────
+// `schedule.js` הוא מנוע זמן טהור — הוא אינו יודע מה זו הזמנה ואינו יודע
+// לשלוח. שלושת החוטים האלה מחברים אותו למציאות, וברישום ולא בייבוא, כדי
+// שלא ייווצר מעגל (`bot ← checkin ← schedule ← bot`).
+setScheduleSender((to, text, opts) => wa(to, text, opts));
+
+setScheduleComposer(async (row) => {
+  const res = await ensureReservationLoaded(row.reservation_id);
+  return res ? composeScheduled(row.kind, res) : null;
+});
+
+// 🔴 השומר — הבדיקה האחרונה לפני שהודעה יזומה יוצאת. הודעה שנשלחת
+//    לאורח שכבר עזב, או בזמן שאיש צוות מנהל את השיחה, גרועה מהודעה
+//    שלא נשלחה: היא נראית לאורח כרשלנות של המלון.
+setScheduleGuard(async (row) => {
+  const res = await ensureReservationLoaded(row.reservation_id);
+  if (!res) return { ok: false, reason: "no-reservation" };
+  if (res.cancelled) return { ok: false, reason: "cancelled" };
+  // הודעות שאינן "אחרי העזיבה" חסרות טעם אחרי שהאורח עזב.
+  if (res.stage === "checked_out" && row.kind !== MESSAGE_KINDS.POST_STAY) {
+    return { ok: false, reason: "already-checked-out" };
+  }
+  return { ok: true };
+});
 import { getProfile, isReturningGuest, updateLastRating } from "./profiles.js";
 
 dotenv.config();

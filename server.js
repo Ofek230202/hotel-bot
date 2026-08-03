@@ -13,10 +13,14 @@ import { incidentAckPage } from "./server-pages.js";
 import { catchAsyncRoutes, errorHandler } from "./http-async.js";
 import { acknowledgeIncident, closeIncident, sweepUnacknowledged, ACK_TIMEOUT_MS, SWEEP_INTERVAL_MS } from "./escalation.js";
 import { startJob, jobsStatus, stopAllJobs } from "./jobs.js";
+import { deliverDue, scheduleStats, scheduleForReservation } from "./schedule.js";
 
 // כל כמה זמן נסרקות הזמנות no-show. 10 דק׳ — מספיק תכוף כדי לחייב בזמן,
 // ומספיק נדיר כדי לא להעמיס על ה-DB.
 const NO_SHOW_INTERVAL_MS = Number(process.env.NO_SHOW_INTERVAL_MS) || 10 * 60_000;
+// הודעות יזומות נסרקות כל דקה — מספיק צפוף כדי ש"יום לפני, 18:00" יישלח
+// ב-18:00 ולא ב-18:09, וזול לחלוטין (שאילתה אחת על אינדקס).
+const SCHEDULE_INTERVAL_MS = Number(process.env.SCHEDULE_INTERVAL_MS) || 60_000;
 import { smokePlaces } from "./places/index.js";
 import { listIdDocuments, retrieveIdDocument, accessLogFor, purgeExpiredIdDocuments, RETENTION_DAYS } from "./idverify/index.js";
 import { DEFAULT_HOTEL_ID } from "./tenant.js";
@@ -302,6 +306,22 @@ app.post("/api/incidents/sweep", auth, async (req, res) => {
 // ── מצב העבודות המחזוריות ──────────────────────────────
 // 🔴 בלי זה אי אפשר לדעת שעבודה מתה. חיוב ה-no-show "רץ" בתיעוד במשך
 //    כל הפיתוח — ולא רץ באמת. מצב גלוי הוא ההבדל בין להניח ולדעת.
+// ── הודעות יזומות — ניראות ושליטה ──────────────────────
+// לוח הזמנים של הזמנה: מה נשלח, מה ממתין, ומתי. זו התשובה לשאלה
+// "למה האורח לא קיבל את הוראות ההגעה?" בלי לחפור בלוגים.
+app.get("/api/schedule/:rid", auth, async (req, res) => {
+  res.json(await scheduleForReservation(req.params.rid));
+});
+
+app.get("/api/schedule", auth, async (req, res) => {
+  res.json(await scheduleStats(req.query.hotelId || null));
+});
+
+// הרצה מיידית של סבב השליחה (לבדיקה ולהדגמה).
+app.post("/api/schedule/run", auth, async (req, res) => {
+  res.json({ ok: true, ...(await deliverDue()) });
+});
+
 app.get("/api/jobs", auth, (req, res) => {
   const jobs = jobsStatus();
   res.json({
@@ -783,6 +803,11 @@ const server = app.listen(PORT, async () => {
     if (charged || failed) console.log(`🏃 no-show: נסרקו ${due.length}, חויבו ${charged}, נכשלו ${failed}`);
     return { scanned: due.length, charged, failed };
   }, { everyMs: NO_SHOW_INTERVAL_MS });
+
+  // 🔴 ההודעות היזומות — הלב של "פקידת קבלה" ולא "בוט שעונה".
+  //    כל דקה: מה שהגיע זמנו נשלח. אידמפוטנטי, מוגן בנעילה, ומכבד
+  //    שעות שקטות — ראה schedule.js.
+  startJob("scheduled-messages", () => deliverDue(), { everyMs: SCHEDULE_INTERVAL_MS });
 
   console.log(
     `⏱️  עבודות מחזוריות פעילות: ${jobsStatus().map(j => j.name).join(" · ")}\n` +

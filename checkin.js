@@ -14,6 +14,7 @@ import { prepare, queryAll, queryAllAsync } from "./store/Repo.js";
 import { currentHotelId, runInTenant } from "./tenant.js";
 import { LruCache } from "./store/LruCache.js";
 import { withGuestLock } from "./store/index.js";
+import { scheduleStayTimeline, scheduleMessage, cancelScheduled, MESSAGE_KINDS } from "./schedule.js";
 
 // הקונפיג של המלון שאליו שייכת ההזמנה. הזמנה נושאת hotelId משלה, ולכן
 // גם פונקציות שרצות *מחוץ* להקשר ה-tenant (למשל דף התשלום ב-checkin-routes)
@@ -369,6 +370,7 @@ export async function startCheckin(phone, nameInput, reservationId, opts = {}) {
   // גובה בקבלה. מדלגים על ספק הסליקה לגמרי.
   if (reservations[id].depositMethod === "cash") {
     persist(reservations[id]);
+    scheduleTimelineSafely(reservations[id]);
     return { reservationId: id, paymentUrl: null, depositMethod: "cash" };
   }
 
@@ -390,7 +392,21 @@ export async function startCheckin(phone, nameInput, reservationId, opts = {}) {
   reservations[id].paymentId  = auth.paymentId;
   reservations[id].paymentUrl = auth.redirectUrl;
   persist(reservations[id]);
+  scheduleTimelineSafely(reservations[id]);
   return { reservationId: id, paymentUrl: auth.redirectUrl };
+}
+
+// ציר הזמן של ההזמנה. עטוף ב-try: תקלה בתזמון לעולם לא תפיל צ'ק אין —
+// עדיף אורח עם הזמנה ובלי הודעה יזומה מאשר אורח בלי הזמנה.
+function scheduleTimelineSafely(res) {
+  try {
+    const planned = scheduleStayTimeline(res);
+    if (planned.length) {
+      console.log(`📅 תוזמנו ${planned.length} הודעות יזומות להזמנה ${res.id.slice(0, 8)}: ${planned.map(p => p.kind).join(", ")}`);
+    }
+  } catch (e) {
+    console.error("תזמון ציר הזמן נכשל:", e?.message || e);
+  }
 }
 
 // ── מעבר לתשלום פיקדון במזומן (Part ד') ────────────────
@@ -432,6 +448,17 @@ export async function completeCheckin(reservationId, roomNumber) {
   res.checkedInAt = new Date().toISOString();
   res.paidAt      = new Date().toISOString();
   stats.checkIns++;
+
+  // ── ציר הזמן של השהייה ────────────────────────────────
+  // 🔴 "הכול כרצונך?" מתוזמן **רק עכשיו**, כי הוא נמדד מרגע הכניסה
+  //    בפועל ולא מהתאריך המתוכנן. אורח שהגיע ב-22:00 יקבל אותו בבוקר
+  //    (שעות שקטות), לא בחצות.
+  //    ההודעות של יום-לפני/בוקר-ההגעה כבר מיותרות בשלב הזה — האורח כאן.
+  try {
+    cancelScheduled(res.id, { kind: MESSAGE_KINDS.DAY_BEFORE });
+    cancelScheduled(res.id, { kind: MESSAGE_KINDS.ARRIVAL_DAY });
+    scheduleMessage(res, MESSAGE_KINDS.SETTLED_IN);
+  } catch (e) { console.error("תזמון ציר השהייה נכשל:", e?.message || e); }
 
   // ── סוג המלון: כרטיס בקבלה מול קוד לדלת (Part א') ──────
   // מלון בוטיק (door_code) נותן לאורח קוד למנעול הדלת ישירות; מלון מלא
@@ -922,6 +949,10 @@ export async function processCheckout(phone, reservationId, lang = "he") {
   });
 
   res.stage        = "checked_out";
+  // צ'ק אאוט מבטל את מה שכבר לא רלוונטי (ערב לפני העזיבה, "הכל כרצונך?"),
+  // ומשאיר את הודעת התודה שאחרי העזיבה — היא הרגע היחיד לבקש ביקורת.
+  cancelScheduled(res.id, { kind: MESSAGE_KINDS.DEPARTURE_EVE });
+  cancelScheduled(res.id, { kind: MESSAGE_KINDS.SETTLED_IN });
   res.checkedOutAt = new Date().toISOString();
   persist(res); // מצב הצ'ק אאוט + תוצאת הסליקה נשמרים יחד (עקבי) לפני ההודעות
   stats.checkOuts++;
@@ -1136,6 +1167,9 @@ async function autoChargeOnNoShowInTenant(res, lang = "he") {
   });
 
   res.stage        = "checked_out";
+  // no-show: האורח לא עשה צ'ק אאוט. מבטלים הכול — כולל התודה, שאינה
+  // מתאימה למי שנעלם ומחויב אוטומטית.
+  cancelScheduled(res.id);
   res.noShow       = true;
   res.checkedOutAt = new Date().toISOString();
   persist(res); // מצב ה-no-show + תוצאת הסליקה נשמרים יחד לפני ההודעות
