@@ -318,21 +318,21 @@ quiet();
 
     jobs.push((async () => {
       // 1) פתיחה בשפה א'
-      const s1 = `L${i.toString(36).toUpperCase()}A`;
+      const s1 = `9${sigOf(i)}1`;   // ספרות בלבד — ראה ההערה ב-sigOf
       await bot.handleIncoming(phone, startHe ? `מה שעות הבריכה #${s1}#` : `what are the pool hours #${s1}#`, null, { to });
       const r1 = replies.get(phone);
       if (!r1) { langBad.missing++; return; }
       if (r1.lang !== (startHe ? "he" : "en")) { langBad.wrong++; return; }
 
       // 2) בקשת מעבר מפורשת לשפה ב'
-      const s2 = `L${i.toString(36).toUpperCase()}B`;
+      const s2 = `9${sigOf(i)}2`;
       await bot.handleIncoming(phone, startHe ? `speak english please #${s2}#` : `דבר איתי בעברית בבקשה #${s2}#`, null, { to });
       const r2 = replies.get(phone);
       if (!r2) { langBad.missing++; return; }
       if (r2.lang !== (startHe ? "en" : "he")) { langBad.wrong++; return; }
 
       // 3) הודעה נוספת — השפה החדשה **נשמרת** ולא חוזרת אחורה
-      const s3 = `L${i.toString(36).toUpperCase()}C`;
+      const s3 = `9${sigOf(i)}3`;
       await bot.handleIncoming(phone, startHe ? `is there a gym #${s3}#` : `יש חדר כושר #${s3}#`, null, { to });
       const r3 = replies.get(phone);
       if (!r3) { langBad.missing++; return; }
