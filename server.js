@@ -14,6 +14,7 @@ import { catchAsyncRoutes, errorHandler } from "./http-async.js";
 import { acknowledgeIncident, closeIncident, sweepUnacknowledged, ACK_TIMEOUT_MS, SWEEP_INTERVAL_MS } from "./escalation.js";
 import { startJob, jobsStatus, stopAllJobs } from "./jobs.js";
 import { insightsSummary, knowledgeGaps, resolveGap, handoffRate, openIssues, satisfactionAndRevenue } from "./insights.js";
+import { shiftReport, openRequests, acknowledgeRequest, completeRequest, sweepRequests } from "./handover.js";
 import { deliverDue, scheduleStats, scheduleForReservation } from "./schedule.js";
 import { takeOver, releaseTakeover, extendTakeover, takeoverState, sweepTakeovers, setSessionSource as setTakeoverSessions } from "./takeover.js";
 
@@ -461,6 +462,27 @@ app.post("/api/config/preview", requireCap(CAP.EDIT_CONFIG), async (req, res) =>
     violations: errors.map(v => ({ rule: v.rule, why: v.why, sample: v.sample })),
     changedKeys: Object.keys(patch),
   });
+});
+
+// ════════════════════════════════════════════════════════
+//  מסירת משמרת — מה שהמשמרת הנכנסת חייבת לדעת
+// ════════════════════════════════════════════════════════
+app.get("/api/shift", requireCap(CAP.VIEW_ALERTS), async (req, res) =>
+  res.json(await shiftReport({ hotelId: req.query.hotelId || null })));
+
+app.get("/api/requests/open", requireCap(CAP.VIEW_ALERTS), async (req, res) =>
+  res.json(await openRequests({ hotelId: req.query.hotelId || null })));
+
+app.post("/api/requests/:id/ack", requireCap(CAP.VIEW_ALERTS), async (req, res) => {
+  const out = await acknowledgeRequest(req.params.id, { by: req.actor?.name || "staff" });
+  if (out.notFound) return res.status(404).json({ error: "request not found" });
+  res.json(out);
+});
+
+app.post("/api/requests/:id/done", requireCap(CAP.VIEW_ALERTS), async (req, res) => {
+  const out = await completeRequest(req.params.id, { by: req.actor?.name || "staff" });
+  if (out.notFound) return res.status(404).json({ error: "request not found" });
+  res.json(out);
 });
 
 app.get("/api/jobs", requireCap(CAP.VIEW_REPORTS), (req, res) => {
@@ -969,6 +991,11 @@ const server = app.listen(PORT, async () => {
   //    החמור ביותר של מערכת שירות. ראה takeover.js.
   setTakeoverSessions(() => allSessionsAsync(null, { limit: 2000 }));
   startJob("takeover-expiry", () => sweepTakeovers(), { everyMs: 60_000 });
+
+  // 🔴 בקשה שאיש לא אישר לא תעבור חילופי משמרת בשקט. נדיב בכוונה
+  //    (15 דק׳ לתזכורת, 30 להסלמה) — משק בית באמצע קומה לא אמור לקבל
+  //    נדנוד אחרי שתי דקות. ראה handover.js.
+  startJob("open-requests", () => sweepRequests(), { everyMs: 2 * 60_000 });
 
   console.log(
     `⏱️  עבודות מחזוריות פעילות: ${jobsStatus().map(j => j.name).join(" · ")}\n` +

@@ -25,6 +25,7 @@ import { setSender as setScheduleSender, setComposer as setScheduleComposer, set
 import { composeScheduled } from "./messages.js";
 import { takeoverState, setNotifier as setTakeoverNotifier, setSessionSource } from "./takeover.js";
 import { recordKnowledgeGap } from "./insights.js";
+import { trackRequest, setNotifier as setHandoverNotifier } from "./handover.js";
 
 // ── שורת "אשרו קבלה" בהתראת החירום ─────────────────────
 // הצוות חייב לדעת *שמצפים* ממנו לאשר, ו*מה קורה* אם לא — אחרת ההסלמה
@@ -38,8 +39,9 @@ export function ackInstruction(incidentId) {
 
 // `escalation.js` שולח התראות דרך `notifyStaff` שיושב כאן. רישום במקום
 // ייבוא הדדי, שהיה סוגר מעגל בין המודולים.
-setNotifier((...args) => notifyStaff(...args));
-setTakeoverNotifier((...args) => notifyStaff(...args));
+setNotifier((...a) => notifyStaff({ ...a[0], isSystemNotice: true }));
+setTakeoverNotifier((...a) => notifyStaff({ ...a[0], isSystemNotice: true }));
+setHandoverNotifier((...a) => notifyStaff({ ...a[0], isSystemNotice: true }));
 
 // ── חיווט מנוע ההודעות היזומות ──────────────────────────
 // `schedule.js` הוא מנוע זמן טהור — הוא אינו יודע מה זו הזמנה ואינו יודע
@@ -250,7 +252,10 @@ function localNow(timeZone = "Asia/Jerusalem", lang = "he") {
 // במקום מקף שקט שנראה כאילו המידע פשוט חסר.
 // `hotelId` הוא הפרמטר שהופך את זה למולטי-טננט: אנשי הקשר נשלפים
 // לפי המלון, מנקודה אחת (config.js), ולא מגלובל משותף.
-export async function notifyStaff({ dept, roomNumber, guestName, message, phone, priority = "normal", hotelId = currentHotelId(), roomNote, directNumber = null }) {
+// `isSystemNotice` — התראה של המערכת עצמה (תזכורת, הסלמה, פקיעת
+// השתלטות) ולא בקשה של אורח. כזו אינה נכנסת למעקב "מסירת משמרת",
+// אחרת תזכורת הייתה מייצרת תזכורת על עצמה.
+export async function notifyStaff({ dept, roomNumber, guestName, message, phone, priority = "normal", hotelId = currentHotelId(), roomNote, directNumber = null, isSystemNotice = false }) {
   const contacts = departmentContacts(dept, hotelId);
   // `directNumber` — יעד ישיר שאינו מספר המחלקה (מנהל תורן בסולם ההסלמה).
   // עדיין עובר דרך `departmentContacts` למייל, כדי שגם ההסלמה מתועדת בשני
@@ -305,6 +310,24 @@ export async function notifyStaff({ dept, roomNumber, guestName, message, phone,
   }
 
   logAlert({ dept, roomNumber, guestName, message, priority, hotelId });
+
+  // ── מעקב "מסירת משמרת" ────────────────────────────────
+  // 🔴 בקשה שנשלחה למחלקה ואיש לא הרים פשוט **נעלמת**: האורח ביקש
+  //    מגבות ב-15:00, המשמרת התחלפה ב-16:00, ואיש אינו יודע שהבקשה
+  //    קיימת. כאן היא נכנסת למעקב, ואם לא אושרה — מזכירים ואז מסלימים.
+  //
+  //    ⚠️ **לא** עוקבים אחרי התראות מערכת (תזכורות, הסלמות, פקיעת
+  //    השתלטות): הן אינן בקשה של אורח, ומעקב אחריהן היה יוצר לולאה
+  //    שבה תזכורת מייצרת תזכורת.
+  if (!isSystemNotice) {
+    try {
+      trackRequest({
+        hotelId, dept, phone, room: roomNumber, guestName,
+        summary: String(message ?? "").replace(/\s+/g, " ").trim().slice(0, 300),
+        priority,
+      });
+    } catch (e) { console.error("פתיחת מעקב בקשה נכשלה:", e?.message || e); }
+  }
   stats.serviceRequests++;
 }
 
