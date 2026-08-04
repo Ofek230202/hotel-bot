@@ -36,6 +36,7 @@ import { bootstrapDemoHotel } from "./demo-bootstrap.js";
 import { isDistributed, storeKind } from "./store/index.js";
 import { initPersistence, persistenceKind, flushPersistence, persistenceStats } from "./store/persistence.js";
 import { timingSafeEqual } from "node:crypto";
+import { requireCap, CAP, describeActor, tokensConfigured, identify } from "./auth.js";
 import twilio from "twilio";
 import { db } from "./db.js";
 
@@ -78,6 +79,16 @@ function auth(req, res, next) {
   if (safeEqual(token, PASS)) return next();
   res.status(401).json({ error: "Unauthorized" });
 }
+
+// ── מי אני ומה מותר לי ─────────────────────────────────
+// הדשבורד קורא לזה בכניסה ומסתיר מסכים שאין למשתמש גישה אליהם.
+// 🔴 זו **נוחות בלבד** — האכיפה האמיתית היא ב-`requireCap` בשרת.
+//    ממשק שמסתיר כפתור אינו אבטחה; שרת שדוחה בקשה כן.
+app.get("/api/me", (req, res) => {
+  const actor = describeActor(req.headers["x-dashboard-token"] || req.query.token);
+  if (!actor) return res.status(401).json({ error: "Unauthorized" });
+  res.json(actor);
+});
 
 // מסתיר סודות (credentials) מכל תגובת קונפיג — שלא ידלפו דרך ה-API (Part ב').
 function redactConfig(cfg) {
@@ -179,7 +190,7 @@ app.post("/webhook/meta", express.raw({ type: "*/*" }), (req, res) => {
 app.use(checkinRouter);
 
 // ── RESET SESSION — לאיפוס סשן ────────────────────────
-app.get("/reset/:phone", auth, async (req, res) => {
+app.get("/reset/:phone", requireCap(CAP.ADMIN), async (req, res) => {
   const phone = decodeURIComponent(req.params.phone);
   const full = phone.startsWith("whatsapp:") ? phone : `whatsapp:${phone}`;
   if (await deleteSessionAsync(full)) {
@@ -191,14 +202,14 @@ app.get("/reset/:phone", auth, async (req, res) => {
 });
 
 // ── RESET ALL SESSIONS ────────────────────────────────
-app.get("/reset-all", auth, async (req, res) => {
+app.get("/reset-all", requireCap(CAP.ADMIN), async (req, res) => {
   const count = await clearAllSessions();
   console.log(`🔄 All ${count} sessions reset`);
   res.json({ ok: true, message: `Reset ${count} sessions` });
 });
 
 // ── API: stats ────────────────────────────────────────
-app.get("/api/stats", auth, async (req, res) => {
+app.get("/api/stats", requireCap(CAP.VIEW_REPORTS), async (req, res) => {
   const sessions = await allSessionsAsync();
   res.json({
     ...stats,
@@ -208,7 +219,7 @@ app.get("/api/stats", auth, async (req, res) => {
   });
 });
 
-app.get("/api/sessions", auth, async (req, res) => res.json(await allSessionsAsync(req.query.hotelId || null)));
+app.get("/api/sessions", requireCap(CAP.VIEW_CONVERSATIONS), async (req, res) => res.json(await allSessionsAsync(req.query.hotelId || null)));
 
 // ── מנהל/קבלה: כניסה לשיחה של חדר מסוים (Part ו') ──────
 // מנהל המלון נכנס לשיחה עם חדר דרך המספר של המלון: החדר → הטלפון של
@@ -216,7 +227,7 @@ app.get("/api/sessions", auth, async (req, res) => res.json(await allSessionsAsy
 // יודעת בדיוק לאיזה מספר לפנות (guest phone) ומאיזה מספר לשלוח (fromNumber).
 //   GET /api/conversation?room=512[&hotelId=...]   — לפי חדר
 //   GET /api/conversation?phone=+9725...[&hotelId=] — לפי טלפון
-app.get("/api/conversation", auth, async (req, res) => {
+app.get("/api/conversation", requireCap(CAP.VIEW_CONVERSATIONS), async (req, res) => {
   const hotelId = req.query.hotelId || DEFAULT_HOTEL_ID;
   let s = null;
   if (req.query.room) {
@@ -242,7 +253,7 @@ app.get("/api/conversation", auth, async (req, res) => {
   });
 });
 
-app.post("/api/send", auth, async (req, res) => {
+app.post("/api/send", requireCap(CAP.REPLY_GUEST), async (req, res) => {
   const { to, message } = req.body;
   if (!to || !message) return res.status(400).json({ error: "to + message required" });
   try {
@@ -253,7 +264,7 @@ app.post("/api/send", auth, async (req, res) => {
   }
 });
 
-app.post("/api/alert", auth, async (req, res) => {
+app.post("/api/alert", requireCap(CAP.CREATE_ALERTS), async (req, res) => {
   const { dept, roomNumber, guestName, message, priority } = req.body;
   try {
     await notifyStaff({ dept, roomNumber, guestName, message, priority });
@@ -284,10 +295,10 @@ async function handleAck(req, res) {
   res.send(incidentAckPage(out.incident, { already: false }));
 }
 app.get("/incident/:id/ack", handleAck);          // הקישור מההתראה
-app.post("/api/incident/:id/ack", auth, handleAck);
+app.post("/api/incident/:id/ack", requireCap(CAP.VIEW_ALERTS), handleAck);
 
 // סגירת אירוע — דורשת תיאור מה נעשה בפועל.
-app.post("/api/incident/:id/close", auth, async (req, res) => {
+app.post("/api/incident/:id/close", requireCap(CAP.VIEW_ALERTS), async (req, res) => {
   const out = await closeIncident(req.params.id, {
     actor:      req.body?.actor || req.headers["x-actor"] || "staff",
     resolution: req.body?.resolution,
@@ -300,7 +311,7 @@ app.post("/api/incident/:id/close", auth, async (req, res) => {
 });
 
 // הרצה ידנית של סורק ההסלמה (הוא רץ מחזורית ממילא) — לבדיקה ולניטור.
-app.post("/api/incidents/sweep", auth, async (req, res) => {
+app.post("/api/incidents/sweep", requireCap(CAP.VIEW_ALERTS), async (req, res) => {
   try { res.json({ ok: true, ...(await sweepUnacknowledged()) }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -317,7 +328,7 @@ app.post("/api/incidents/sweep", auth, async (req, res) => {
 // ════════════════════════════════════════════════════════
 const asWhatsApp = p => (String(p).startsWith("whatsapp:") ? String(p) : `whatsapp:${p}`);
 
-app.post("/api/conversation/takeover", auth, async (req, res) => {
+app.post("/api/conversation/takeover", requireCap(CAP.VIEW_CONVERSATIONS), async (req, res) => {
   const { phone, hotelId = DEFAULT_HOTEL_ID, by, reason } = req.body || {};
   if (!phone) return res.status(400).json({ error: "phone required" });
   const actor = by || req.headers["x-actor"] || "staff";
@@ -325,14 +336,14 @@ app.post("/api/conversation/takeover", auth, async (req, res) => {
   res.json({ ok: true, takeover: t });
 });
 
-app.post("/api/conversation/release", auth, async (req, res) => {
+app.post("/api/conversation/release", requireCap(CAP.VIEW_CONVERSATIONS), async (req, res) => {
   const { phone, hotelId = DEFAULT_HOTEL_ID, by } = req.body || {};
   if (!phone) return res.status(400).json({ error: "phone required" });
   await releaseTakeover(asWhatsApp(phone), { by: by || req.headers["x-actor"] || "staff", hotelId });
   res.json({ ok: true });
 });
 
-app.post("/api/conversation/extend", auth, async (req, res) => {
+app.post("/api/conversation/extend", requireCap(CAP.VIEW_CONVERSATIONS), async (req, res) => {
   const { phone, hotelId = DEFAULT_HOTEL_ID } = req.body || {};
   if (!phone) return res.status(400).json({ error: "phone required" });
   res.json({ ok: true, takeover: await extendTakeover(asWhatsApp(phone), { hotelId }) });
@@ -340,7 +351,7 @@ app.post("/api/conversation/extend", auth, async (req, res) => {
 
 // שליחת הודעה **בשם המלון** מתוך המסך. עוטף ב-runInTenant כדי שההודעה
 // תצא מהמספר של המלון הנכון, ורושמת בהיסטוריה כדי שהשיחה תישאר שלמה.
-app.post("/api/conversation/reply", auth, async (req, res) => {
+app.post("/api/conversation/reply", requireCap(CAP.VIEW_CONVERSATIONS), async (req, res) => {
   const { phone, message, hotelId = DEFAULT_HOTEL_ID, by } = req.body || {};
   if (!phone || !message?.trim()) return res.status(400).json({ error: "phone + message required" });
   const to = asWhatsApp(phone);
@@ -357,7 +368,7 @@ app.post("/api/conversation/reply", auth, async (req, res) => {
   }
 });
 
-app.get("/api/conversation/takeover", auth, (req, res) => {
+app.get("/api/conversation/takeover", requireCap(CAP.VIEW_CONVERSATIONS), (req, res) => {
   const { phone, hotelId = DEFAULT_HOTEL_ID } = req.query;
   if (!phone) return res.status(400).json({ error: "phone required" });
   res.json(takeoverState(asWhatsApp(phone), hotelId));
@@ -366,16 +377,16 @@ app.get("/api/conversation/takeover", auth, (req, res) => {
 // ── הודעות יזומות — ניראות ושליטה ──────────────────────
 // לוח הזמנים של הזמנה: מה נשלח, מה ממתין, ומתי. זו התשובה לשאלה
 // "למה האורח לא קיבל את הוראות ההגעה?" בלי לחפור בלוגים.
-app.get("/api/schedule/:rid", auth, async (req, res) => {
+app.get("/api/schedule/:rid", requireCap(CAP.VIEW_REPORTS), async (req, res) => {
   res.json(await scheduleForReservation(req.params.rid));
 });
 
-app.get("/api/schedule", auth, async (req, res) => {
+app.get("/api/schedule", requireCap(CAP.VIEW_REPORTS), async (req, res) => {
   res.json(await scheduleStats(req.query.hotelId || null));
 });
 
 // הרצה מיידית של סבב השליחה (לבדיקה ולהדגמה).
-app.post("/api/schedule/run", auth, async (req, res) => {
+app.post("/api/schedule/run", requireCap(CAP.VIEW_REPORTS), async (req, res) => {
   res.json({ ok: true, ...(await deliverDue()) });
 });
 
@@ -384,12 +395,12 @@ app.post("/api/schedule/run", auth, async (req, res) => {
 // ════════════════════════════════════════════════════════
 const reportDays = req => Math.min(365, Math.max(1, Number(req.query.days) || 30));
 
-app.get("/api/insights", auth, async (req, res) => {
+app.get("/api/insights", requireCap(CAP.VIEW_REPORTS), async (req, res) => {
   res.json(await insightsSummary({ hotelId: req.query.hotelId || null, days: reportDays(req) }));
 });
 
 // ⭐ הדוח החשוב ביותר: מה הבוט לא ידע לענות עליו.
-app.get("/api/insights/gaps", auth, async (req, res) => {
+app.get("/api/insights/gaps", requireCap(CAP.VIEW_REPORTS), async (req, res) => {
   res.json(await knowledgeGaps({
     hotelId: req.query.hotelId || null, days: reportDays(req),
     limit: Math.min(100, Number(req.query.limit) || 25),
@@ -397,19 +408,19 @@ app.get("/api/insights/gaps", auth, async (req, res) => {
 });
 
 // סימון נושא כטופל — אחרי שהקונפיג עודכן, הוא לא אמור לחזור בדוח.
-app.post("/api/insights/gaps/resolve", auth, async (req, res) => {
+app.post("/api/insights/gaps/resolve", requireCap(CAP.VIEW_REPORTS), async (req, res) => {
   const { topic, hotelId } = req.body || {};
   if (!topic) return res.status(400).json({ error: "topic required" });
   res.json(await resolveGap(topic, hotelId || null));
 });
 
-app.get("/api/insights/health", auth, async (req, res) =>
+app.get("/api/insights/health", requireCap(CAP.VIEW_REPORTS), async (req, res) =>
   res.json(await handoffRate({ hotelId: req.query.hotelId || null, days: reportDays(req) })));
 
-app.get("/api/insights/open", auth, async (req, res) =>
+app.get("/api/insights/open", requireCap(CAP.VIEW_REPORTS), async (req, res) =>
   res.json(await openIssues({ hotelId: req.query.hotelId || null, days: Math.min(30, reportDays(req)) })));
 
-app.get("/api/insights/value", auth, async (req, res) =>
+app.get("/api/insights/value", requireCap(CAP.VIEW_REPORTS), async (req, res) =>
   res.json(await satisfactionAndRevenue({ hotelId: req.query.hotelId || null, days: reportDays(req) })));
 
 // ════════════════════════════════════════════════════════
@@ -420,7 +431,7 @@ app.get("/api/insights/value", auth, async (req, res) =>
 //     יודע לדרג הודעה — ולכן המערכת **מסרבת לשמור** תוכן שאינו עומד
 //     בתקן, ומראה מראש מה האורח יקבל.
 // ════════════════════════════════════════════════════════
-app.post("/api/config/preview", auth, async (req, res) => {
+app.post("/api/config/preview", requireCap(CAP.EDIT_CONFIG), async (req, res) => {
   const { hotelId = DEFAULT_HOTEL_ID, patch } = req.body || {};
   if (!patch || typeof patch !== "object") return res.status(400).json({ error: "patch required" });
 
@@ -452,7 +463,7 @@ app.post("/api/config/preview", auth, async (req, res) => {
   });
 });
 
-app.get("/api/jobs", auth, (req, res) => {
+app.get("/api/jobs", requireCap(CAP.VIEW_REPORTS), (req, res) => {
   const jobs = jobsStatus();
   res.json({
     jobs,
@@ -463,7 +474,7 @@ app.get("/api/jobs", auth, (req, res) => {
 // ── DEMO: add a charge to a room's folio ──────────────
 // POST /api/charge  { room | reservationId, amount (₪), category?, description? }
 // משמש לבדיקת הצ'ק אאוט — מוסיף חיוב לחשבון של חדר פעיל.
-app.post("/api/charge", auth, async (req, res) => {
+app.post("/api/charge", requireCap(CAP.CHARGE), async (req, res) => {
   const { room, roomNumber, reservationId, amount, category, description } = req.body;
   const targetRoom = String(room ?? roomNumber ?? "");
 
@@ -495,7 +506,7 @@ app.post("/api/charge", auth, async (req, res) => {
 });
 
 // ── DEMO: view a room's folio (for verifying charges) ─
-app.get("/api/folio/:room", auth, async (req, res) => {
+app.get("/api/folio/:room", requireCap(CAP.VIEW_BILLING), async (req, res) => {
   const reservation = await getReservationByRoomAsync(req.params.room);
   if (!reservation) return res.status(404).json({ error: "No active reservation for that room" });
   res.json({
@@ -520,7 +531,7 @@ app.get("/api/folio/:room", auth, async (req, res) => {
 //   POST /api/no-show { room | reservationId }  → מחייב הזמנה ספציפית.
 //   POST /api/no-show { all: true }             → סורק ומחייב את כל מי
 //                                                 שעבר את תאריך הצ'ק אאוט.
-app.post("/api/no-show", auth, async (req, res) => {
+app.post("/api/no-show", requireCap(CAP.CHARGE), async (req, res) => {
   const { room, roomNumber, reservationId, all } = req.body;
 
   // מצב "all" — סימולציית ה-cron: מוצא את כל ה-no-shows ומחייב אותם.
@@ -568,17 +579,17 @@ app.post("/api/no-show", auth, async (req, res) => {
 });
 
 // טבלת הניתוב — לאיזה מספר וואטסאפ ולאיזה מייל הולך כל סוג בקשה.
-app.get("/api/routing", auth, (req, res) => res.json(routingTable()));
+app.get("/api/routing", requireCap(CAP.VIEW_REPORTS), (req, res) => res.json(routingTable()));
 
-app.get("/api/alerts", auth, (req, res) => res.json(staffAlerts));
-app.get("/api/incidents", auth, (req, res) => res.json(incidents));
-app.get("/api/config", auth, (req, res) => res.json(redactConfig(hotelConfig)));
+app.get("/api/alerts", requireCap(CAP.VIEW_ALERTS), (req, res) => res.json(staffAlerts));
+app.get("/api/incidents", requireCap(CAP.VIEW_ALERTS), (req, res) => res.json(incidents));
+app.get("/api/config", requireCap(CAP.EDIT_CONFIG), (req, res) => res.json(redactConfig(hotelConfig)));
 
 // עדכון קונפיג — מיזוג *עמוק* ונשמר ל-DB (שורד ריסטארט).
 // שולחים רק את מה שמשנים: {"services":{"spa":{"he":{"hours":"10:00–22:00"}}}}
 // משנה את שעות הספא בעברית בלבד ומשאיר את כל השאר. מערך (למשל רשימת
 // הטיפולים) מוחלף כמכלול — מי שמעדכן רשימה שולח אותה במלואה.
-app.post("/api/config", auth, (req, res) => {
+app.post("/api/config", requireCap(CAP.EDIT_CONFIG), (req, res) => {
   try {
     res.json({ ok: true, config: redactConfig(updateConfig(req.body)) });
   } catch (e) {
@@ -593,7 +604,7 @@ app.post("/api/config", auth, (req, res) => {
 // מלון, ה-DB מתעדכן מיד אך התהליך הרץ מחזיק cache. הנקודה הזו מוכיחה
 // שהריענון באמת נקלט, בלי לשלוח שום הודעה לאורח.
 // שימוש: GET /api/tenant/resolve?to=whatsapp:+1415...&token=...
-app.get("/api/tenant/resolve", auth, (req, res) => {
+app.get("/api/tenant/resolve", requireCap(CAP.MANAGE_HOTELS), (req, res) => {
   const to = req.query.to || process.env.TWILIO_WHATSAPP_NUMBER || "";
   const hotelId = resolveHotelId(to);
   const cfg = configFor(hotelId);
@@ -626,7 +637,7 @@ app.get("/api/tenant/resolve", auth, (req, res) => {
 // 🔒 סודות לעולם לא נחשפים — רק **קיים/חסר** (בוליאני). היחידים שמוצגים
 //    בערכם המלא הם DEMO_HOTEL ו-HOTEL_ID, שאינם סודות ושבהם דווקא חשוב
 //    לראות את הערך המדויק (JSON.stringify חושף רווח מוביל/נגרר).
-app.get("/api/env-check", auth, (req, res) => {
+app.get("/api/env-check", requireCap(CAP.ADMIN), (req, res) => {
   const secretNames = [
     "ANTHROPIC_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN",
     "GOOGLE_PLACES_API_KEY", "ID_ENCRYPTION_KEY", "EMAIL_API_KEY",
@@ -661,7 +672,7 @@ app.get("/api/env-check", auth, (req, res) => {
 // ה-DB. השרת הרץ מחזיק את המיפוי ואת הקונפיג ב-cache בזיכרון, ולכן לא
 // היה רואה את השינוי עד restart — מלכודת קלאסית של "החלפתי ולא קרה כלום".
 // הקריאה הזו מרעננת את שניהם מיידית.
-app.post("/api/tenant/reload", auth, (req, res) => {
+app.post("/api/tenant/reload", requireCap(CAP.MANAGE_HOTELS), (req, res) => {
   try {
     const map = reloadHotelNumbers();
     clearConfigCache();
@@ -679,7 +690,7 @@ app.post("/api/tenant/reload", auth, (req, res) => {
 // Twilio → hotelId), וקונפיג (שם, מחלקות, שירותים…). עושה גם registerHotelNumber
 // וגם updateConfigFor, ומחזיר בדיקת שלמות אנשי קשר. מלון חדש = קריאה אחת,
 // בלי שינוי קוד. body: { hotelId, number, fromNumber?, config }
-app.post("/api/hotels", auth, (req, res) => {
+app.post("/api/hotels", requireCap(CAP.MANAGE_HOTELS), (req, res) => {
   const { hotelId, number, fromNumber, config } = req.body || {};
   if (!hotelId) return res.status(400).json({ ok: false, error: "hotelId required" });
   try {
@@ -712,7 +723,7 @@ app.post("/api/hotels", auth, (req, res) => {
 });
 
 // איפוס הקונפיג לברירות המחדל שבקוד (מוחק את כל ה-overrides).
-app.post("/api/config/reset", auth, (req, res) => {
+app.post("/api/config/reset", requireCap(CAP.EDIT_CONFIG), (req, res) => {
   try {
     res.json({ ok: true, config: redactConfig(resetConfig()) });
   } catch (e) {
@@ -730,14 +741,14 @@ app.post("/api/config/reset", auth, (req, res) => {
 // ════════════════════════════════════════════════════════
 
 // רשימת מסמכים (מטא-דטא בלבד — לעולם לא התמונה).
-app.get("/api/id-documents", auth, async (req, res) => {
+app.get("/api/id-documents", requireCap(CAP.VIEW_ID_DOCS), async (req, res) => {
   const hotelId = req.query.hotelId || DEFAULT_HOTEL_ID;
   res.json(await listIdDocuments({ hotelId, reservationId: req.query.reservationId || null }));
 });
 
 // שליפת התמונה עצמה — מפוענחת לפי דרישה, מבודדת למלון, ומתועדת.
 // דורש purpose (למה ניגשים) — נרשם ב-audit. actor = מזהה המשתמש/קבלה.
-app.get("/api/id-document/:id/image", auth, async (req, res) => {
+app.get("/api/id-document/:id/image", requireCap(CAP.VIEW_ID_DOCS), async (req, res) => {
   const hotelId = req.query.hotelId || DEFAULT_HOTEL_ID;
   const out = await retrieveIdDocument(req.params.id, {
     hotelId,
@@ -756,12 +767,12 @@ app.get("/api/id-document/:id/image", auth, async (req, res) => {
 });
 
 // יומן הגישות של מסמך (audit trail).
-app.get("/api/id-document/:id/access-log", auth, async (req, res) => {
+app.get("/api/id-document/:id/access-log", requireCap(CAP.VIEW_ID_DOCS), async (req, res) => {
   res.json(await accessLogFor(req.params.id));
 });
 
 // הרצת מדיניות המחיקה (retention). נועד ל-cron; מפעילים גם ידנית.
-app.post("/api/id-documents/purge", auth, async (req, res) => {
+app.post("/api/id-documents/purge", requireCap(CAP.VIEW_ID_DOCS), async (req, res) => {
   try {
     res.json({ ok: true, retentionDays: RETENTION_DAYS, ...(await purgeExpiredIdDocuments()) });
   } catch (e) {
@@ -773,7 +784,7 @@ app.post("/api/id-documents/purge", auth, async (req, res) => {
 // משחזר בדיוק *מה* האורח אישר: איזה נוסח (version + hash של הטקסט),
 // הנוסח המילולי שכתב ("אני מאשר"), השפה שהוצגה, ומתי. זו הראיה שהופכת
 // אישור בוואטסאפ לבר-אכיפה — מענה ל"מה בדיוק אישרתי?" ולבירור משפטי.
-app.get("/api/terms-acceptance/:rid", auth, async (req, res) => {
+app.get("/api/terms-acceptance/:rid", requireCap(CAP.VIEW_BILLING), async (req, res) => {
   const r = await ensureReservationLoaded(req.params.rid);
   if (!r) return res.status(404).json({ error: "reservation not found" });
   res.json({
@@ -866,6 +877,20 @@ const server = app.listen(PORT, async () => {
   // ── אזהרות אבטחה בעלייה (Part ב') ────────────────────
   if (PASS === "hotel2024") {
     console.warn(`⚠️  אבטחה: DASHBOARD_PASSWORD בברירת מחדל ("hotel2024") — הגדירו סיסמה חזקה ב-env לפני פרודקשן.`);
+  }
+
+  // ── תפקידים והרשאות ──────────────────────────────────
+  // 🔴 בלי `STAFF_TOKENS` יש **סיסמה אחת** שנותנת גישה לכל דבר — כולל
+  //    מסמכי זהות של אורחים וחיוב כרטיסים. זה תקין להדגמה, ולא למלון
+  //    עם צוות. מספיק שעובד אחד עוזב כדי שהסיסמה תהיה בחוץ.
+  if (tokensConfigured()) {
+    console.log(`✅  הרשאות: תפקידים פעילים — לכל טוקן רק היכולות שלו (ראה auth.js)`);
+  } else {
+    console.warn(
+      `⚠️  הרשאות: **סיסמה אחת לכל המערכת**. מי שיש לו אותה רואה שיחות,\n` +
+      `    מסמכי זהות וחשבוניות, ויכול לחייב כרטיסים. למלון עם צוות הגדירו:\n` +
+      `    STAFF_TOKENS="manager:<טוקן>:שם,reception:<טוקן>:קבלה,housekeeping:<טוקן>:משק בית"`
+    );
   }
   if (process.env.VALIDATE_TWILIO !== "true") {
     console.warn(`⚠️  אבטחה: אימות חתימת Twilio כבוי — בפרודקשן הגדירו VALIDATE_TWILIO=true (עם BASE_URL ציבורי) כדי לחסום webhooks מזויפים.`);

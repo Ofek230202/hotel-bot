@@ -9,7 +9,7 @@
 
 | | |
 |---|---|
-| **בדיקות** | **588 עוברות, 0 נכשלות** (`npm test`, 28 קבצים) · voice 0 שגיאות · demo 17/17 · preflight 65/65 · **עומס: מיליון הודעות** |
+| **בדיקות** | **602 עוברות, 0 נכשלות** (`npm test`, 29 קבצים) · voice 0 שגיאות · demo 17/17 · preflight 65/65 · **עומס: מיליון הודעות** |
 | **מלונות מוגדרים** | **LALA Boutique** (בוטיק · דרך בן צבי 78 · קוד לדלת · בלי צוות במקום) · **The David Kempinski** (מלון מלא · הירקון 51 · כרטיס בקבלה · צוות 24/7) |
 | **בידול** | מלא ומאומת — מיקום, קונסיירז', מחלקות, עוסק לחשבונית, שירותים. אין מסלול שבו פרט של מלון אחד מגיע לאורח של השני |
 | **ענן (פרודקשן)** | Railway · `https://hotel-bot-production-0230.up.railway.app` · **auto-deploy מ-main פעיל ומאומת** |
@@ -223,7 +223,7 @@ instance, שתי הודעות של אותו אורח רצות במקביל בש�
 
 **בדיקה מהירה לפני כל הדגמה:**
 ```
-npm test                                              # 588 בדיקות
+npm test                                              # 602 בדיקות
 npm run cloud:check -- <railway-url> --expect=lala    # מה הענן באמת מחזיק
 npm run demo:verify lala                              # מה האורח יקבל (בלי לשלוח)
 ```
@@ -616,7 +616,7 @@ Priority order (to be decided together):
 
 | פקודה | מה היא עושה |
 |---|---|
-| `npm test` | **588 בדיקות ב-28 קבצים** (`npm run test:audit` מוודא שאף קובץ לא נשמט) — `e2e` · `places` · `safety` · `scale` · `idsecurity` · `hoteltype` · `tenant-isolation` · `demo-switch` · `demo-bootstrap` · `pms-optima` · `pms-vendors` · `store` · `voice` · `persistence` · `payments` · `all-hotels` · `lru` · `readthrough` · `pgpath` · `escalation` · `settlement` · `httpasync` · `jobs` · `schedule` · **`takeover`** |
+| `npm test` | **602 בדיקות ב-29 קבצים** (`npm run test:audit` מוודא שאף קובץ לא נשמט) — `e2e` · `places` · `safety` · `scale` · `idsecurity` · `hoteltype` · `tenant-isolation` · `demo-switch` · `demo-bootstrap` · `pms-optima` · `pms-vendors` · `store` · `voice` · `persistence` · `payments` · `all-hotels` · `lru` · `readthrough` · `pgpath` · `escalation` · `settlement` · `httpasync` · `jobs` · `schedule` · **`takeover`** |
 | `node --experimental-test-module-mocks stress.mjs [n] [hotels]` | **בדיקת עומס** — ברירת מחדל מיליון הודעות ב-200 מלונות (§8.7) |
 | `npm run voice` | ביקורת ניסוח — 77 הודעות לאורח + 21 לצוות + **20 עמודי HTML** |
 | `npm run preflight` | בדיקת ענק לפני הדגמה (§9.5) — 65 בדיקות עם Claude ו-Google אמיתיים (המספר גדל עם מספר הסבבים) |
@@ -629,7 +629,8 @@ Priority order (to be decided together):
   `GOOGLE_PLACES_API_KEY` (בלעדיו `places/` נופל ל-mock), `PLACES_PROVIDER` (אופציונלי),
   `ID_ENCRYPTION_KEY` (32 בייט hex/base64), `EMAIL_API_KEY` + `EMAIL_PROVIDER` + `EMAIL_FROM`
   (מייל אמיתי למחלקות; בלעדיהם מוק עם אזהרה), `DB_PATH` (ברירת מחדל `hotel.db`),
-  `HOTEL_ID` (מלון ברירת המחדל), `AI_MAX_CONCURRENCY`, `VALIDATE_TWILIO`.
+  `HOTEL_ID` (מלון ברירת המחדל), `AI_MAX_CONCURRENCY`, `VALIDATE_TWILIO`,
+  **`STAFF_TOKENS`** (תפקידים והרשאות — ראה §8.13).
   **כוונון וקשיחות (§8.7):** `SQLITE_SYNCHRONOUS` (ברירת מחדל `NORMAL` — פי 17
   מהר יותר מ-`FULL`), `MAX_INBOUND_CHARS` (4000), `PROVIDER_CACHE_MAX` (5k),
   `SESSION_CACHE_MAX` (50k), `RESERVATION_CACHE_MAX` (20k), `CONFIG_CACHE_MAX` (5k),
@@ -1187,6 +1188,43 @@ Node משבש את ערוץ ה-IPC שלו במקביליות מלאה (8 קבצ�
 של הלוגיקה — נתיב רינדור שני היה מתיישן, והתצוגה הייתה מבטיחה משהו אחר
 ממה שהאורח יקבל. `voice.js` מדרג את התוצאה, והמערכת **מסרבת לשמור**
 תוכן שאינו עומד בתקן.
+
+## 8.13 `auth.js` — תפקידים והרשאות (04.08.2026)
+
+**מה שהיה: סיסמה אחת לכל המערכת.** מי שיש לו אותה רואה שיחות של אורחים,
+**מסמכי זהות מוצפנים** וחשבוניות, ויכול למחוק סשנים ולחייב כרטיסים.
+במלון עם עשרים עובדים זה לא עומד בשום תקן — ומספיק שעובד אחד עוזב כדי
+שהסיסמה תהיה בחוץ.
+
+**הרשאה מינימלית — לכל תפקיד רק מה שהוא צריך:**
+
+| תפקיד | רואה | **אינו** רואה |
+|---|---|---|
+| `housekeeping` / `maintenance` | בקשות בלבד | שיחות · חשבוניות · ת"ז |
+| `reception` | שיחות · השתלטות · בקשות | כספים · ת"ז |
+| `accounting` | חשבוניות · דוחות | **שיחות של אורחים** |
+| `viewer` | דוחות · בקשות | הכול השאר |
+| `manager` | הכול כולל ת"ז | איפוסים גורפים |
+| `admin` | הכול | — |
+
+הגדרה: `STAFF_TOKENS="manager:<טוקן>:שם,reception:<טוקן>:קבלה,…"`
+44 נתיבי API עברו מ-`auth` גורף ל-`requireCap(<יכולת>)`.
+
+> 🔴 **תאימות לאחור בכוונה.** בלי `STAFF_TOKENS`, ה-`DASHBOARD_PASSWORD`
+> הישן ממשיך לעבוד כ-admin — פריסה קיימת לא נשברת, והמעבר לתפקידים הוא
+> **הוספת משתנה סביבה**, לא שינוי קוד. וגם כשתפקידים פעילים, סיסמת
+> ה-admin נשארת תקפה — אחרת אפשר להינעל מחוץ למערכת שלך.
+
+> 🔴 **401 מול 403 אינו קוסמטי.** 401 = "לא זוהית", ואיש צוות ינסה
+> להתחבר שוב ושוב. 403 = "זוהית ואינך מורשה" — ואומר לו לפנות למנהל.
+> התשובה מציינת **איזו יכולת חסרה**, וכל ניסיון חריגה נרשם בלוג.
+
+> 🔴 **הממשק מסתיר, השרת אוכף.** `GET /api/me` מאפשר לדשבורד להסתיר
+> מסכים — אבל זו נוחות בלבד. ממשק שמסתיר כפתור אינו אבטחה; שרת שדוחה
+> בקשה כן. הבדיקות תוקפות את ה-API ישירות, לא את המסך.
+
+**הבדיקה החשובה היא השלילית:** שמשק בית *אינו* מגיע למסמכי זהות, ושהנהלת
+חשבונות *אינה* קוראת שיחות. הרשאה שנבדקת רק בכיוון החיובי אינה נבדקת.
 
 ## 9. שני מלונות במקביל — מה שההרצה החיה חשפה (29.07.2026)
 
