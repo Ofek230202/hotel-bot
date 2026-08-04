@@ -87,8 +87,79 @@ const DEFAULTS = {
   // ── Timing ───────────────────────────────────────────
   checkin_time:  "15:00",
   checkout_time: "12:00",
-  early_checkin: true,
-  late_checkout: true,
+  // ── מדיניות כניסה/יציאה ────────────────────────────────
+  // מבנה עשיר במקום `true`: אורח ששואל "אפשר להיכנס מוקדם?" רוצה לדעת
+  // **מאיזו שעה, בכמה, ובאילו תנאים** — ותשובה "כן" בלבד מחייבת אותו
+  // לשאול שוב. `available:false` מכבה את השירות לחלוטין במלון שאין בו.
+  early_checkin: {
+    available: true,
+    from: "11:00",
+    price_cents: 0,                     // 0 = ללא תשלום, בכפוף לזמינות
+    he: "כניסה מוקדמת אפשרית מהשעה 11:00, בכפוף לזמינות החדר ביום ההגעה",
+    en: "Early check-in is available from 11:00, subject to room availability on the day of arrival",
+  },
+  late_checkout: {
+    available: true,
+    until: "15:00",
+    price_cents: 0,
+    he: "יציאה מאוחרת עד 15:00, בכפוף לזמינות. נשמח לבדוק עבורך בבוקר העזיבה",
+    en: "Late check-out until 15:00, subject to availability. We'll gladly check for you on the morning of departure",
+  },
+
+  // ── שאלות שאורח שואל לפני שהוא מזמין ───────────────────
+  // ⚠️ נתוני דוגמה — כל מלון מחליף אותם במדיניות שלו.
+  // 🔴 למה זה כאן ולא ב-prompt: הבוט **אינו ממציא**. שדה שאינו קיים גורם
+  //    לתשובה "אבדוק ואחזור" — שהיא נכונה, אבל אורח ששואל על מיטת תינוק
+  //    ומקבל "אבדוק" מרגיש שהמלון אינו מאורגן. כל שדה כאן הוא שאלה
+  //    שהמלון כבר יודע לענות עליה מיד.
+  policies: {
+    baby_cot: {
+      available: true, price_cents: 0,
+      he: "מיטת תינוק ללא תשלום, בכפוף לזמינות — נא לבקש מראש",
+      en: "A cot is available at no charge, subject to availability — please request in advance",
+    },
+    children: {
+      he: "ילדים בכל גיל מוזמנים. עד גיל 12 שוהים ללא תשלום במיטה קיימת",
+      en: "Children of all ages are welcome. Up to age 12 stay free of charge in an existing bed",
+    },
+    extra_bed: {
+      available: true,
+      he: "מיטה נוספת אפשרית בחלק מסוגי החדרים, בתוספת תשלום",
+      en: "An extra bed is available in selected room types, for an additional charge",
+    },
+    accessibility: {
+      available: true,
+      he: "המלון נגיש: מעליות, חדרים מותאמים, ושירותים נגישים בלובי. נשמח להתאים חדר מראש",
+      en: "The hotel is accessible: lifts, adapted rooms, and accessible facilities in the lobby. We'll gladly arrange a suitable room in advance",
+    },
+    pets: {
+      allowed: false,
+      he: "מטעמי היגיינה איננו מארחים בעלי חיים, למעט חיות שירות מוכרות",
+      en: "For hygiene reasons we do not host pets, with the exception of recognised service animals",
+    },
+    luggage_storage: {
+      available: true,
+      he: "שמירת מזוודות ללא תשלום, לפני הכניסה ואחרי הפינוי",
+      en: "Complimentary luggage storage, both before check-in and after check-out",
+    },
+    cancellation: {
+      he: "ביטול ללא חיוב עד 48 שעות לפני ההגעה. לאחר מכן יחויב לילה ראשון",
+      en: "Free cancellation up to 48 hours before arrival. Thereafter the first night is charged",
+    },
+    smoking: {
+      allowed: false,
+      he: "המלון כולו ללא עישון, כולל המרפסות. יש אזור עישון מוגדר בחוץ",
+      en: "The hotel is entirely non-smoking, balconies included. A designated smoking area is available outside",
+    },
+    quiet_hours: {
+      he: "שעות מנוחה בין 22:00 ל-07:00",
+      en: "Quiet hours are observed between 22:00 and 07:00",
+    },
+  },
+
+  // קישור לביקורת — נשלח בהודעה שאחרי העזיבה. ריק = לא נשלח כלל,
+  // ולעולם לא נשלח קישור שבור.
+  review_url: null,
 
   // ── Location (מיקום המלון — למנוע חיפוש המקומות של הקונסיירז') ──
   // ⚠️⚠️ נתוני דוגמה — כל מלון *חייב* להזין את המיקום האמיתי שלו ⚠️⚠️

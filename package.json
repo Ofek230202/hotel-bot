@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "hotel-concierge-bot",
   "version": "3.0.0",
   "description": "AI-powered WhatsApp concierge for luxury hotels ג€” check-in with isolated payment layer (mock provider)",
@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --experimental-test-module-mocks --test-concurrency=4 --test e2e.test.mjs places.test.mjs safety.test.mjs scale.test.mjs idsecurity.test.mjs hoteltype.test.mjs tenant-isolation.test.mjs demo-switch.test.mjs demo-bootstrap.test.mjs pms-optima.test.mjs pms-vendors.test.mjs store.test.mjs voice.test.mjs persistence.test.mjs payments.test.mjs all-hotels.test.mjs lru.test.mjs readthrough.test.mjs pgpath.test.mjs escalation.test.mjs settlement.test.mjs httpasync.test.mjs jobs.test.mjs schedule.test.mjs takeover.test.mjs",
+    "test": "node --experimental-test-module-mocks --test-concurrency=4 --test all-hotels.test.mjs concierge-scale.test.mjs demo-bootstrap.test.mjs demo-switch.test.mjs e2e.test.mjs escalation.test.mjs hoteltype.test.mjs httpasync.test.mjs jobs.test.mjs lru.test.mjs payments.test.mjs persistence.test.mjs pgpath.test.mjs places.test.mjs pms-optima.test.mjs pms-vendors.test.mjs policies.test.mjs readthrough.test.mjs safety.test.mjs scale.test.mjs schedule.test.mjs settlement.test.mjs store.test.mjs takeover.test.mjs tenant-isolation.test.mjs voice.test.mjs && node --experimental-test-module-mocks --test idsecurity.test.mjs",
     "voice": "node --experimental-test-module-mocks voice-audit.mjs",
     "pms:guide": "node pms-guide.mjs",
     "demo": "node --experimental-test-module-mocks simulate-demo.mjs",
@@ -16,7 +16,8 @@
     "demo:kempinski": "node demo-switch.mjs kempinski",
     "demo:status": "node demo-switch.mjs status",
     "demo:verify": "node --experimental-test-module-mocks verify-number.mjs",
-    "cloud:check": "node cloud-check.mjs"
+    "cloud:check": "node cloud-check.mjs",
+    "test:audit": "node -e \"const fs=require('fs');const p=require('./package.json');const s=new Set(p.scripts.test.match(/[A-Za-z0-9-]+[.]test[.]mjs/g));const d=fs.readdirSync('.').filter(f=>f.endsWith('.test.mjs'));const miss=d.filter(f=>!s.has(f));if(miss.length){console.error('קבצי בדיקה שאינם רצים: '+miss.join(', '));process.exit(1)}console.log('כל '+d.length+' קבצי הבדיקה רצים')\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",

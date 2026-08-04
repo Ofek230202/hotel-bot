@@ -371,6 +371,11 @@ function isGenericGreeting(text) {
 // ════════════════════════════════════════════════════════
 const FIELD_LABELS = {
   he: {
+    // מדיניות המלון — השאלות שאורח שואל לפני שהוא מזמין.
+    baby_cot: "מיטת תינוק", extra_bed: "מיטה נוספת", accessibility: "נגישות",
+    pets: "בעלי חיים", luggage_storage: "שמירת מזוודות", cancellation: "ביטול הזמנה",
+    smoking: "עישון", quiet_hours: "שעות מנוחה",
+    early_checkin: "כניסה מוקדמת", late_checkout: "יציאה מאוחרת",
     name: "שם", hours: "שעות פעילות", location: "מיקום", style: "אופי",
     price: "מחיר", price_range: "טווח מחירים", dietary: "התאמות תזונתיות",
     note: "לתשומת לב", access: "כניסה", amenities: "מה כלול", children: "ילדים",
@@ -404,6 +409,10 @@ const FIELD_LABELS = {
     car_rental: "השכרת רכב", bikes: "אופניים", walking: "מה בהליכה",
   },
   en: {
+    baby_cot: "Cot", extra_bed: "Extra bed", accessibility: "Accessibility",
+    pets: "Pets", luggage_storage: "Luggage storage", cancellation: "Cancellation",
+    smoking: "Smoking", quiet_hours: "Quiet hours",
+    early_checkin: "Early check-in", late_checkout: "Late check-out",
     name: "Name", hours: "Hours", location: "Location", style: "Style",
     price: "Price", price_range: "Price range", dietary: "Dietary options",
     note: "Note", access: "Access", amenities: "Included", children: "Children",
@@ -787,6 +796,36 @@ function buildPrompt(session, lang) {
   // ידע הקונסיירז' על מה שמחוץ למלון — אותו רינדור מתויג בדיוק כמו
   // השירותים, ולכן גם כאן אפשר להוסיף קטגוריה ב-config בלי לגעת בקוד.
   const area = renderFields(cfg.local_area?.[L] || cfg.local_area?.en || {}, L);
+
+  // ── מדיניות המלון — התשובות שאורח שואל לפני שהוא מזמין ──
+  // 🔴 מיטת תינוק, נגישות, בעלי חיים, ביטול, שמירת מזוודות, עישון.
+  //    בלי אלה הבוט עונה "אבדוק ואחזור" — תשובה נכונה (הוא אינו ממציא),
+  //    אבל אורח שמקבל אותה על מיטת תינוק מרגיש שהמלון אינו מאורגן.
+  //    כל שדה נבנה מהקונפיג של אותו מלון, ושדה חסר פשוט אינו מופיע.
+  const policyLines = Object.entries(cfg.policies || {})
+    .map(([key, p]) => {
+      const text = p?.[L] || p?.en || p?.he;
+      if (!text) return null;
+      const extra = [];
+      if (p.price_cents > 0) extra.push(L === "he" ? `₪${Math.round(p.price_cents / 100)}` : `₪${Math.round(p.price_cents / 100)}`);
+      if (p.available === false) extra.push(L === "he" ? "לא זמין" : "not available");
+      if (p.allowed === false)   extra.push(L === "he" ? "אסור" : "not permitted");
+      return `  • ${labelFor(key, L)}: ${text}${extra.length ? ` (${extra.join(" · ")})` : ""}`;
+    })
+    .filter(Boolean).join("\n");
+
+  // כניסה מוקדמת / יציאה מאוחרת — מבנה עשיר, כולל מחיר ושעה.
+  const flexLine = (key) => {
+    const v = cfg[key];
+    if (!v) return null;
+    if (v.available === false) return `  • ${labelFor(key, L)}: ${L === "he" ? "אינה אפשרית במלון זה" : "not available at this hotel"}`;
+    const t = v[L] || v.en || v.he;
+    if (!t) return null;
+    const price = v.price_cents > 0 ? ` (₪${Math.round(v.price_cents / 100)})` : "";
+    return `  • ${labelFor(key, L)}: ${t}${price}`;
+  };
+  const flex = [flexLine("early_checkin"), flexLine("late_checkout")].filter(Boolean).join("\n");
+  const policies = [flex, policyLines].filter(Boolean).join("\n");
 
   // מבנה המלון — ידע בסיסי שהבוט חייב להכיר (איפה הלובי, הקבלה, המעליות),
   // כדי שלא ישאל את האורח שאלות מגוחכות על מבנה המלון שהוא עצמו עובד בו.
@@ -1219,6 +1258,12 @@ ${svcs}
 ▸ חניה
 ${park}
 
+▸ מדיניות המלון — אלה תשובות **ודאיות**. אורח ששואל על מיטת תינוק, נגישות,
+בעלי חיים, ביטול הזמנה, שמירת מזוודות, עישון, כניסה מוקדמת או יציאה מאוחרת —
+ענה **מיד ובביטחון** מהרשימה הזו. אל תאמר "אבדוק ואחזור" על משהו שכתוב כאן.
+אם המדיניות שלילית (למשל בעלי חיים) — אמור זאת בנימוס, והצע חלופה אם יש.
+${policies}
+
 🍽️ מסעדות המלון (יש לך את התפריט המלא דרך כלי):
 אלה המסעדות של המלון עצמו. יש לך רק שם ומטבח כאן — את *התפריט המלא* (מנות,
 מחירים, פרטים) אתה שולף דרך הכלי get_restaurant_menu. אורח שמבקש "תפריט של
@@ -1607,6 +1652,13 @@ ${svcs}
 
 ▸ Parking
 ${park}
+
+▸ Hotel policies — these are **certain** answers. When a guest asks about a cot,
+accessibility, pets, cancellation, luggage storage, smoking, early check-in or late
+check-out, answer **immediately and with confidence** from this list. Never say you
+will check and come back about something written here. If a policy is negative (pets,
+for instance), say so graciously and offer an alternative where one exists.
+${policies}
 
 🍽️ THE HOTEL'S OWN RESTAURANTS (you have the full menu via a tool):
 These are the hotel's own restaurants. You only have the name and cuisine here — the *full menu*
