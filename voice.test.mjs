@@ -56,6 +56,101 @@ test("תופס: ביטויים אסורים — עם הסבר למה", () => {
   }
 });
 
+// 🔴 נולד מבדיקת עמידות חיה (04.08.2026): כששכבת המקומות נכשלה, ה-AI
+//    ניסח מחדש לאורח את הודעת המצב הפנימית — "The tool didn't return live
+//    results", "The live search is temporarily unavailable". אורח בקמפינסקי
+//    לא יודע שקיים "כלי"; הוא רק שומע שהמלון לא מתפקד. הכלל שהיה קיים
+//    כיסה עברית בלבד ("תקלה טכנית"), ולכן הדליפה האנגלית עברה בשקט.
+test("תופס: דליפת תקלה פנימית לאורח — בשתי השפות", () => {
+  for (const t of [
+    "The live search is temporarily unavailable, but I do have a lovely option.",
+    "The tool didn't return live results just now.",
+    "Our system is down at the moment.",
+    "The lookup is not responding right now.",
+    "I couldn't retrieve the opening hours.",
+    "I was unable to access that information.",
+    "הכלי לא החזיר תוצאות כרגע.",
+    "המערכת לא מגיבה כרגע.",
+  ]) {
+    const v = auditText(t).find(x => x.rule === "forbidden-phrase");
+    assert.ok(v, `דליפה טכנית לא נתפסה: "${t}"`);
+  }
+});
+
+// הכיוון השני חשוב לא פחות: כלל שמסמן משפטים מלונאיים תקינים ייכבה תוך
+// יום, וזו הדרך הבטוחה לאבד מבקר. "room service is available 24/7" הוא
+// בדיוק המשפט שכלל רשלני היה תופס.
+test("לא תופס: 'שירות X זמין' הוא משפט מלונאי תקין, לא תקלה", () => {
+  for (const t of [
+    "Room service is available 24/7.",
+    "Our spa service is available from 09:00 to 21:00.",
+    "Valet parking is available for 90 ILS per night.",
+    "The pool is not available during maintenance hours, reopening at 14:00.",
+    "I can access the spa booking for you.",
+    "שירות החדרים זמין 24/7.",
+    "החדר יהיה זמין משעה 15:00.",
+    "אשמח לבדוק ולחזור אליך.",
+  ]) {
+    const v = auditText(t).find(x => x.rule === "forbidden-phrase");
+    assert.ok(!v, `חיובי שגוי על משפט תקין: "${t}" — ${v?.why}`);
+  }
+});
+
+// 🔴 נתפס ב-preflight חי (04.08.2026): הבוט כתב "ספרי לי קצת יותר" לאורח
+//    ששאל "יש בר נחמד קרוב?" — משפט שאינו מסגיר מגדר. ה-prompt כבר אסר
+//    את זה בפירוט; זו השכבה הדטרמיניסטית שחסרה.
+test("ניטרול ציווי: הצורה הממוגדרת מתוקנת, והתוצאה נקייה מהכלל", async () => {
+  const { neutralizeImperatives } = await import("./voice.js");
+  const cases = [
+    ["כדי שאמליץ באמת — ספרי לי קצת יותר", "אשמח לשמוע"],
+    ["ספר לי מה תרצה",                      "אשמח לשמוע"],
+    ["כתבי לי מתי נוח",                     "אפשר לכתוב לי"],
+    ["שלחי לי צילום של הדרכון",             "אפשר לשלוח לי"],
+    ["תגידי לי מה השעה המועדפת",            "אשמח לדעת"],
+    ["השיבי *כן* לאישור",                   "נא להשיב"],
+    ["בחרי מנה מהתפריט",                    "אפשר לבחור"],
+    ["תבדקי את השעות",                      "אפשר לבדוק"],
+    ["קחי את המפתח מהקבלה",                 "אפשר לקחת"],
+    ["צרי קשר עם הקבלה",                    "אפשר ליצור קשר"],
+    ["ערב נעים, תיהני!",                    "בהנאה!"],
+  ];
+  for (const [input, expected] of cases) {
+    const out = neutralizeImperatives(input);
+    assert.ok(out.includes(expected), `"${input}" לא נוטרל → "${out}"`);
+    assert.equal(auditText(out).filter(v => v.rule === "gendered-address").length, 0,
+      `הניסוח שתוקן עדיין ממוגדר: "${out}"`);
+  }
+});
+
+// ⚠️ שכתוב שגוי גרוע מהבעיה שהוא פותר: "האורח בחר" שהופך ל"האורח אפשר
+//    לבחור" נשלח לאורח כעברית שבורה. לכן כל תבנית דורשת "לי" אחריה.
+test("ניטרול ציווי: לא נוגע בעבר, בשמות עצם ובניסוח שכבר ניטרלי", async () => {
+  const { neutralizeImperatives } = await import("./voice.js");
+  for (const t of [
+    "האורח בחר בחדר עם נוף לים",
+    "הצוות בדק את המזגן",
+    "זה מקום בדוק ומומלץ",
+    "ספרות בלבד במספר ההזמנה",
+    "אשמח לשמוע מה מתאים",
+    "המנהל אמר לי שהחדר מוכן",
+    "נא להשיב *כן* לאישור",
+    "אני צריך את הנוסח המדויק",   // "צרי" בתוך "צריך" — גבול עברי, לא \b
+    "כשתגיעי נעדכן אותך",          // עתיד, לא ציווי
+    "שתפי אותי במה שמתאים",        // אין תחליף ניטרלי תקין — נשאר ל-prompt
+    "תיהני מהערב במקום",           // "בהנאה מהערב" הוא עברית צולעת
+  ]) {
+    assert.equal(neutralizeImperatives(t), t, `שוכתב בטעות: "${t}"`);
+  }
+});
+
+// דוח שאומר "יש בעיה" בלי לומר איפה מחייב הרצה חוזרת שלמה כדי לאבחן —
+// וזה בדיוק מה שקרה כשההפרה נפלה אחרי 110 התווים הראשונים.
+test("דוח: gendered-address נוקב במילה שהפרה", () => {
+  const v = auditText("אשמח אם תרצי לעדכן").find(x => x.rule === "gendered-address");
+  assert.ok(v, "לא נתפס");
+  assert.match(v.why, /תרצי/, "הדוח חייב לנקוב במילה עצמה");
+});
+
 test("תופס: הודעה ריקה", () => assert.ok(has("   ", "empty")));
 
 // ════════════════════════════════════════════════════════

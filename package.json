@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --experimental-test-module-mocks --test-concurrency=4 --test all-hotels.test.mjs auth.test.mjs concierge-scale.test.mjs demo-bootstrap.test.mjs demo-switch.test.mjs e2e.test.mjs escalation.test.mjs handover.test.mjs hoteltype.test.mjs httpasync.test.mjs insights.test.mjs jobs.test.mjs lru.test.mjs payments.test.mjs persistence.test.mjs pgpath.test.mjs places.test.mjs pms-optima.test.mjs pms-vendors.test.mjs policies.test.mjs readthrough.test.mjs safety.test.mjs scale.test.mjs schedule.test.mjs settlement.test.mjs store.test.mjs takeover.test.mjs tenant-isolation.test.mjs voice.test.mjs && node --experimental-test-module-mocks --test idsecurity.test.mjs",
+    "test": "node --experimental-test-module-mocks --test-concurrency=4 --test all-hotels.test.mjs auth.test.mjs concierge-budget.test.mjs media.test.mjs concierge-scale.test.mjs demo-bootstrap.test.mjs demo-switch.test.mjs e2e.test.mjs escalation.test.mjs handover.test.mjs hoteltype.test.mjs httpasync.test.mjs insights.test.mjs jobs.test.mjs lru.test.mjs payments.test.mjs persistence.test.mjs pgpath.test.mjs places.test.mjs pms-optima.test.mjs pms-vendors.test.mjs policies.test.mjs readthrough.test.mjs safety.test.mjs scale.test.mjs schedule.test.mjs settlement.test.mjs store.test.mjs takeover.test.mjs tenant-isolation.test.mjs voice.test.mjs && node --experimental-test-module-mocks --test idsecurity.test.mjs",
     "voice": "node --experimental-test-module-mocks voice-audit.mjs",
     "pms:guide": "node pms-guide.mjs",
     "demo": "node --experimental-test-module-mocks simulate-demo.mjs",

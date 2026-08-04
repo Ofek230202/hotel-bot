@@ -5,12 +5,13 @@ import Anthropic from "@anthropic-ai/sdk";
 import dotenv    from "dotenv";
 import { createHash } from "node:crypto";
 import { whatsappFor } from "./whatsapp/index.js";
-import { departmentContacts, TAG_DEPARTMENTS, configFor, hotelModel, welcomeFor, ensureConfigLoaded } from "./config.js";
+import { departmentContacts, TAG_DEPARTMENTS, configFor, hotelModel, welcomeFor, ensureConfigLoaded, defaultLangFor } from "./config.js";
 import { getSession, peekSession, recordActivity, pushHistory, patchSession, logAlert, logIncident, stats, ensureSessionLoaded } from "./state.js";
 import { runInTenant, resolveHotelId, currentHotelId, fromNumberFor, tenantKey } from "./tenant.js";
 import { withLock, createSemaphore, createRateLimiter, withTimeout, retryWithBackoff } from "./concurrency.js";
 import { withGuestLock } from "./store/index.js";
 import { detectLangSignal, detectLanguageRequest, stripLanguageRequest } from "./i18n.js";
+import { neutralizeImperatives }                          from "./voice.js";
 import { stripInternalTags, hasInternalTag, validateFullName, validateReservationNumber, validateIdMedia, validateStayDates, validateTermsConfirmation, parseCheckinDetails, isSkipWord } from "./validate.js";
 import { resolveNameForms, nameFor }                      from "./names.js";
 import { startCheckin, processCheckout, getActiveReservation, getActiveReservationAsync, getPendingReservation, getPendingReservationAsync, ensureReservationLoaded, formatFolio, depositExplainer, formatStayDates, saveFeedback, switchDepositToCash, completeCheckin, reservations } from "./checkin.js";
@@ -135,7 +136,9 @@ const FALLBACK_MSG = {
 // הציג שלושה מקפים ערומים באמצע הודעה של מלון 5 כוכבים.
 // כאן זה נעצר דטרמיניסטית — בדיוק כמו סינון התגים הפנימיים.
 function tidyForWhatsApp(text) {
-  return String(text ?? "")
+  // ציווי ממוגדר ("ספרי לי") → ניסוח ניטרלי. אותה שכבה בדיוק כמו `...`→`…`:
+  // ה-prompt כבר אוסר, וזו הרשת שלא יכולה להיכשל. ראה voice.js.
+  return neutralizeImperatives(String(text ?? ""))
     // שורה שכולה קו מפריד (---, ___, ***, ═══) — נמחקת לגמרי
     .replace(/^[ \t]*(?:-{3,}|_{3,}|\*{3,}|={3,}|—{2,}|─{2,})[ \t]*$/gm, "")
     // כותרת markdown (### כותרת) → טקסט מודגש, כמו שוואטסאפ מבין
@@ -586,27 +589,73 @@ const RESTAURANT_MENU_TOOL = {
 // מריץ את הכלי: מוציא את מיקום המלון מה-config, קורא לשכבת places/,
 // ומחזיר ל-AI מחרוזת JSON קומפקטית. לעולם לא זורק — כישלון/היעדר
 // תוצאות מוחזרים כ-status שה-AI יודע לתרגם ל"אבדוק ואחזור" + [RECEPTION].
-async function runPlacesTool(input = {}, lang = "he") {
+// ⚠️ כל הודעת כשל של הכלי עוברת דרך כאן, ולא נכתבת בשורה בשורה.
+//
+// 🔴 נולד מבדיקת עמידות חיה (04.08): כשהחיפוש נכשל, ה-AI לקח את משפט
+//    המצב ו**ניסח אותו מחדש לאורח** — "The tool didn't return live results",
+//    "The live search is temporarily unavailable". זו אותה מחלה שכבר
+//    תועדה פעמיים (טקסט מרשימת ההוראות נדבק להודעה שנשלחת), הפעם בצד
+//    ה-AI. אורח בקמפינסקי לא יודע שקיים "כלי" — הוא רק שומע שהמלון לא
+//    מתפקד, וזה הרושם ההפוך מכל מה שהמערכת הזו מנסה לייצר.
+//
+//    לכן ההודעה אינה פרוזה שאפשר לצטט אלא **הוראה** שנפתחת ב-INTERNAL,
+//    אוסרת במפורש להזכיר את הכשל, ונותנת את הניסוח החלופי המדויק.
+//    שכבה שנייה: כלל `forbidden-phrase` ב-voice.js תופס דליפה כזו בשתי
+//    השפות, כי הנחיה לבדה כבר הוכחה כלא מספיקה בפרויקט הזה.
+// תקרת זמן לניסיון בודד, ותקרה **כוללת** לכלל הכלי (כולל retry ו-backoff).
+// 12ש׳ הוא הגבול שבו אורח בוואטסאפ עדיין ממתין; מעבר לו עדיף להמליץ
+// מהרשימה האצורה מאשר להמשיך לחכות לשירות שלא עונה.
+const PLACES_ATTEMPT_MS = Number(process.env.PLACES_ATTEMPT_MS) || 6000;
+const PLACES_BUDGET_MS  = Number(process.env.PLACES_BUDGET_MS)  || 12000;
+
+function toolStatus(status, extra = {}) {
+  return JSON.stringify({
+    status,
+    guest_facing: false,
+    ...extra,
+    instruction:
+      "INTERNAL — this status is for you only. NEVER tell the guest that a tool, a search, " +
+      "a system, a lookup or any service failed, is unavailable, is down or returned nothing, " +
+      "and never apologise for a technical problem: the guest does not know any of it exists. " +
+      "First recommend from the hotel's own curated area data below if it covers the request. " +
+      "Only if it truly doesn't, say exactly: \"I don't have a recommendation I'd stand behind " +
+      "for that just yet — let me look into it and come back to you\" (in the guest's language), " +
+      "and append [RECEPTION:<what the guest is looking for>] so a person follows up.",
+  });
+}
+
+export async function runPlacesTool(input = {}, lang = "he") {
   const loc = hcfg().location;
   if (!loc || loc.lat == null || loc.lng == null) {
-    return JSON.stringify({
-      status: "no_location",
-      message: "The hotel location is not configured, so a live area search can't run. Offer to check with reception and follow up.",
-    });
+    return toolStatus("no_location");
   }
 
   const query = String(input.query || "").trim();
   if (!query) {
-    return JSON.stringify({ status: "no_results", message: "No search query was provided." });
+    return toolStatus("no_query");
   }
 
   // עמידות לשירות איטי/תקלה חולפת: timeout קשיח לכל ניסיון + retry עם
   // backoff על תקלות *חולפות* בלבד (רשת/timeout/429/5xx). תקלה קבועה
   // (invalid_key) או "אין תוצאות" — לא מנסים שוב, זה לא ישתנה. כך חיפוש
   // איטי לא תוקע את הבוט ולא מפילו, ותקלת רגע נבלעת בשקט מול האורח.
+  //
+  // 🔴 **תקציב זמן כולל, לא רק לכל ניסיון** (נמדד 04.08): כשגוגל *נתקע*
+  //    במקום להיכשל, 3 ניסיונות × 9ש׳ + backoff נתנו לאורח **36 שניות**
+  //    של שקט — ואחריהן עוד תור AI. בוואטסאפ אורח נוטש הרבה קודם וכותב
+  //    שוב, וכל עוד ההודעה השנייה ממתינה לנעילה הוא מקבל שתי תשובות
+  //    באיחור. retry עוזר לתקלת רגע; מול שירות תקוע הוא רק מכפיל המתנה.
+  //    לכן יש **דדליין** אחד לכל הכלי: הניסיון נחתך לפי מה שנשאר, וברגע
+  //    שהתקציב נגמר מפסיקים לנסות ונופלים לרשימה האצורה של המלון.
+  const deadline = Date.now() + PLACES_BUDGET_MS;
+  const budgetLeft = () => deadline - Date.now();
+
   let res;
   try {
     res = await retryWithBackoff(async () => {
+      const left = budgetLeft();
+      // אין זמן לניסיון משמעותי נוסף — עוצרים מיד במקום "לנסות בשביל הפרוטוקול".
+      if (left < 500) throw Object.assign(new Error("places budget exhausted"), { _budget: true });
       const r = await withTimeout(
         () => places.searchNearby({
           query,
@@ -619,38 +668,26 @@ async function runPlacesTool(input = {}, lang = "he") {
           radius:   loc.search_radius_m || 4000,
           limit:    6,
         }),
-        9000, "places.searchNearby",
+        Math.min(PLACES_ATTEMPT_MS, left), "places.searchNearby",
       );
       // תקלה חולפת שהוחזרה כ-ok:false → זורקים כדי לנסות שוב.
       if (r && !r.ok && (r.reason === "rate_limited" || r.reason === "unavailable" || r.reason === "bad_response")) {
         throw Object.assign(new Error(`places transient: ${r.reason}`), { _res: r });
       }
       return r;
-    }, { attempts: 3, baseMs: 300 });
+    }, {
+      attempts: 3, baseMs: 300,
+      // אין טעם להמתין ל-backoff כשהתקציב כבר נגמר — זה רק מאריך את השקט.
+      shouldRetry: (e) => !e?._budget && budgetLeft() > 500,
+    });
   } catch (e) {
     console.error("Places tool failed (after retries):", e?.message || e);
     res = e?._res || null; // אם התקלה נשאה תוצאה מובנית — נשתמש בה למטה
-    if (!res) {
-      return JSON.stringify({
-        status: "unavailable",
-        message: "The live places search is temporarily unavailable. Tell the guest you'll check and come back, and escalate with [RECEPTION].",
-      });
-    }
+    if (!res) return toolStatus("unavailable");
   }
 
-  if (!res?.ok) {
-    return JSON.stringify({
-      status: res?.reason || "unavailable",
-      message: "The live places search returned no data. Tell the guest you'll check and come back, and escalate with [RECEPTION].",
-    });
-  }
-  if (!res.results.length) {
-    return JSON.stringify({
-      status: "no_results",
-      query,
-      message: "No matching places were found nearby. Do NOT invent one — tell the guest you'll check and come back, and escalate with [RECEPTION].",
-    });
-  }
+  if (!res?.ok)            return toolStatus(res?.reason || "unavailable");
+  if (!res.results?.length) return toolStatus("no_results", { query });
 
   // מחזירים רק את השדות שה-AI צריך כדי לנסח המלצה. distanceText/priceSymbol
   // כבר בשפת השיחה. ה-AI מנסח בעצמו לפי כללי הפורמט של וואטסאפ.
@@ -696,8 +733,11 @@ function runRestaurantMenuTool(input = {}, lang = "he") {
   const rests = hcfg().restaurants || {};
   const keys  = Object.keys(rests);
   if (!keys.length) {
-    return JSON.stringify({ status: "no_restaurants",
-      message: "This hotel has no in-house restaurant menus configured. Tell the guest and escalate with [RECEPTION] if needed." });
+    // אותו כלל בדיוק: "configured" היא מילה של מי שבנה את המערכת, לא של
+    // פקידת קבלה. לאורח אומרים מה יש במלון — לא מה הוגדר במערכת.
+    return toolStatus("no_restaurants", {
+      hint: "This hotel simply has no in-house restaurant. Say so naturally as a fact about the hotel, offer room service or a nearby recommendation instead, and never mention configuration or data.",
+    });
   }
 
   // מזהים איזו מסעדה התבקשה: לפי המפתח, או לפי שם/מטבח (בשרי/חלבי/גריל).
@@ -1105,6 +1145,11 @@ ${hotelTypeNoteHe}
   *"אין לי כרגע המלצה שאני עומד מאחוריה בשבילך — אשמח לבדוק ולחזור אליך."*
   והוסף [RECEPTION:<מה האורח מחפש>] כדי שאדם יברר ויחזור. זו תשובה מצוינת.
   "אני לא יודע" בלי המשך היא תשובה פסולה.
+- ⛔ **לעולם אל תספר לאורח על תקלה פנימית.** האורח אינו יודע שקיימים כלי, חיפוש,
+  מערכת או ספק מידע — ואסור שיֵדע. אל תכתוב "החיפוש לא זמין", "הכלי לא החזיר
+  תוצאות", "המערכת נפלה", ואל תתנצל על בעיה טכנית. חיפוש שנכשל אינו אירוע של
+  האורח: המלץ מהרשימה האצורה למטה, ואם אין בה מענה — רק אז "אבדוק ואחזור אליך"
+  + [RECEPTION:...]. מבחינת האורח פקידת קבלה פשוט בודקת משהו, ותו לא.
 
 *סידור ותיאום* — אתה מסדר, לא מפנה:
 - מונית, הסעה לשדה התעופה, הזמנת שולחן, טיפול בספא, סיור/טיול, השכרת רכב או
@@ -1487,6 +1532,13 @@ name, address, rating, price level and distance from the hotel.
   into it and come back to you."*
   Then append [RECEPTION:<what the guest is looking for>] so a person finds out and
   follows up. That is an excellent answer. A bare "I don't know" is not acceptable.
+- ⛔ **Never tell the guest about an internal failure.** The guest does not know that a
+  tool, a search, a system or a data provider exists — and must never learn it. Never write
+  "the search is unavailable", "the tool didn't return results", "our system is down", and
+  never apologise for a technical problem. A failed search is not the guest's event:
+  recommend from the curated area data below, and only if that has no answer say "let me
+  look into it and come back to you" + [RECEPTION:...]. To the guest, a receptionist is
+  simply checking something — nothing more.
 
 *Arranging things* — you arrange, you don't redirect:
 - A taxi, an airport transfer, a table, a spa treatment, a tour, a car or equipment
@@ -3323,6 +3375,42 @@ async function guardedHandle(phone, text, media = null, hotelId = currentHotelId
   }
 }
 
+// ── סיווג מדיה נכנסת לפי הסוג שטוויליו מסר ─────────────
+// וואטסאפ שולח הודעה קולית כ-audio/ogg (codecs=opus), תמונה כ-image/*,
+// סרטון כ-video/*, ומסמך כ-application/*. בלי הסיווג הזה כל אלה נראו
+// זהים לקוד — ולכן כולם תוארו כ"תמונה".
+export function classifyMedia(contentType) {
+  const t = String(contentType || "").toLowerCase().split(";")[0].trim();
+  if (!t) return "unknown";
+  if (t.startsWith("image/")) return "image";
+  if (t.startsWith("audio/")) return "audio";
+  if (t.startsWith("video/")) return "video";
+  if (t.startsWith("application/") || t.startsWith("text/")) return "document";
+  return "unknown";
+}
+
+// מה שאומרים לאורח כשקיבלנו קובץ שאיננו תמונה. שלושה כללים:
+// אומרים את האמת (לא "לא הבנתי"), לא מאשימים אותו, ומציעים דרך אחת
+// ברורה להמשיך — כדי שההודעה תסתיים בפעולה ולא בקיר.
+function unplayableMediaMessage(kind, lang = "he") {
+  const he = lang === "he";
+  if (kind === "audio") {
+    return he
+      ? "קיבלתי את ההודעה הקולית, אבל אני קורא הודעות כתובות בלבד 🙏\n" +
+        "אפשר לכתוב לי כאן במילים ואטפל בזה מיד — ואם נוח יותר לדבר, אשמח לבקש מהקבלה להתקשר אליך."
+      : "I received your voice message, but I can only read written messages 🙏\n" +
+        "Please type it here and I'll take care of it right away — or if you'd rather speak, I'll gladly ask reception to call you.";
+  }
+  if (kind === "video") {
+    return he
+      ? "קיבלתי את הסרטון, אבל אני קורא טקסט ותמונות בלבד 🙏 אפשר לתאר לי במילים, או לשלוח צילום מסך?"
+      : "I received the video, but I can only read text and photos 🙏 Could you describe it in words, or send a screenshot?";
+  }
+  return he
+    ? "קיבלתי את הקובץ, אבל אני קורא טקסט ותמונות בלבד 🙏 אפשר לכתוב לי במה מדובר?"
+    : "I received the file, but I can only read text and photos 🙏 Could you tell me what it's about?";
+}
+
 async function processIncoming(phone, text, media = null) {
   const session = getSession(phone);
   recordActivity(phone); // רישום ההודעה הנכנסת (messageCount/פעילות) — פעם אחת בלבד (Bug #2)
@@ -3343,11 +3431,15 @@ async function processIncoming(phone, text, media = null) {
   // בקשה מפורשת (langRequest) גוברת תמיד, גם באמצע זרימה (Bug #5).
   const signal  = detectLangSignal(body); // "he" | "en" | null (אין אות שפה)
   const inFlow  = !!session.checkinStage || session.checkoutStage === "awaiting_confirmation";
+  // ברירת המחדל האחרונה נגזרת מהמלון (`default_lang`) ולא קבועה ל-"en":
+  // אורח שפתח בהודעה קולית או ב-"304" בלבד אינו נותן אות שפה, וקודם קיבל
+  // אנגלית במלון ישראלי. ראה defaultLangFor ב-config.js.
+  const fallback = defaultLangFor(session.hotelId || currentHotelId());
   const lang    = langRequest
     ? langRequest
     : inFlow
-      ? (session.lang || signal || "en")
-      : (signal || session.lang || "en");
+      ? (session.lang || signal || fallback)
+      : (signal || session.lang || fallback);
   if (session.lang !== lang) patchSession(phone, { lang });
 
   // ── 🚨 חירום — קודם לכל דבר אחר (בטיחות) ─────────────
@@ -3369,6 +3461,30 @@ async function processIncoming(phone, text, media = null) {
   //    בזמן השתלטות הבוט **אינו עונה**, אבל ההודעה נשמרת בהיסטוריה
   //    (כדי שאיש הצוות יראה הכול) והצוות מקבל התראה שהאורח כתב —
   //    אחרת "השתלטות" פירושה אורח שכותב לחלל ריק.
+  // ── 🎤 הודעה קולית / קובץ שאיננו תמונה ────────────────
+  // 🔴 באג שנתפס בסקירה (04.08.2026): כל מדיה, מכל סוג, תוארה ל-AI
+  //    כ**"האורח שלח תמונה ללא טקסט"**. בוואטסאפ בישראל הודעה קולית היא
+  //    מהדרכים הנפוצות ביותר לפנות — והאורח שדיבר קיבל תשובה על *צילום*
+  //    שלא שלח. זה נראה כמו בוט שלא מקשיב, וזה בדיוק הרושם ההפוך ממה
+  //    שהמערכת הזו מנסה לייצר.
+  //
+  //    אנחנו באמת לא יכולים להאזין (אין שכבת תמלול — ראה §8.15), ולכן
+  //    התשובה היא **הודאה מנומסת + חלופה מיידית**, לא ניחוש. דטרמיניסטי
+  //    בכוונה: זו אמירה על *יכולת* המערכת, לא שיפוט שיחתי שה-AI צריך
+  //    לנסח מחדש בכל פעם.
+  //
+  //    אחרי חירום ואחרי השתלטות: אורח בסכנה והשתלטות אנושית גוברים.
+  const mediaKind = classifyMedia(media?.contentType);
+  if (media && mediaKind !== "image" && !body.trim()) {
+    await wa(phone, unplayableMediaMessage(mediaKind, lang), { lang });
+    // באמצע צ'ק אין — חוזרים על השלב הנוכחי, אחרת האורח נשאר תלוי באוויר
+    // אחרי שהודענו לו שלא שמענו אותו.
+    if (session.checkinStage) {
+      await promptStage(phone, session.checkinStage, lang, { brief: true });
+    }
+    return;
+  }
+
   const human = takeoverState(phone);
   if (human.active) {
     pushHistory(phone, "user", body);
@@ -3540,9 +3656,17 @@ async function processIncoming(phone, text, media = null) {
   // ריקה. ה-API של Claude דוחה content ריק ב-400, ההיסטוריה נשמרת
   // ל-SQLite — ולכן *כל* הודעה הבאה של אותו אורח נכשלה שוב, גם אחרי
   // ריסטארט. מתארים את המדיה במילים במקום לדחוף ריק.
+  // מתארים את המדיה **לפי סוגה בפועל**. מדיה שאיננה תמונה ובלי טקסט כבר
+  // נענתה למעלה ולא מגיעה לכאן, אבל אורח יכול לשלוח קובץ *עם* כיתוב —
+  // ואז ה-AI חייב לדעת מה באמת צורף, ולא להניח "תמונה".
+  const mediaNote = media
+    ? (lang === "he"
+        ? `(האורח צירף ${{ image: "תמונה", audio: "הודעה קולית", video: "סרטון", document: "קובץ" }[mediaKind] || "קובץ"}${mediaKind !== "image" ? " שאי אפשר לקרוא" : ""})`
+        : `(the guest attached ${{ image: "an image", audio: "a voice message", video: "a video", document: "a file" }[mediaKind] || "a file"}${mediaKind !== "image" ? " that cannot be read" : ""})`)
+    : "";
   const userMsg = body
-    || (media ? (lang === "he" ? "(האורח שלח תמונה ללא טקסט)" : "(the guest sent an image with no text)") : "")
-    || String(text ?? "").trim();
+    ? (media ? `${body}\n${mediaNote}` : body)
+    : (mediaNote || String(text ?? "").trim());
 
   if (!userMsg) {
     // אין טקסט ואין מדיה — אין על מה לענות, ואסור להרעיל את ההיסטוריה.
