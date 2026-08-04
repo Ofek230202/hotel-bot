@@ -1280,8 +1280,24 @@ export function resetConfig() {
 }
 
 // ה-overrides בלבד (מה שנערך מעל הקוד) — לצורכי דיבוג/דשבורד.
-export function configOverrides() {
-  return structuredClone(overrides);
+export function configOverrides(hotelId = HOTEL) {
+  if (!hotelId || hotelId === HOTEL) return structuredClone(overrides);
+  return structuredClone(loadOverridesFor(hotelId));
+}
+
+/**
+ * מוחק לגמרי את הקונפיג של מלון. משמש למלון-צל של התצוגה המקדימה,
+ * ולניקוי מלון שנוצר בטעות.
+ *
+ * ⚠️ מוחק **overrides** בלבד — `DEFAULTS` שבקוד אינם ניתנים למחיקה,
+ *    ולכן `configFor` על מלון מחוק יחזיר את ברירות המחדל ולא יקרוס.
+ */
+export function dropHotelConfig(hotelId) {
+  if (!hotelId || hotelId === HOTEL) return false;   // לא מוחקים את מלון ברירת המחדל
+  try { prepare(`DELETE FROM config WHERE hotel_id = ?`).run(hotelId); }
+  catch (e) { console.error(`מחיקת קונפיג של "${hotelId}" נכשלה:`, e?.message || e); return false; }
+  configCache.delete(hotelId);
+  return true;
 }
 
 // ── ריענון קונפיג מה-DB בתהליך שכבר רץ ──────────────────

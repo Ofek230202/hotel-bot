@@ -13,6 +13,7 @@ import { incidentAckPage } from "./server-pages.js";
 import { catchAsyncRoutes, errorHandler } from "./http-async.js";
 import { acknowledgeIncident, closeIncident, sweepUnacknowledged, ACK_TIMEOUT_MS, SWEEP_INTERVAL_MS } from "./escalation.js";
 import { startJob, jobsStatus, stopAllJobs } from "./jobs.js";
+import { insightsSummary, knowledgeGaps, resolveGap, handoffRate, openIssues, satisfactionAndRevenue } from "./insights.js";
 import { deliverDue, scheduleStats, scheduleForReservation } from "./schedule.js";
 import { takeOver, releaseTakeover, extendTakeover, takeoverState, sweepTakeovers, setSessionSource as setTakeoverSessions } from "./takeover.js";
 
@@ -28,7 +29,7 @@ import { DEFAULT_HOTEL_ID } from "./tenant.js";
 import { verifyMetaChallenge } from "./whatsapp/index.js";
 import { pmsHealth } from "./pms/index.js";
 import { emailIsLive } from "./email/index.js";
-import { updateConfigFor, configFor, hotelModel, hydrateConfig } from "./config.js";
+import { updateConfigFor, configFor, hotelModel, hydrateConfig, configOverrides, dropHotelConfig, deepMerge as deepMergePatch, welcomeFor } from "./config.js";
 import { registerHotelNumber, reloadHotelNumbers, reloadHotelNumbersAsync } from "./tenant.js";
 import { prepare } from "./store/Repo.js";
 import { bootstrapDemoHotel } from "./demo-bootstrap.js";
@@ -376,6 +377,79 @@ app.get("/api/schedule", auth, async (req, res) => {
 // הרצה מיידית של סבב השליחה (לבדיקה ולהדגמה).
 app.post("/api/schedule/run", auth, async (req, res) => {
   res.json({ ok: true, ...(await deliverDue()) });
+});
+
+// ════════════════════════════════════════════════════════
+//  דוחות — ארבעה, ולא עשרה (insights.js)
+// ════════════════════════════════════════════════════════
+const reportDays = req => Math.min(365, Math.max(1, Number(req.query.days) || 30));
+
+app.get("/api/insights", auth, async (req, res) => {
+  res.json(await insightsSummary({ hotelId: req.query.hotelId || null, days: reportDays(req) }));
+});
+
+// ⭐ הדוח החשוב ביותר: מה הבוט לא ידע לענות עליו.
+app.get("/api/insights/gaps", auth, async (req, res) => {
+  res.json(await knowledgeGaps({
+    hotelId: req.query.hotelId || null, days: reportDays(req),
+    limit: Math.min(100, Number(req.query.limit) || 25),
+  }));
+});
+
+// סימון נושא כטופל — אחרי שהקונפיג עודכן, הוא לא אמור לחזור בדוח.
+app.post("/api/insights/gaps/resolve", auth, async (req, res) => {
+  const { topic, hotelId } = req.body || {};
+  if (!topic) return res.status(400).json({ error: "topic required" });
+  res.json(await resolveGap(topic, hotelId || null));
+});
+
+app.get("/api/insights/health", auth, async (req, res) =>
+  res.json(await handoffRate({ hotelId: req.query.hotelId || null, days: reportDays(req) })));
+
+app.get("/api/insights/open", auth, async (req, res) =>
+  res.json(await openIssues({ hotelId: req.query.hotelId || null, days: Math.min(30, reportDays(req)) })));
+
+app.get("/api/insights/value", auth, async (req, res) =>
+  res.json(await satisfactionAndRevenue({ hotelId: req.query.hotelId || null, days: reportDays(req) })));
+
+// ════════════════════════════════════════════════════════
+//  ניהול תוכן — ההנהלה מעדכנת בעצמה, בלי מתכנתת
+//  ----------------------------------------------------------
+//  🔴 **תצוגה מקדימה לפני שמירה.** מלון שמעדכן שעות ושובר בטעות את
+//     הודעת הפתיחה הוא בדיוק סוג התקלה שהורסת הדגמה. `voice.js` כבר
+//     יודע לדרג הודעה — ולכן המערכת **מסרבת לשמור** תוכן שאינו עומד
+//     בתקן, ומראה מראש מה האורח יקבל.
+// ════════════════════════════════════════════════════════
+app.post("/api/config/preview", auth, async (req, res) => {
+  const { hotelId = DEFAULT_HOTEL_ID, patch } = req.body || {};
+  if (!patch || typeof patch !== "object") return res.status(400).json({ error: "patch required" });
+
+  // 🔴 מרנדרים דרך **מסלול הייצור עצמו**, על מלון-צל זמני, ולא דרך
+  //    עותק של הלוגיקה. נתיב רינדור שני היה מתיישן מול האמיתי, והתצוגה
+  //    המקדימה הייתה מבטיחה משהו אחר ממה שהאורח יקבל — גרוע מלא להציג.
+  const shadow = `__preview__${hotelId}`;
+  const samples = [];
+  try {
+    const base = configOverrides(hotelId);          // מה שכבר שמור למלון
+    updateConfigFor(shadow, deepMergePatch(base, patch));
+    for (const lang of ["he", "en"]) {
+      const text = welcomeFor(shadow, lang);
+      if (text) samples.push({ id: `welcome-${lang}`, lang, text });
+    }
+  } finally {
+    dropHotelConfig(shadow);                        // לא משאירים מלון-רפאים
+  }
+
+  const { auditAll } = await import("./voice.js");
+  const audit = auditAll(samples.map(s => ({ body: s.text })));
+  const errors = audit.violations.filter(v => v.severity === "error");
+
+  res.json({
+    ok: errors.length === 0,
+    samples,
+    violations: errors.map(v => ({ rule: v.rule, why: v.why, sample: v.sample })),
+    changedKeys: Object.keys(patch),
+  });
 });
 
 app.get("/api/jobs", auth, (req, res) => {

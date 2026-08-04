@@ -24,6 +24,7 @@ import { armIncident, setNotifier, ACK_TIMEOUT_MS } from "./escalation.js";
 import { setSender as setScheduleSender, setComposer as setScheduleComposer, setGuard as setScheduleGuard, MESSAGE_KINDS } from "./schedule.js";
 import { composeScheduled } from "./messages.js";
 import { takeoverState, setNotifier as setTakeoverNotifier, setSessionSource } from "./takeover.js";
+import { recordKnowledgeGap } from "./insights.js";
 
 // ── שורת "אשרו קבלה" בהתראת החירום ─────────────────────
 // הצוות חייב לדעת *שמצפים* ממנו לאשר, ו*מה קורה* אם לא — אחרת ההסלמה
@@ -2036,6 +2037,25 @@ async function runActions(raw, session, phone) {
     const priority = truncated || noDetails || type.includes("URGENT") || type === "RECEPTION"
       || type === "SECURITY" || type === "EMERGENCY"
       ? "high" : "normal";
+
+    // ── 📚 פער ידע — הדוח החשוב ביותר במערכת ────────────
+    // 🔴 `[RECEPTION:...]` נשלח כשהבוט **לא ידע לענות** ואמר "אבדוק
+    //    ואחזור". כל אחד כזה הוא שדה קונפיג שחסר — ורשימת הפערים היא
+    //    רשימת המשימות לשיפור המוצר. הערך שלה מצטבר: ככל שיותר מלונות,
+    //    המוצר נעשה חכם יותר.
+    //
+    //    נרשמת **שאלת האורח** ולא נוסח התג: התג הוא מה שה-AI כתב,
+    //    והשאלה היא מה שבאמת חסר לנו.
+    if (type === "RECEPTION" && !truncated && !noDetails) {
+      try {
+        const lastAsk = [...(session.history || [])].reverse()
+          .find(h => h.role === "user" && typeof h.content === "string")?.content;
+        recordKnowledgeGap({
+          hotelId: session.hotelId, phone,
+          question: lastAsk || payload, lang: session.lang || "he",
+        });
+      } catch (e) { console.error("רישום פער ידע נכשל:", e?.message || e); }
+    }
 
     // ── חירום: תיעוד מובנה של האירוע לפני ההסלמה ────────
     if (type === "EMERGENCY") {
