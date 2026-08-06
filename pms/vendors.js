@@ -278,7 +278,7 @@ export const PMS_VENDORS = Object.freeze({
 
   guestline: {
     id: "guestline", label: "Guestline", labelHe: "גסטליין",
-    vendorHe: "Guestline Ltd (בריטניה)", region: "בריטניה",
+    vendorHe: "Guestline (בריטניה, מקבוצת The Access Group)", region: "בריטניה",
     marketHe: "חזקה בבריטניה — מלונות עצמאיים, רשתות קטנות ודירות שירות",
     docsUrl: "https://www.guestline.com/",
     verified: false, selfServe: false,

@@ -18,6 +18,9 @@ import { MockProvider } from "./MockProvider.js";
 import { CardComProvider } from "./CardComProvider.js";
 import { configFor } from "../config.js";
 import { LruCache } from "../store/LruCache.js";
+import { paymentVendor, vendorReadiness, PAYMENT_VENDOR_IDS, canChargeLive } from "./vendors.js";
+
+export { PAYMENT_VENDORS, PAYMENT_VENDOR_IDS, paymentVendor, vendorReadiness, canChargeLive, PAY_CAPS } from "./vendors.js";
 
 // מטבע המערכת — שקלים (ILS). סכומים נשמרים באגורות (50000 = ₪500).
 export const PAYMENT_CURRENCY = "ils";
@@ -61,11 +64,71 @@ export function paymentsFor(hotelId) {
       break;
     }
     case "mock":
-    default:
       provider = payments;
+      break;
+    default: {
+      // ── ספק מוכר שאין לו עדיין מימוש מאומת ──────────────
+      // 🔴 **כאן עובר הקו האדום של השכבה הזו.** ספק שהמפרט שלו הוא שלד
+      //    (`verified:false` ב-vendors.js) לעולם **אינו** מחייב כרטיס של
+      //    אורח: נתיב מנוחש שמצליח חלקית גרוע פי כמה מנתיב שנכשל —
+      //    הוא יוצר "תשלום שהצליח" מדומה, והאורח מקבל חדר בלי פיקדון.
+      //    לכן נופלים ל-Mock, ואומרים **בדיוק** מה חסר כדי לחבר באמת.
+      const v = paymentVendor(name);
+      if (v) {
+        const readiness = vendorReadiness(name, credentials);
+        console.warn(
+          `\n💳 מלון "${hotelId}" מוגדר לספק סליקה "${v.labelHe}" (${v.id}).\n` +
+          `   ⚠️ אין עדיין מימוש **מאומת** לספק הזה — רץ על Mock (בלי חיוב אמיתי).\n` +
+          `   מה נדרש כדי לחבר: ${(v.credentialFields || []).map(fld => fld.labelHe).join(" · ")}\n` +
+          `   איך משיגים: ${v.accessHe || "—"}\n` +
+          (readiness.missing.length
+            ? `   חסר כרגע: ${readiness.missing.map(m => m.labelHe).join(", ")}\n`
+            : `   ✅ כל ה-credentials כבר קיימים — נדרש רק לאמת את הנתיבים מול מסמך הספק.\n`) +
+          (v.warnHe ? `   🔴 ${v.warnHe}\n` : "")
+        );
+      } else {
+        console.warn(`⚠️ מלון "${hotelId}": ספק סליקה לא מוכר "${name}" — נופלים ל-Mock. ` +
+                     `ספקים מוכרים: ${PAYMENT_VENDOR_IDS.join(", ")}`);
+      }
+      provider = payments;
+    }
   }
   providerCache.set(key, provider);
   return provider;
+}
+
+/**
+ * מצב החיבור של ספק הסליקה של מלון — לדשבורד ול-onboarding.
+ * עונה על השאלה המעשית: "מה עוד צריך כדי שהמלון הזה יסלוק באמת?"
+ */
+export function paymentReadiness(hotelId) {
+  let name = "mock", credentials = {};
+  try {
+    const cfg = configFor(hotelId);
+    name = String(cfg.payment_provider || "mock").toLowerCase();
+    credentials = cfg.payment_credentials || {};
+  } catch { /* קונפיג לא זמין */ }
+
+  if (name === "mock") {
+    return { hotelId, provider: "mock", live: false, ready: true,
+             noteHe: "מצב הדגמה — הפיקדון מאושר בלי חיוב אמיתי." };
+  }
+  const r = vendorReadiness(name, credentials);
+  if (!r.vendor) {
+    return { hotelId, provider: name, live: false, ready: false,
+             noteHe: `ספק לא מוכר. ספקים נתמכים: ${PAYMENT_VENDOR_IDS.join(", ")}` };
+  }
+  const live = r.canChargeLive && r.ok;
+  return {
+    hotelId, provider: r.vendor, labelHe: r.labelHe,
+    live, ready: r.ok, verified: r.verified,
+    missing: r.missing, accessHe: r.accessHe, warnHe: r.warnHe,
+    noteHe: live
+      ? "מחובר לסליקה אמיתית."
+      : r.verified
+        ? "הספק נתמך — חסרים פרטי התחברות."
+        : "הספק מוכר, אך המימוש טרם אומת מול תיעוד הספק — רץ על Mock.",
+  };
 }
 
 // ניקוי ה-cache (למשל אחרי עדכון credentials של מלון דרך ה-API).

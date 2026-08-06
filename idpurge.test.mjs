@@ -91,6 +91,28 @@ test("חסרים credentials → מדווח, ולא מתחזה להצלחה", as
   assert.equal(r.reason, "no_credentials");
 });
 
+// ── הצהרת הפרטיות חייבת להיות מדויקת ───────────────────
+// 🔴 "וואטסאפ מוצפן מקצה לקצה" נכון בין שני משתמשים, ו**אינו נכון** מול
+//    עסק ב-Cloud API: Meta מפענחת ושומרת עד 30 יום, ואנחנו לא מגיעים
+//    לשם. אורח שקורא "נמחק" ומבין "לא קיים בשום מקום" הוטעה — ולכן
+//    ההודעה אומרת את זה במפורש. ראה SECURITY.md §0ב.
+test("🔴 הודעת האיסוף מגלה שוואטסאפ שומרת — הצהרה מדויקת, לא חלקית", async () => {
+  const { idCollectionNotice } = await import("./idverify/policy.js");
+  const discard = { retainImage: false, retentionDays: 30, legalBasis: null };
+
+  const he = idCollectionNotice(discard, "he");
+  assert.match(he, /מוחקים את התמונה/, "חייב לומר שמוחקים");
+  assert.match(he, /וואטסאפ/, "🔴 חייב לגלות שוואטסאפ שומרת — אחרת ההצהרה חלקית");
+  assert.match(he, /30 יום/, "חייב לנקוב בתקופה");
+  assert.match(he, /מחוץ לשליטתנו/, "חייב להבהיר שזה לא בשליטתנו");
+
+  const en = idCollectionNotice(discard, "en");
+  assert.match(en, /delete the image/i);
+  assert.match(en, /WhatsApp/i);
+  assert.match(en, /30 days/i);
+  assert.match(en, /outside our control/i);
+});
+
 // ── המסלול המלא ────────────────────────────────────────
 test("🔴 verify-then-discard מוחק גם אצל הספק — לא רק אצלנו", async () => {
   const deleted = [];

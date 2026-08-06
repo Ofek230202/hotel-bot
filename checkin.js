@@ -4,7 +4,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { wa, notifyStaff } from "./bot.js";
 import { logAlert, stats, patchSession, peekSession, ensureSessionLoaded } from "./state.js";
-import { payments, paymentsFor, PAYMENT_CURRENCY } from "./payments/index.js";
+import { payments, paymentsFor, PAYMENT_CURRENCY, paymentVendor } from "./payments/index.js";
 import { invoicesFor } from "./invoices/index.js";
 import { recordStay } from "./profiles.js";
 import { nameFor } from "./names.js";
@@ -268,8 +268,48 @@ function israelDateTime(ymd, hhmm = "12:00") {
 // ── ניסוח הפיקדון — מקור אמת אחד ─────────────────────
 // כל ההודעות (צ'ק אין, צ'ק אאוט, עמוד התשלום, דף האישור) שואבות מכאן
 // כדי שהניסוח יהיה זהה בכל מקום ולא ייווצר drift. ברור ופשוט לאורח.
-export function depositExplainer(lang = "he") {
+// האם ספק הסליקה של המלון באמת יודע **להקפיא** (J5) ולא רק לחייב.
+// 🔴 לא כל טרמינל ישראלי מוגדר להקפאה — זו הגדרה מול חברת האשראי, לא
+//    תכונה של הקוד. במלון כזה "פיקדון" מתבצע בפועל כ**חיוב מלא + זיכוי**,
+//    וזו חוויה שונה לגמרי לאורח: הכסף באמת יורד מהחשבון וחוזר תוך ימים.
+//    לכן ההסבר חייב להשתנות בהתאם — הבטחה ש"זו הקפאה בלבד, לא חיוב"
+//    כשבפועל מחייבים היא בדיוק סוג ההצהרה השגויה שהפרויקט הזה נלחם בה.
+function providerCanHold(hotelId) {
+  try {
+    const cfg  = configFor(hotelId);
+    const name = String(cfg.payment_provider || "mock").toLowerCase();
+    if (name === "mock") return true;                 // הדמו מדמה הקפאה
+    // עקיפה מפורשת פר-מלון, למקרה שהמלון יודע מה הטרמינל שלו תומך.
+    const cred = cfg.payment_credentials || {};
+    if (cred.supportsHold === false) return false;
+    if (cred.supportsHold === true)  return true;
+    // 🔴 `j5Approved` הוא התשובה של **המלון** לשאלה "האם הטרמינל מאושר
+    //    להקפאה?" — הרשאה מול חברות האשראי, לא הגדרה אצלנו. טרמינל שלא
+    //    אושר מחזיר שגיאה 349/044 בפיקדון הראשון, ולכן ההסבר לאורח חייב
+    //    לרדת ל"נגבה ומזוכה" ולא להבטיח הקפאה שלא תקרה.
+    if (cred.j5Approved === false) return false;
+    if (cred.j5Approved === true)  return true;
+    const v = paymentVendor(name);
+    return !v || (v.capabilities || []).includes("authorize");
+  } catch { return true; }
+}
+
+export function depositExplainer(lang = "he", hotelId = currentHotelId()) {
   const amt = shekels(depositAmount());
+  // ספק שאינו תומך בהקפאה → מנסחים את האמת: חיוב שמזוכה.
+  if (!providerCanHold(hotelId)) {
+    return lang === "he"
+      ? `🔒 פיקדון בסך ${amt} נגבה בכרטיס להבטחת השהייה, ומזוכה בחזרה בצ'ק אאוט.\n` +
+        "בצ'ק אאוט:\n" +
+        "- אם אין חיובים — מלוא הפיקדון מזוכה, והזיכוי מופיע תוך 3-5 ימי עסקים.\n" +
+        "- אם יש חיובים — הם ינוכו מהפיקדון, והיתרה (אם נותרה) תזוכה באותו אופן.\n" +
+        "- אם החיובים גדולים מהפיקדון — הפיקדון ינוכה במלואו, וההפרש יחויב בנפרד מאותו כרטיס."
+      : `🔒 A ${amt} deposit is taken on your card to secure your stay, and refunded at check-out.\n` +
+        "At check-out:\n" +
+        "- If there are no charges — the full deposit is refunded, appearing within 3–5 business days.\n" +
+        "- If there are charges — they are deducted from the deposit, and any remaining balance is refunded the same way.\n" +
+        "- If charges exceed the deposit — the deposit is used in full, and the difference is charged separately to the same card.";
+  }
   // ⚠️ "היתרה תשוחרר" בלי סייג יוצר ציפייה שגויה: כשהחיובים גדולים
   //    מהפיקדון אין שום יתרה, ולהפך — מחייבים את ההפרש. לכן כל שורה
   //    מנוסחת כך שהיא נכונה גם כשהיתרה היא אפס.

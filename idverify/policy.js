@@ -81,9 +81,15 @@ export function resolveIdPolicy(hotelId) {
 export function idCollectionNotice(policy, lang = "he") {
   const he = lang === "he";
   if (!policy.retainImage) {
+    // 🔴 המשפט השני אינו "אותיות קטנות" — הוא תיקון של אמירה שהייתה
+    //    **לא מדויקת**. אמרנו "התמונה נמחקת ואינה נשמרת", וזה נכון אצלנו
+    //    ואצל Twilio (נמחק במפורש דרך ה-API) — אבל **לא אצל וואטסאפ**:
+    //    ה-Cloud API של Meta מפענח את ההודעה ושומר אותה עד 30 יום, וזה
+    //    מחוץ לשליטתנו לחלוטין. אורח שקורא "נמחק" ומבין "לא קיים בשום
+    //    מקום" הוטעה. ראה SECURITY.md §0ב.
     return he
-      ? "🔒 *פרטיות:* התמונה משמשת *אך ורק* לאימות זהותך. מיד לאחר האימות אנו מחלצים רק את הפרטים הנדרשים לרישום ו*מוחקים את התמונה* — היא אינה נשמרת."
-      : "🔒 *Privacy:* the photo is used *only* to verify your identity. Immediately after verification we extract only the required registration details and *delete the image* — it is not stored.";
+      ? "🔒 *פרטיות:* התמונה משמשת *אך ורק* לאימות זהותך. מיד לאחר האימות אנו מחלצים רק את הפרטים הנדרשים לרישום, *מוחקים את התמונה* ואיננו שומרים אותה. שימו לב: וואטסאפ עצמה שומרת הודעות עד 30 יום, וזה מחוץ לשליטתנו."
+      : "🔒 *Privacy:* the photo is used *only* to verify your identity. Immediately after verification we extract only the required registration details, *delete the image* and do not keep it. Please note: WhatsApp itself retains messages for up to 30 days, which is outside our control.";
   }
   const days = policy.retentionDays;
   return he

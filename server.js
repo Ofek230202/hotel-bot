@@ -35,6 +35,7 @@ import { registerHotelNumber, reloadHotelNumbers, reloadHotelNumbersAsync } from
 import { prepare } from "./store/Repo.js";
 import { bootstrapDemoHotel } from "./demo-bootstrap.js";
 import { warnIfDemoContacts } from "./demo-contacts.js";
+import { paymentReadiness, PAYMENT_VENDOR_IDS, paymentVendor, canChargeLive } from "./payments/index.js";
 import { isDistributed, storeKind } from "./store/index.js";
 import { initPersistence, persistenceKind, flushPersistence, persistenceStats } from "./store/persistence.js";
 import { timingSafeEqual } from "node:crypto";
@@ -603,6 +604,32 @@ app.post("/api/no-show", requireCap(CAP.CHARGE), async (req, res) => {
 
 // טבלת הניתוב — לאיזה מספר וואטסאפ ולאיזה מייל הולך כל סוג בקשה.
 app.get("/api/routing", requireCap(CAP.VIEW_REPORTS), (req, res) => res.json(routingTable()));
+
+// ── מצב חיבור הסליקה ───────────────────────────────────
+// עונה על השאלה המעשית ב-onboarding: "מה עוד צריך כדי שהמלון הזה
+// יסלוק באמת?" — כולל **מה בדיוק לבקש מהמלון** ואיך משיגים את זה.
+// ⚠️ credentials עצמם לעולם אינם מוחזרים כאן, רק אילו מהם חסרים.
+app.get("/api/payments/readiness", requireCap(CAP.VIEW_BILLING), (req, res) => {
+  const hotelId = req.query.hotelId || DEFAULT_HOTEL_ID;
+  res.json(paymentReadiness(hotelId));
+});
+
+// רשימת חברות הסליקה הנתמכות — לדשבורד ("עם מי אתם עובדים?").
+app.get("/api/payments/vendors", requireCap(CAP.VIEW_BILLING), (req, res) => {
+  res.json(PAYMENT_VENDOR_IDS.map(id => {
+    const v = paymentVendor(id);
+    return {
+      id: v.id, label: v.label, labelHe: v.labelHe, region: v.region,
+      marketHe: v.marketHe, docsUrl: v.docsUrl,
+      verified: !!v.verified, canChargeLive: canChargeLive(id),
+      capabilities: v.capabilities,
+      credentialFields: (v.credentialFields || []).map(f => ({
+        key: f.key, labelHe: f.labelHe, required: f.required, example: f.example,
+      })),
+      accessHe: v.accessHe, warnHe: v.warnHe || null,
+    };
+  }));
+});
 
 app.get("/api/alerts", requireCap(CAP.VIEW_ALERTS), (req, res) => res.json(staffAlerts));
 app.get("/api/incidents", requireCap(CAP.VIEW_ALERTS), (req, res) => res.json(incidents));
