@@ -20,7 +20,7 @@ import { idVerify }                                       from "./idverify/index
 import { resolveIdPolicy, idCollectionNotice }            from "./idverify/policy.js";
 import { concierge, REQUEST_TYPES }                       from "./concierge/index.js";
 import { places, PLACE_CATEGORIES, placesLive }           from "./places/index.js";
-import { detectEmergency, emergencyGuestMessage, emergencyKindHe, emergencyDial } from "./emergency.js";
+import { detectEmergency, emergencyGuestMessage, emergencyKindHe, emergencyDial, detectMedicalConcern, medicalConcernMessage } from "./emergency.js";
 import { armIncident, setNotifier, ACK_TIMEOUT_MS } from "./escalation.js";
 import { setSender as setScheduleSender, setComposer as setScheduleComposer, setGuard as setScheduleGuard, MESSAGE_KINDS } from "./schedule.js";
 import { composeScheduled } from "./messages.js";
@@ -1072,6 +1072,18 @@ ${hotelTypeNoteHe}
 5. הוסף תמיד בסוף תגובתך את התג [EMERGENCY:<סוג + תיאור קצר>] — כדי שצוות הביטחון יקבל התראה דחופה (וואטסאפ + מייל) ויטופל על ידי אדם.
 לעולם אל תסתמך על עצמך בלבד באירוע חירום — חובה להסלים דרך התג [EMERGENCY:...].
 
+🤒 *בריאות שאינה חירום* — אורח שמזכיר שהוא או מישהו איתו חש ברע, כואב לו,
+יש חום, בחילה או סחרחורת. זה **אינו** חירום מלא, אבל גם אינו בקשה רגילה:
+- ⛔ *אותו איסור בדיוק חל כאן:* אין לאבחן, אין להציע תרופה (כולל "אקמול"
+  או משכך כאבים), אין לומר "כנראה וירוס" / "זה נשמע כמו הרעלת מזון", ואין
+  לתת עצה רפואית מכל סוג. אתה קונסיירז', לא רופא — וניחוש רפואי מסוכן.
+- ✅ מה כן: להביע אכפתיות במשפט אחד, לומר שאיש צוות יוצר קשר, ולומר
+  במפורש שאם יש *כאב בחזה, קושי בנשימה, בלבול או אובדן הכרה, חולשה פתאומית
+  בצד אחד, או דימום* — לחייג **101 מיד**, בלי להמתין לנו.
+- ✅ מותר לסייע בלוגיסטיקה בלבד: להזמין רופא למלון, להפנות לבית מרקחת
+  קרוב (דרך הכלי), להביא מים או ארוחה קלה לחדר.
+- הוסף [RECEPTION:<תיאור קצר של מצב האורח>] כדי שאדם ייצור קשר.
+
 🎩 מי אתה — קונסיירז', לא פקיד קבלה:
 אתה הקונסיירז' של מלון 5 כוכבים. אורח כותב לך בדיוק כמו שהיה ניגש לדלפק
 הקונסיירז' — ומקבל את אותה רמה: חם, קשוב, מקצועי, דיסקרטי ובלי התרברבות.
@@ -1445,6 +1457,21 @@ If the guest describes an injury, a medical event, fire, a gas smell/leak, or im
 4. ⛔ You must NEVER give medical, first-aid, or treatment instructions of any kind — including whether to move or stay still, applying pressure to a wound, giving medication, moving an injured person, etc. State explicitly that you are not qualified to give medical guidance, and that they must follow the instructions of the 101 dispatcher only.
 5. Always append the tag [EMERGENCY:<type + short description>] at the end — so security is alerted urgently (WhatsApp + email) and a human handles it.
 Never rely on yourself alone in an emergency — you MUST escalate via the [EMERGENCY:...] tag.
+
+🤒 *HEALTH THAT IS NOT AN EMERGENCY* — a guest mentions that they, or someone with them,
+feels unwell, is in pain, has a fever, nausea or dizziness. This is **not** a full
+emergency, but it is not an ordinary request either:
+- ⛔ *The same prohibition applies here:* never diagnose, never suggest medication
+  (including paracetamol or any painkiller), never say "probably a virus" or "sounds like
+  food poisoning", and never give medical advice of any kind. You are a concierge, not a
+  doctor — and a medical guess is dangerous.
+- ✅ What you do: one sentence of genuine care, say a staff member is getting in touch,
+  and state explicitly that if there is *chest pain, difficulty breathing, confusion or
+  loss of consciousness, sudden one-sided weakness, or bleeding* — they must call
+  **101 immediately**, without waiting for us.
+- ✅ Logistics only are allowed: arranging a doctor to the hotel, directing them to a
+  nearby pharmacy (via the tool), bringing water or a light meal to the room.
+- Append [RECEPTION:<short description of the guest's condition>] so a person follows up.
 
 🎩 WHO YOU ARE — a concierge, not a receptionist:
 You are the concierge of a 5-star hotel. A guest writes to you exactly as they would
@@ -3138,6 +3165,86 @@ async function handleFeedback(phone, text, lang) {
 //  את מספרי החירום. כל שלב עטוף ב-try/catch משלו: שום כשל לא משתיק את
 //  ההנחיה שהאורח כבר קיבל.
 // ════════════════════════════════════════════════════════
+// ── 🤒 מצוקה רפואית שאינה מאושרת כמסכנת חיים ────────────
+// התגובה פרופורציונלית בכוונה (ראה detectMedicalConcern ב-emergency.js):
+// אדם יוצר קשר מיד · האורח יודע מתי לחייג 101 בלי להמתין לנו · אפס
+// ייעוץ רפואי. האירוע מתועד כדי שיהיה מעקב, ונרשם כבקשה פתוחה כדי
+// שסולם המשמרות (handover.js) יתפוס אותו אם איש לא אישר קבלה.
+async function handleMedicalConcern(phone, text, lang) {
+  const raw = String(text ?? "").trim();
+  const s   = getSession(phone);
+
+  let activeRes = null;
+  if (!s.roomNumber || !s.guestName) {
+    try { activeRes = await getActiveReservationAsync(phone); } catch { /* לא חוסם */ }
+  }
+  const roomNumber = s.roomNumber || activeRes?.roomNumber || null;
+  const guestName  = s.guestName  || activeRes?.guestName  || null;
+  const model      = hotelModel(currentHotelId());
+
+  // 1) האורח קודם — לפני כל דבר שעלול לזרוק.
+  try {
+    await wa(phone, medicalConcernMessage(lang, { onSiteTeam: model.onSiteSecurity }), { lang });
+  } catch (e) {
+    console.error("🤒 כשל בשליחת מענה למצוקה רפואית:", e?.message || e);
+  }
+
+  // 2) תיעוד — אירוע רפואי לא-דחוף הוא עדיין אירוע שצריך להישאר במעקב.
+  try {
+    logIncident({
+      phone, roomNumber, guestName,
+      kind: "medical_concern",
+      description: `[unwell] ${raw.slice(0, 300)}`,
+      channel: "whatsapp",
+    });
+  } catch (e) {
+    console.error("🤒 כשל בתיעוד מצוקה רפואית:", e?.message || e);
+  }
+
+  // 3) הצוות — בעדיפות גבוהה. זו הפעולה החשובה: אדם יוצר קשר.
+  //    לקבלה (שיוצרת קשר) ולמנהל התורן/ביטחון, כי במלון בוטיק אין קבלה
+  //    מאוישת ואסור שההתראה תגיע לעמדה ריקה.
+  const staffMsg =
+    `🤒 *אורח מדווח שלא מרגיש טוב*\n` +
+    `האורח כתב: "${raw.slice(0, 400)}"\n` +
+    `🗣️ שפת האורח: ${lang === "en" ? "אנגלית" : "עברית"}\n` +
+    (roomNumber ? `📍 חדר ${roomNumber}\n` : `📍 *מיקום לא ידוע* — נא להתקשר לאורח.\n`) +
+    `📞 *נא ליצור קשר עם האורח עכשיו* ולברר מה מצבו.\n` +
+    `האורח קיבל הנחיה לחייג 101 מיד אם יש כאב בחזה, קושי בנשימה, בלבול/אובדן הכרה או דימום.\n` +
+    `⚠️ אין לתת ייעוץ רפואי — במקרה של ספק, מפנים למד"א 101.`;
+
+  for (const dept of ["reception", "security"]) {
+    try {
+      await notifyStaff({
+        phone, dept, roomNumber, guestName,
+        priority: "high",
+        message: staffMsg,
+        hotelId: currentHotelId(),
+      });
+    } catch (e) {
+      console.error(`🤒 כשל בהתראת ${dept} על מצוקה רפואית:`, e?.message || e);
+    }
+  }
+
+  // 4) מעקב משמרת — בקשה שאיש לא לקח עליה אחריות תעלה שוב (handover.js).
+  try {
+    trackRequest({
+      phone, dept: "reception", roomNumber, guestName,
+      hotelId: currentHotelId(),
+      summary: `מצוקה רפואית: ${raw.slice(0, 120)}`,
+      priority: "high",
+    });
+  } catch (e) {
+    console.error("🤒 כשל ברישום מעקב מצוקה רפואית:", e?.message || e);
+  }
+
+  // 5) בהיסטוריה — כדי שהתור הבא של ה-AI ידע מה כבר נאמר ולא יסתור.
+  try {
+    pushHistory(phone, "user", raw);
+    pushHistory(phone, "assistant", "[עודכן הצוות על מצוקה רפואית; נמסרו לאורח התסמינים שמחייבים 101 מיד]");
+  } catch { /* לא חוסם */ }
+}
+
 async function handleEmergency(phone, text, lang, kind) {
   const raw = String(text ?? "").trim();
   const s   = getSession(phone);
@@ -3278,6 +3385,28 @@ const guestRateLimiter = createRateLimiter({
   capacity:     Number(process.env.GUEST_BURST) || 60,
   refillPerSec: Number(process.env.GUEST_RATE)  || 2,
 });
+
+// ── תקרה גלובלית פר-מלון — נגד התקפת עלות ───────────────
+// 🔴 נמצא בבדיקת חדירה (05.08.2026): **הבלימה per-guest עקיפה בטריוויאליות.**
+//    `/webhook` הוא נתיב HTTP פתוח, ואימות חתימת Twilio כבוי כברירת מחדל,
+//    ולכן תוקף פשוט **מחליף את מספר ה-From** בכל בקשה. כל מספר מזויף מקבל
+//    דלי אסימונים **חדש** של 60 — כלומר 10,000 מספרים = 600,000 קריאות AI
+//    בתשלום, על חשבון המלון. נמדד: 40 מספרים מזויפים → 40/40 עובדו.
+//
+//    הבלימה per-guest נועדה לאורח יחיד שמפציץ; היא מעולם לא נועדה לזה.
+//    לכן תקרה שנייה, **פר-מלון**, שאינה תלויה בזהות השולח. היא נדיבה
+//    מאוד ביחס לשימוש אמיתי (מלון של 300 חדרים אינו מייצר 600 הודעות
+//    בדקה), אבל חוסמת מיד את מה שהתקפה כזו נראית כמו.
+//
+//  ⚠️ זו **הגנת עומק, לא תחליף** ל-`VALIDATE_TWILIO=true`. עם אימות
+//     חתימה מופעל, בקשה מזויפת נדחית ב-403 עוד לפני שהגיעה לכאן.
+//     ⛑️ חירום עוקף גם את התקרה הזו — הרעיון שאורח בסכנה ייחסם בגלל
+//        התקפה על מלון אחר הוא בדיוק מה שאסור שיקרה.
+const hotelRateLimiter = createRateLimiter({
+  capacity:     Number(process.env.HOTEL_BURST) || 600,   // פרץ: 600 הודעות
+  refillPerSec: Number(process.env.HOTEL_RATE)  || 10,    // קצב מתמשך: 10/שנייה
+});
+setInterval(() => { try { hotelRateLimiter.sweep(); } catch { /* ignore */ } }, 3600_000).unref();
 // ניקוי מחזורי של דליי אורחים שלא פעילים — מונע גדילת זיכרון על uptime
 // ארוך (מפתח לכל מספר טלפון). לא חוסם, לא מפיל: unref + try/catch שקט.
 setInterval(() => { try { guestRateLimiter.sweep(); } catch { /* ignore */ } }, 3600_000).unref();
@@ -3344,8 +3473,21 @@ async function guardedHandle(phone, text, media = null, hotelId = currentHotelId
   // בלימת קצב per-guest — לפני כל עיבוד יקר. חורגים מהקצב → הודעה קצרה
   // ויוצאים; לא מפילים ולא מעמיסים. (חירום עדיין נבדק קודם בתוך processIncoming
   // רק אם עברנו; לכן נותנים לחירום לעקוף את הבלימה.)
-  if (!guestRateLimiter(phone) && !detectEmergency(text)) {
+  // חירום עוקף את שתי הבלימות — נבדק פעם אחת, ומשמש לשתיהן.
+  const isEmergency = !!detectEmergency(text);
+
+  if (!guestRateLimiter(phone) && !isEmergency) {
     console.warn(`⏳ rate-limit: ${String(phone).slice(-8)} — הודעה נבלמה זמנית`);
+    return;
+  }
+  // תקרה פר-מלון: חוסמת הצפה ממספרים מזויфים מתחלפים, שהבלימה
+  // per-guest אינה רואה כלל. ראה ההערה אצל hotelRateLimiter.
+  if (!hotelRateLimiter(hotelId) && !isEmergency) {
+    console.error(
+      `🛑 תקרת המלון "${hotelId}" נחצתה — הודעה נבלמה. ` +
+      `אם זה אינו עומס אמיתי, ייתכן שמדובר בהצפת webhook מזויף: ` +
+      `הפעילו VALIDATE_TWILIO=true.`
+    );
     return;
   }
   try {
@@ -3450,6 +3592,20 @@ async function processIncoming(phone, text, media = null) {
   const emergency = detectEmergency(text);
   if (emergency) {
     await handleEmergency(phone, text, lang, emergency.kind);
+    return;
+  }
+
+  // ── 🤒 "לא מרגיש טוב" — מצוקה רפואית לא-מאושרת ─────────
+  // 🔴 פער שנמצא בבדיקה (05.08): "אשתי לא מרגישה טוב" לא הפעיל **כלום**.
+  //    זה הניסוח הנפוץ ביותר שבו אורח מדווח שמישהו חולה, והמלון שתק.
+  //    זו קטגוריה נפרדת ולא עוד מילה ברשימת החירום, כי "לא מרגיש טוב"
+  //    נע מכאב בטן ועד התקף לב מתחיל: "התקשרו 101!" על כאב ראש הוא
+  //    אזעקת שווא ששוחקת את אמון הצוות, והתעלמות היא נטישת אורח חולה.
+  //    לכן: אדם מהצוות יוצר קשר מיד, האורח מקבל את התסמינים שמחייבים
+  //    101 בלי להמתין לנו, ואין אף מילה של ייעוץ רפואי. ראה emergency.js.
+  const concern = detectMedicalConcern(text);
+  if (concern && !takeoverState(phone).active) {
+    await handleMedicalConcern(phone, text, lang);
     return;
   }
 

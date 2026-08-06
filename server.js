@@ -34,6 +34,7 @@ import { updateConfigFor, configFor, hotelModel, hydrateConfig, configOverrides,
 import { registerHotelNumber, reloadHotelNumbers, reloadHotelNumbersAsync } from "./tenant.js";
 import { prepare } from "./store/Repo.js";
 import { bootstrapDemoHotel } from "./demo-bootstrap.js";
+import { warnIfDemoContacts } from "./demo-contacts.js";
 import { isDistributed, storeKind } from "./store/index.js";
 import { initPersistence, persistenceKind, flushPersistence, persistenceStats } from "./store/persistence.js";
 import { timingSafeEqual } from "node:crypto";
@@ -1057,6 +1058,17 @@ const server = app.listen(PORT, async () => {
         `\n   בקשה שתנותב למחלקה כזו לא תגיע לאיש. יש להשלים בקונפיג של המלון.\n`
       );
     }
+  }
+
+  // ── פרטי הדגמה אישיים — אזהרה שאי אפשר לפספס ──────────
+  // ההתראות של מלון ההדגמה מופנות לטלפון ולמייל של הבעלים, כדי שאפשר
+  // יהיה להראות ללקוח בזמן אמת שההתראה באמת יוצאת. זו אזהרה ולא שגיאה,
+  // אבל היא חייבת להיות רועשת: מלון לקוח שיישאר כך שולח את הבקשות של
+  // האורחים שלו לטלפון פרטי. ראה demo-contacts.js.
+  try {
+    warnIfDemoContacts(mappedHotels.length ? mappedHotels : [DEFAULT_HOTEL_ID]);
+  } catch (e) {
+    console.warn("⚠️ בדיקת פרטי ההדגמה נכשלה:", e?.message || e);
   }
 
   // ── בידוד בין מלונות — כל מלון רשום, לא רק ברירת המחדל ──

@@ -50,6 +50,7 @@ const config = await import("./config.js");
 const tenant = await import("./tenant.js");
 const state  = await import("./state.js");
 const { SAMPLE_HOTELS } = await import("./sample-hotels.mjs");
+const { applyDemoContacts, DEMO_OWNER } = await import("./demo-contacts.js");
 
 // ── המלונות שאפשר להדגים ────────────────────────────────
 // כל ערך: מאיפה הקונפיג מגיע (null = מלון ברירת המחדל שבקוד).
@@ -225,6 +226,15 @@ async function switchTo(key) {
     console.log(`   ✅ הקונפיג של "${target.id}" נכתב ל-DB`);
   } else {
     console.log(`   ✅ "${target.id}" הוא מלון ברירת המחדל — הקונפיג מגיע מהקוד`);
+  }
+
+  // 1ב. אנשי הקשר של ההדגמה → הטלפון והמייל של הבעלים, כדי שההתראות
+  //     יגיעו למכשיר שביד בזמן ההדגמה. מוגן ברשימת היתר (demo-contacts.js)
+  //     ולעולם לא חל על מלון לקוח.
+  const dc = applyDemoContacts(target.id);
+  if (dc.ok) {
+    console.log(`   ✅ ${dc.applied} מחלקות + מנהל תורן → ${DEMO_OWNER.phone} · ${DEMO_OWNER.email}`);
+    console.log(`   ${C.dim}   (פרטי הבעלים, להדגמה בלבד — DEMO_CONTACTS=off לכיבוי)${C.r}`);
   }
 
   // 2. המספר מצביע על המלון הזה, ו**רק** עליו.

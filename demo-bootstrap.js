@@ -26,6 +26,7 @@
 import { db, DEFAULT_HOTEL_ID } from "./db.js";
 import { prepare } from "./store/Repo.js";
 import { updateConfigFor, configFor } from "./config.js";
+import { applyDemoContacts } from "./demo-contacts.js";
 import { registerHotelNumber, normalizeNumber } from "./tenant.js";
 
 const allNumbersStmt   = prepare(`SELECT number FROM hotel_numbers`);
@@ -75,6 +76,14 @@ export async function bootstrapDemoHotel() {
   // 1. קונפיג המלון ל-DB (למלון שאינו ברירת המחדל).
   if (match?.config && !isDefault) {
     updateConfigFor(want, match.config);
+  }
+
+  // 1ב. אנשי הקשר של ההדגמה — הטלפון והמייל של הבעלים, כדי שבהדגמה
+  //     ההתראות יגיעו למכשיר שבידו ולא למספר דמה. מוגן ברשימת היתר
+  //     ואינו נוגע במלון לקוח. ראה demo-contacts.js.
+  const contacts = applyDemoContacts(want);
+  if (contacts.ok) {
+    console.log(`🎬 אנשי הקשר של ${want} מופנים לבעלים (${contacts.owner}) — הדגמה בלבד.`);
   }
 
   // 2. המספר מצביע על המלון הזה — ורק עליו. שורה יתומה של מספר אחר

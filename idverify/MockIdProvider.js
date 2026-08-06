@@ -28,6 +28,7 @@ import { fetchMedia, inspectIdImage } from "./vision.js";
 import { encryptBuffer, isUsingDemoKey, ENC_ALGO } from "./crypto.js";
 import { recordIdDocument } from "./registry.js";
 import { resolveIdPolicy } from "./policy.js";
+import { purgeIdMediaFromProvider } from "./twilio-media.js";
 import { currentHotelId } from "../tenant.js";
 
 const STORE_DIR = path.resolve("id-documents");
@@ -91,6 +92,16 @@ export class MockIdProvider extends IdProvider {
     const hotelId    = currentHotelId();
     const policy     = resolveIdPolicy(hotelId);   // discard-by-default, per-hotel
 
+    // 🔐 מחיקת המדיה משרתי Twilio — החצי החסר של verify-then-discard.
+    //    התמונה הגיעה דרך וואטסאפ→Twilio, ו-Twilio שומרת אותה **עד שמוחקים
+    //    במפורש**. בלי זה הצהרנו לאורח "התמונה נמחקה" בזמן שהיא חיה אצל
+    //    מעבד משנה בארה"ב. רץ בכל מסלול — כולל דחייה ותקלה — כי מסמך
+    //    שנדחה הוא PII בדיוק כמו מסמך שאושר. ראה idverify/twilio-media.js.
+    //    ⚠️ לא חוסם ולא זורק: אורח לעולם לא נתקע בגלל מחיקה שנכשלה.
+    const purgeProviderCopy = () =>
+      purgeIdMediaFromProvider(mediaUrl, { context: `doc ${documentId}` })
+        .catch(e => console.error("🔴 [ID] purge נכשל:", e?.message || e));
+
     // ── 1. הורדת התמונה ──────────────────────────────────
     let media;
     try {
@@ -99,6 +110,9 @@ export class MockIdProvider extends IdProvider {
       // לא הצלחנו למשוך את התמונה — התקלה אצלנו, לא אצל האורח. מבקשים
       // לשלוח שוב ("retry"), ולא מכריזים על אימות שלא קרה.
       console.error(`🪪 [ID] הורדת המסמך נכשלה: ${e.message}`);
+      // גם כאן מוחקים אצל Twilio: האורח יתבקש לשלוח שוב (מדיה חדשה),
+      // והעותק הזה כבר לא ישמש לכלום — אבל הוא עדיין מסמך זיהוי.
+      await purgeProviderCopy();
       return {
         success: false, documentId: null, documentType: documentType || "id",
         status: "retry", storedPath: null,
@@ -106,6 +120,11 @@ export class MockIdProvider extends IdProvider {
         reasonEn: "I couldn't open the image. Could you send it again?",
       };
     }
+
+    // 🔐 יש לנו את הבייטים בזיכרון — מכאן והלאה העותק של Twilio מיותר
+    //    בכל מסלול אפשרי (אומת / נדחה / manual review). נקודה **אחת**
+    //    שמכסה את כל היציאות, במקום חמש קריאות שאחת מהן תישכח.
+    await purgeProviderCopy();
 
     const mediaType = (media.contentType || contentType || "image/jpeg").toLowerCase();
 

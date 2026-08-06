@@ -90,6 +90,13 @@ const MEDICAL = groupPrefixed([
   "נחנק", "נחנקת", "חנק", "נחנקים",
   "טובע", "טובעת", "טובעים", "טביעה",
   "קוצר נשימה", "כאב בחזה", "כאבים בחזה", "לחץ בחזה",
+  // 🔴 נתפס בבדיקה (05.08): "יש לי *כאב חזק* בחזה" לא זוהה — הרשימה
+  //    דרשה "כאב בחזה" צמוד, ותואר באמצע ניתק את ההתאמה. כאב בחזה הוא
+  //    מהתסמינים הקריטיים ביותר; אסור שתואר יבטל אותו.
+  "כאב\\S*(?:\\s+\\S+){0,2}\\s+בחזה", "כאבים(?:\\s+\\S+){0,2}\\s+בחזה",
+  // קשיי נשימה בניסוח טבעי — "אני לא מצליח לנשום" לא נתפס ע"י "לא נושם".
+  "לא מצליח לנשום", "לא מצליחה לנשום", "מתקשה לנשום", "מתקשה בנשימה",
+  "קשה לי לנשום", "אין לי אוויר", "נשימה מאומצת",
   "תגובה אלרגית", "אלרגית", "אנפילקטי", "אנפילקסיס",
   "נפל מהמדרגות", "נפלה", "שבר יד", "שבר רגל", "שברתי", "שבר ברגל",
   // נפילה בגוף ראשון/שני — הצורה הנפוצה ביותר לדווח על נפילה. מובחן
@@ -100,6 +107,12 @@ const MEDICAL = groupPrefixed([
   "injured", "injury", "bleeding", "bleed", "not breathing",
   "can't breathe", "cant breathe", "unconscious", "unresponsive",
   "passed out", "collapsed", "collapse", "heart attack", "stroke",
+  // 🔴 "my wife fainted" לא זוהה — "fainted" פשוט לא היה ברשימה, אף
+  //    שהוא הניסוח האנגלי הנפוץ ביותר לעילפון. "faint" (התואר, "feeling
+  //    faint") נכלל אף הוא: אורח שמרגיש עומד להתעלף הוא מקרה אמיתי.
+  "fainted", "faints", "fainting", "feels faint", "feeling faint",
+  "difficulty breathing", "trouble breathing", "struggling to breathe",
+  "short of breath", "can not breathe",
   "seizure", "choking", "choke", "drowning", "drown", "anaphyla\\w*",
   "allergic reaction", "chest pain", "ambulance", "overdose", "medical emergency",
 ]);
@@ -178,6 +191,85 @@ export function detectEmergency(text) {
   if (MEDICAL_SOFT.test(t)  || MEDICAL_STRICT.test(t))  return { kind: "medical" };
   if (SECURITY_SOFT.test(t) || SECURITY_STRICT.test(t)) return { kind: "security" };
   return null;
+}
+
+// ════════════════════════════════════════════════════════
+//  מצוקה רפואית שאינה מאושרת כמסכנת חיים — `detectMedicalConcern`
+//  ----------------------------------------------------------
+//  🔴 הפער שזה סוגר (נמצא בבדיקה, 05.08.2026): **"אשתי לא מרגישה טוב"
+//     לא הפעיל שום דבר.** גם "my son doesn't feel well". זה כנראה
+//     הניסוח הנפוץ ביותר שבו אורח מדווח שמישהו חולה — ואיש לא קיבל
+//     התראה. האורח סיפר למלון שמשהו לא בסדר, והמלון שתק.
+//
+//  למה זו קטגוריה נפרדת ולא עוד מילה ברשימת ה-MEDICAL הרגילה:
+//  "לא מרגיש טוב" הוא **טווח** — מכאב בטן קל ועד התקף לב מתחיל.
+//   • להתייחס לזה כחירום מלא ("התקשרו 101 עכשיו!") הוא אזעקת שווא על
+//     כאב ראש, ואזעקות שווא הן בדיוק מה שמלמד צוות להתעלם מהתראות.
+//   • להתעלם זה להשאיר אורח חולה בלי מענה.
+//
+//  לכן תגובה **פרופורציונלית**, שהיא גם מה שפקידת קבלה טובה עושה:
+//   1. הצוות מקבל התראה מיד (אדם יוצר קשר) — זו הפעולה החשובה.
+//   2. האורח נשאל שאלה אחת קצרה כדי להבין חומרה.
+//   3. נאמר לו **במפורש** מתי לא להמתין לנו אלא לחייג 101 — עם
+//      התסמינים המדויקים (חזה, נשימה, הכרה, דימום). זו ההנחיה שמצילה.
+//   4. אף מילה של ייעוץ רפואי. לא "כדאי לשתות", לא "כנראה וירוס".
+//
+//  ⚠️ זה רץ **אחרי** `detectEmergency` ורק אם היא החזירה null. כל מקרה
+//     חד-משמעי (התעלף/חזה/נשימה/דימום) כבר נתפס שם כחירום מלא —
+//     המסלול הקריטי לא נגע ולא נחלש.
+const MEDICAL_CONCERN = groupPrefixed([
+  // עברית — "לא מרגיש/ה טוב" על כל נטיותיו, כולל על אדם אחר
+  "לא מרגיש טוב", "לא מרגישה טוב", "לא מרגישים טוב", "לא מרגיש טובה",
+  "מרגיש לא טוב", "מרגישה לא טוב", "מרגיש רע", "מרגישה רע",
+  "לא מרגיש כל כך טוב", "לא מרגישה כל כך טוב", "מרגיש נורא", "מרגישה נורא",
+  "חש ברע", "חשה ברע", "לא בסדר", "חולה", "חולים",
+  "חום גבוה", "יש לו חום", "יש לה חום", "עם חום",
+  "כאב בטן", "כאבי בטן", "כאב ראש חזק", "מיגרנה", "בחילה", "בחילות",
+  "מקיא", "מקיאה", "הקאות", "שלשול", "סחרחורת", "מסוחרר", "מסוחררת",
+  "חלש מאוד", "חלשה מאוד", "חיוור", "חיוורת",
+  // English
+  "doesn'?t feel well", "does not feel well", "not feeling well",
+  "feeling unwell", "feels unwell", "feeling sick", "feels sick",
+  "feeling ill", "feels ill", "is ill", "not well",
+  "high fever", "has a fever", "running a fever",
+  "stomach ache", "stomachache", "bad headache", "migraine",
+  "nausea", "nauseous", "vomiting", "throwing up", "diarrh\\w*",
+  "dizzy", "dizziness", "very weak", "pale",
+]);
+
+/**
+ * מצוקה רפואית שאינה מאושרת כמסכנת חיים.
+ * מחזיר { kind:"unwell" } או null. נקרא רק אחרי ש-detectEmergency
+ * החזירה null — כל מקרה חמור כבר טופל שם.
+ */
+export function detectMedicalConcern(text) {
+  const t = String(text ?? "");
+  if (!t.trim()) return null;
+  if (detectEmergency(t)) return null;        // חירום מלא גובר תמיד
+  // שאלה כללית ("מה עושים אם מרגישים לא טוב?") אינה דיווח.
+  if (isInquiry(t)) return null;
+  return MEDICAL_CONCERN.test(t) ? { kind: "unwell" } : null;
+}
+
+/**
+ * מה שהאורח מקבל כשמישהו "לא מרגיש טוב".
+ * שלושה חלקים, בסדר הזה בכוונה: אכפתיות → מתי לחייג 101 בלי להמתין →
+ * שאלת חומרה אחת. **אין כאן שום ייעוץ רפואי** — רק הפניה לגורם הנכון.
+ */
+export function medicalConcernMessage(lang = "he", { onSiteTeam = true } = {}) {
+  const he = lang !== "en";
+  if (he) {
+    return (
+      `אני מצטער לשמוע 🙏 ${onSiteTeam ? "עדכנתי את הצוות והם יוצרים קשר מיד." : "עדכנתי את המנהל התורן, והוא יוצר קשר מיד."}\n\n` +
+      `📞 *חשוב:* אם יש כאב בחזה, קושי בנשימה, בלבול או אובדן הכרה, חולשה פתאומית בצד אחד של הגוף, או דימום — *נא לחייג 101 (מד"א) עכשיו*, בלי להמתין לנו.\n\n` +
+      `כדי שאעביר לצוות תמונה מדויקת: מה מורגש, ומתי זה התחיל?`
+    );
+  }
+  return (
+    `I'm sorry to hear that 🙏 ${onSiteTeam ? "I've alerted our team and someone will be in touch right away." : "I've alerted the duty manager, who will be in touch right away."}\n\n` +
+    `📞 *Important:* if there is chest pain, difficulty breathing, confusion or loss of consciousness, sudden weakness on one side, or bleeding — *call 101 (Magen David Adom) now*, without waiting for us.\n\n` +
+    `So I can pass on an accurate picture: what is being felt, and when did it start?`
+  );
 }
 
 // שם הקטגוריה בעברית — להתראת הצוות.
