@@ -53,14 +53,43 @@ export const ROLES = Object.freeze({
   reception: [
     CAP.VIEW_CONVERSATIONS, CAP.REPLY_GUEST, CAP.VIEW_ALERTS, CAP.CREATE_ALERTS,
   ],
-  // 🔴 משק בית ואחזקה רואים **בקשות בלבד**. אין להם שום סיבה לקרוא
-  //    שיחות פרטיות של אורחים או לראות חשבוניות.
+  // 🔴 **מחלקות שירות רואות בקשות בלבד.** אין לאיש מהן שום סיבה לקרוא
+  //    שיחות פרטיות של אורחים, לראות חשבוניות או לגשת למסמכי זהות.
+  //    זו נקודת ההרשאה המינימלית: מי שמביא מגבות צריך לדעת שביקשו
+  //    מגבות — ולא מה עוד האורח כתב באותה שיחה.
+  //
+  //    יש תפקיד לכל מחלקה ב-`DEPARTMENTS` (config.js), כדי שלא ייווצר
+  //    מצב שבו מחלקה קיימת נאלצת לקבל טוקן של תפקיד רחב יותר "כי אין
+  //    לה תפקיד משלה" — וזו בדיוק הדרך שבה הרשאות נשחקות בשטח.
   housekeeping: [CAP.VIEW_ALERTS],
   maintenance:  [CAP.VIEW_ALERTS],
-  // הנהלת חשבונות רואה כסף — ולא קוראת שיחות.
+  spa:          [CAP.VIEW_ALERTS],
+  room_service: [CAP.VIEW_ALERTS],
+  // קונסיירז' עונה לאורח על סידורים (מונית, שולחן) ולכן כן משיב בצ'אט —
+  // אך אינו רואה כספים ואינו רואה מסמכי זהות.
+  concierge:    [CAP.VIEW_ALERTS, CAP.CREATE_ALERTS, CAP.VIEW_CONVERSATIONS, CAP.REPLY_GUEST],
+  // ביטחון מטפל באירועי חירום — צריך לראות את השיחה כדי להבין מה קרה,
+  // ולהשיב. כספים ומסמכי זהות אינם חלק מזה.
+  security:     [CAP.VIEW_ALERTS, CAP.CREATE_ALERTS, CAP.VIEW_CONVERSATIONS, CAP.REPLY_GUEST],
+  // הנהלת חשבונות רואה כסף — ו**אינה קוראת שיחות**.
   accounting:   [CAP.VIEW_BILLING, CAP.VIEW_REPORTS],
   // צפייה בלבד — לבעלים/משקיע שרוצה לראות מספרים.
   viewer:       [CAP.VIEW_REPORTS, CAP.VIEW_ALERTS],
+});
+
+// תוויות בעברית — לדשבורד, ללוגים, ולהודעות השגיאה.
+export const ROLE_LABELS_HE = Object.freeze({
+  admin:        "מנהל מערכת",
+  manager:      "מנהל מלון",
+  reception:    "קבלה",
+  concierge:    "קונסיירז'",
+  security:     "ביטחון",
+  housekeeping: "משק בית",
+  maintenance:  "אחזקה",
+  spa:          "ספא",
+  room_service: "שירות חדרים",
+  accounting:   "הנהלת חשבונות",
+  viewer:       "צפייה בלבד",
 });
 
 export function capsForRole(role) {

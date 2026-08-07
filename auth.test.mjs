@@ -155,3 +155,75 @@ test("שלמות: לכל תפקיד יכולות מוגדרות, ואף אחת �
     for (const c of caps) assert.ok(all.has(c), `${role}: יכולת לא מוכרת "${c}"`);
   }
 });
+
+// ════════════════════════════════════════════════════════
+//  תפקיד לכל מחלקה — ומינימום הרשאות לכל אחד (07.08.2026)
+//  ----------------------------------------------------------
+//  🔴 **למה יש תפקיד לכל מחלקה ב-`DEPARTMENTS`:** מחלקה שאין לה תפקיד
+//     משלה נאלצת לקבל טוקן של תפקיד רחב יותר "כי אין ברירה" — וזו
+//     בדיוק הדרך שבה הרשאות נשחקות בשטח. ספא שמקבל טוקן של קבלה קורא
+//     שיחות פרטיות של אורחים בלי שאיש התכוון לכך.
+// ════════════════════════════════════════════════════════
+test("יש תפקיד לכל מחלקה תפעולית — אף מחלקה לא נאלצת לשאול טוקן רחב", async () => {
+  const { DEPARTMENTS } = await import("./config.js");
+  for (const dept of DEPARTMENTS) {
+    assert.ok(auth.ROLES[dept], `🔴 למחלקה "${dept}" אין תפקיד — היא תיאלץ לקבל טוקן רחב מדי`);
+  }
+  assert.ok(auth.ROLES.spa, "ספא הוא מחלקה שמקבלת בקשות — חייב תפקיד משלו");
+});
+
+test("🔴 מחלקות שירות אינן רואות מסמכי זהות — אף אחת מהן", () => {
+  for (const role of ["housekeeping", "maintenance", "spa", "room_service",
+                      "reception", "concierge", "security", "accounting", "viewer"]) {
+    assert.ok(!auth.capsForRole(role).includes(CAP.VIEW_ID_DOCS),
+      `🔴 "${role}" רואה מסמכי זהות — PII רגיש שאין לו בו צורך`);
+  }
+  // רק אלה כן:
+  for (const role of ["admin", "manager"]) {
+    assert.ok(auth.capsForRole(role).includes(CAP.VIEW_ID_DOCS), `"${role}" חייב לראות מסמכי זהות`);
+  }
+});
+
+test("🔴 מחלקות שירות אינן קוראות שיחות אורחים", () => {
+  for (const role of ["housekeeping", "maintenance", "spa", "room_service", "accounting", "viewer"]) {
+    assert.ok(!auth.capsForRole(role).includes(CAP.VIEW_CONVERSATIONS),
+      `🔴 "${role}" קורא שיחות פרטיות של אורחים`);
+  }
+});
+
+test("🔴 הנהלת חשבונות רואה כסף ולא שיחות; מחלקות שירות — להפך", () => {
+  const acc = auth.capsForRole("accounting");
+  assert.ok(acc.includes(CAP.VIEW_BILLING), "הנהח חייבת לראות כספים");
+  assert.ok(!acc.includes(CAP.VIEW_CONVERSATIONS), "🔴 הנהח קוראת שיחות");
+  assert.ok(!acc.includes(CAP.VIEW_ALERTS), "הנהח אינה צריכה את תור הבקשות התפעולי");
+
+  for (const role of ["housekeeping", "maintenance", "spa", "room_service"]) {
+    const c = auth.capsForRole(role);
+    assert.ok(c.includes(CAP.VIEW_ALERTS), `"${role}" חייב לראות את הבקשות שלו`);
+    assert.ok(!c.includes(CAP.VIEW_BILLING), `🔴 "${role}" רואה כספים`);
+    assert.ok(!c.includes(CAP.CHARGE), `🔴 "${role}" יכול לחייב כרטיס`);
+  }
+});
+
+test("קונסיירז' וביטחון כן משיבים לאורח — אך בלי כספים ובלי ת\"ז", () => {
+  for (const role of ["concierge", "security"]) {
+    const c = auth.capsForRole(role);
+    assert.ok(c.includes(CAP.VIEW_CONVERSATIONS), `"${role}" חייב לראות את השיחה כדי להבין מה קרה`);
+    assert.ok(c.includes(CAP.REPLY_GUEST), `"${role}" חייב יכולת להשיב`);
+    assert.ok(!c.includes(CAP.VIEW_BILLING), `🔴 "${role}" רואה כספים`);
+    assert.ok(!c.includes(CAP.VIEW_ID_DOCS), `🔴 "${role}" רואה מסמכי זהות`);
+  }
+});
+
+test("אף תפקיד מלבד admin אינו מחזיק ADMIN (איפוסים גורפים)", () => {
+  for (const role of Object.keys(auth.ROLES)) {
+    if (role === "admin") continue;
+    assert.ok(!auth.capsForRole(role).includes(CAP.ADMIN), `🔴 "${role}" מחזיק הרשאת admin`);
+  }
+});
+
+test("לכל תפקיד יש תווית בעברית — אחרת הדשבורד מציג מזהה טכני", () => {
+  for (const role of Object.keys(auth.ROLES)) {
+    assert.ok(auth.ROLE_LABELS_HE[role], `לתפקיד "${role}" אין תווית בעברית`);
+  }
+});
